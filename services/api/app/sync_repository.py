@@ -2,7 +2,7 @@
 from uuid import UUID
 from .owner_scope import owner_transaction
 
-ALLOWED_KINDSDS=frozenset({"conversation","message","task","attachment"})
+ALLOWED_KINDS=frozenset({"conversation","message","task","attachment"})
 
 def update_record(connection, owner: UUID, kind: str, record_id: UUID,
                   revision: int, body: str) -> bool:
