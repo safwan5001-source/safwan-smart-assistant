@@ -65,7 +65,7 @@ export default function Home(){
           {screen==="tasks"&&<TasksWorkspace />}
           {screen==="files"&&<FilesWorkspace />}
           {screen==="calls"&&<div className="feature-card-grid"><article className="feature-card"><span className="feature-card-label">المحادثة الصوتية</span><strong>مكالمات المساعد</strong><p>سيظهر هنا سجل المكالمات بعد تفعيل الخدمة.</p></article><article className="feature-card"><span className="feature-card-label">الإعدادات</span><strong>الميكروفون والسماعة</strong><p>معاينة مكان أدوات التحكم بالمكالمات المستقبلية.</p></article><article className="feature-card"><span className="feature-card-label">حالة النظام</span><strong>المكالمات غير مفعّلة</strong><p>الإملاء في شاشة المحادثة متاح حسب دعم المتصفح.</p></article></div>}
-          <div className="feature-footer"><AppIcon name={screen} width={23} height={23}/><span>{screen==="tasks" ? "المهام تُحفظ محلياً على هذا الجهاز فقط." : screen==="files" ? "قائمة الملفات مؤقتة لهذه الجلسة، ولا يحدث رفع أو مزامنة." : "هذه معاينة للواجهة فقط. لا يتم حفظ أو تنفيذ بيانات في هذا القسم."}</span></div>
+          <div className="feature-footer"><AppIcon name={screen} width={23} height={23}/><span>{screen==="tasks" ? "المهام تُحفظ محلياً على هذا الجهاز فقط." : screen==="files" ? "الملفات تُحفظ على هذا الجهاز في المتصفح، دون رفع أو مزامنة." : "هذه معاينة للواجهة فقط. لا يتم حفظ أو تنفيذ بيانات في هذا القسم."}</span></div>
         </section>}
       </main>
       <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true"><AppIcon name={item.icon} /></span><small>{item.label}</small></button>)}</nav>
