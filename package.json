@@ -1,0 +1,11 @@
+{
+  "name": "safwan-smart-assistant",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev:web": "pnpm --filter @safwan/web dev",
+    "build:web": "pnpm --filter @safwan/web build",
+    "typecheck:web": "pnpm --filter @safwan/web typecheck",
+    "lint:web": "pnpm --filter @safwan/web lint"
+  }
+}
