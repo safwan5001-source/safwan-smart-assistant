@@ -6,7 +6,7 @@ ALLOWED_KINDS=frozenset({"conversation","message","task","attachment"})
 
 def update_record(connection, owner: UUID, kind: str, record_id: UUID,
                   revision: int, body: str) -> bool:
-    if kind not in ALLOWED_KINDSDS or not isinstance(record_id,UUID):
+    if kind not in ALLOWED_KINDS or not isinstance(record_id,UUID):
         raise ValueError("Invalid sync record")
     if not isinstance(revision,int) or isinstance(revision,bool) or revision < 1:
         raise ValueError("Expected server revision required")
