@@ -19,7 +19,7 @@ class SyncAction(str, Enum):
     delete = "delete"
 
 class LocalRecord(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
     local_id: UUID
     kind: SyncKind
     action: SyncAction
@@ -43,7 +43,7 @@ class LocalRecord(BaseModel):
         return self
 
 class ImportPreviewRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
     records: list[LocalRecord] = Field(min_length=1, max_length=100)
     dry_run: bool = True
 
