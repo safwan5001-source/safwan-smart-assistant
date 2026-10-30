@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import VoicePanel from "./voice-panel";
+import ChatWorkspace from "./chat-workspace";
 type Theme = "system" | "light" | "dark";
 type Screen = "home" | "tasks" | "files" | "calls" | "settings";
 const nav: {id:Screen;label:string;symbol:string}[] = [
@@ -36,7 +37,7 @@ export default function Home(){
     document.documentElement.dataset.compact=String(compact);
   },[compact,ready]);
   useEffect(()=>{if(ready)localStorage.setItem("safwan-permission",permission)},[permission,ready]);
-  const headline: Record<Screen,string>={home:"مساحتك الذكية",tasks:"المهام",files:"الملفات",calls:"المكالمات",settings:"الإعدادات"};
+  const headline: Record<Screen,string>={home:"المحادثات",tasks:"المهام",files:"الملفات",calls:"المكالمات",settings:"الإعدادات"};
   return <div className="app">
     <aside className="sidebar" aria-label="القائمة الرئيسية">
       <button className="brand" onClick={()=>setScreen("home")} aria-label="العودة للرئيسية"><span className="brand-symbol">✦</span><span><strong>صفوان</strong><small>المساعد الذكي</small></span></button>
@@ -47,13 +48,7 @@ export default function Home(){
       <header className="topbar"><div className="wordmark"><span className="brand-symbol small">✦</span><span>مساعد صفوان الذكي</span></div><span className="private-label">خاص بك فقط</span></header>
       <main className="content">
         <div className="page-top"><span className="eyebrow">SAFWAN INTELLIGENCE / WORKSPACE</span><h1>{headline[screen]}</h1></div>
-        {screen==="home"&&<div className="home-view">
-          <section className="hero"><div className="orb" aria-hidden="true"><span>✦</span></div><h2>كيف أستطيع مساعدتك اليوم؟</h2><p>مركز واحد لمهامك وملفاتك ومكالماتك. يمكنك الآن اختبار التقاط الصوت بالعربية. الرد الذكي والتنفيذ سيُفعّلان بعد إكمال الربط الآمن.</p>
-          <VoicePanel /></section>
-          <div className="section-heading"><h3>مساحة العمل</h3><span>نظرة عامة</span></div>
-          <div className="feature-grid"><button onClick={()=>setScreen("tasks")}><span className="feature-icon">▤</span><strong>المهام</strong><small>التنفيذ والموافقات</small></button><button onClick={()=>setScreen("files")}><span className="feature-icon">▱</span><strong>الملفات</strong><small>المستندات والمراجعة</small></button><button onClick={()=>setScreen("calls")}><span className="feature-icon">◉</span><strong>المكالمات</strong><small>الاتصال والرد الذكي</small></button><button onClick={()=>setScreen("settings")}><span className="feature-icon">⚙</span><strong>الإعدادات</strong><small>التخصيص والخصوصية</small></button></div>
-          <div className="info-note"><span className="state-indicator"/> اختبار الميكروفون متاح؛ لا يوجد اتصال فعلي بالكمبيوتر أو خدمة الذكاء الاصطناعي.</div>
-        </div>}
+        {screen==="home"&&<div className="home-view"><ChatWorkspace /><details style={{marginTop:16}}><summary>تجربة الميكروفون والتفريغ العربي</summary><VoicePanel /></details></div>}
         {screen==="settings"&&<div className="settings-view">
           <div className="settings-intro">تحكم بمظهر المساعد وتفضيلات المهام. تُحفظ تفضيلات العرض محلياً على هذا الجهاز في هذه النسخة.</div>
           <section className="setting-card"><h2>المظهر</h2><p>اختر المظهر المناسب، أو دع النظام يحدد الوضع تلقائياً.</p><div className="theme-options" role="group" aria-label="المظهر">
