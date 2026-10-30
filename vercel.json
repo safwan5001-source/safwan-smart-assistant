@@ -16,6 +16,12 @@
   },
   "rewrites": [
     {
+      "source": "/backend/health/neon",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
       "source": "/backend/health",
       "destination": {
         "service": "backend"
