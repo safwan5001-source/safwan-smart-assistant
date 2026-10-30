@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import VoicePanel from "./voice-panel";
 type Theme = "system" | "light" | "dark";
 type Screen = "home" | "tasks" | "files" | "calls" | "settings";
 const nav: {id:Screen;label:string;symbol:string}[] = [
@@ -47,11 +48,11 @@ export default function Home(){
       <main className="content">
         <div className="page-top"><span className="eyebrow">SAFWAN INTELLIGENCE / WORKSPACE</span><h1>{headline[screen]}</h1></div>
         {screen==="home"&&<div className="home-view">
-          <section className="hero"><div className="orb" aria-hidden="true"><span>✦</span></div><h2>كيف أستطيع مساعدتك اليوم؟</h2><p>مركز واحد لمهامك وملفاتك ومكالماتك. التواصل الصوتي والتنفيذ سيُفعّلان بعد إكمال الربط الآمن.</p>
-          <div className="composer"><span>المحادثة الصوتية قيد التطوير</span><span className="mic" aria-label="الصوت غير مفعل">♩</span></div></section>
+          <section className="hero"><div className="orb" aria-hidden="true"><span>✦</span></div><h2>كيف أستطيع مساعدتك اليوم؟</h2><p>مركز واحد لمهامك وملفاتك ومكالماتك. يمكنك الآن اختبار التقاط الصوت بالعربية. الرد الذكي والتنفيذ سيُفعّلان بعد إكمال الربط الآمن.</p>
+          <VoicePanel /></section>
           <div className="section-heading"><h3>مساحة العمل</h3><span>نظرة عامة</span></div>
           <div className="feature-grid"><button onClick={()=>setScreen("tasks")}><span className="feature-icon">▤</span><strong>المهام</strong><small>التنفيذ والموافقات</small></button><button onClick={()=>setScreen("files")}><span className="feature-icon">▱</span><strong>الملفات</strong><small>المستندات والمراجعة</small></button><button onClick={()=>setScreen("calls")}><span className="feature-icon">◉</span><strong>المكالمات</strong><small>الاتصال والرد الذكي</small></button><button onClick={()=>setScreen("settings")}><span className="feature-icon">⚙</span><strong>الإعدادات</strong><small>التخصيص والخصوصية</small></button></div>
-          <div className="info-note"><span className="state-indicator"/> معاينة تصميمية: لا يوجد اتصال فعلي بالكمبيوتر أو خدمة الذكاء الاصطناعي.</div>
+          <div className="info-note"><span className="state-indicator"/> اختبار الميكروفون متاح؛ لا يوجد اتصال فعلي بالكمبيوتر أو خدمة الذكاء الاصطناعي.</div>
         </div>}
         {screen==="settings"&&<div className="settings-view">
           <div className="settings-intro">تحكم بمظهر المساعد وتفضيلات المهام. تُحفظ تفضيلات العرض محلياً على هذا الجهاز في هذه النسخة.</div>
@@ -59,7 +60,7 @@ export default function Home(){
             {([{id:"system",label:"تلقائي",symbol:"◐"},{id:"light",label:"فاتح",symbol:"☼"},{id:"dark",label:"داكن",symbol:"☾"}] as const).map(opt=><button aria-pressed={theme===opt.id} className={"theme-option "+(theme===opt.id?"active":"")} key={opt.id} onClick={()=>setTheme(opt.id)}><span>{opt.symbol}</span>{opt.label}</button>)}
           </div><label className="switch-row"><span><strong>عرض مدمج</strong><small>تقليل المسافات بين عناصر الواجهة</small></span><input type="checkbox" checked={compact} onChange={e=>setCompact(e.target.checked)}/></label></section>
           <section className="setting-card"><h2>سياسة المهام الافتراضية</h2><p>سيظل المساعد يطلب تحديد الصلاحية عند بداية كل مهمة قبل التنفيذ.</p><div className="field"><label htmlFor="permission">التفضيل عند فتح مهمة جديدة</label><select id="permission" value={permission} onChange={e=>setPermission(e.target.value)}><option value="ask">اسألني في كل مهمة</option><option value="review">اقترح المراجعة أولاً</option></select></div><p className="field-note">لا تمنح هذه الإعدادات تصريحاً بتنفيذ عمليات مالية أو حساسة.</p></section>
-          <section className="setting-card"><h2>الصوت واللغة</h2><div className="setting-line"><span><strong>لغة الواجهة</strong><small>العربية — من اليمين إلى اليسار</small></span><span className="muted">العربية</span></div><div className="setting-line"><span><strong>المحادثة المباشرة</strong><small>سيتم تفعيلها بعد إعداد الخادم والمصادقة</small></span><span className="pending">غير مفعّلة</span></div></section>
+          <section className="setting-card"><h2>الصوت واللغة</h2><div className="setting-line"><span><strong>لغة الواجهة</strong><small>العربية — من اليمين إلى اليسار</small></span><span className="muted">العربية</span></div><div className="setting-line"><span><strong>المحادثة المباشرة</strong><small>اختبار التقاط الكلام متاح؛ الرد الصوتي ينتظر الخادم والمصادقة</small></span><span className="pending">غير مفعّلة</span></div></section>
           <section className="setting-card"><h2>الخصوصية والأجهزة</h2><div className="setting-line"><span><strong>Windows السحابي</strong><small>لم يتم ربط الكمبيوتر بعد</small></span><span className="pending">غير متصل</span></div><div className="setting-line"><span><strong>حساب المستخدم</strong><small>المصادقة الآمنة قيد التطوير</small></span><span className="pending">غير مهيأ</span></div></section>
         </div>}
         {(screen==="tasks"||screen==="files"||screen==="calls")&&<section className="empty-panel"><span className="empty-symbol">{nav.find(item=>item.id===screen)?.symbol}</span><h2>{headline[screen]} قيد الإعداد</h2><p>صُممت هذه المساحة لتكون جزءاً من تجربة متكاملة. لم يتم تفعيل تخزين البيانات أو إرسال الأوامر بعد.</p><button onClick={()=>setScreen("home")} className="secondary-button">العودة للرئيسية</button></section>}
