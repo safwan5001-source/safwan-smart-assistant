@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import ChatWorkspace from "./chat-workspace";
 import TasksWorkspace from "./tasks-workspace";
+import FilesWorkspace from "./files-workspace";
 import AppIcon, { type AppIconName } from "./app-icon";
 type Theme = "system" | "light" | "dark";
 type Screen = "home" | "tasks" | "files" | "calls" | "settings";
@@ -62,9 +63,9 @@ export default function Home(){
         {(screen==="tasks"||screen==="files"||screen==="calls")&&<section className="feature-page" aria-label={headline[screen]}>
           <div className="feature-banner"><span className="feature-badge">تصميم أولي — غير متصل بالخدمات</span><div className="feature-banner-row"><div><h2>{screen==="tasks"?"مساحة عملك اليومية":screen==="files"?"مكتبة ملفاتك":"مركز التواصل"}</h2><p>{screen==="tasks"?"نظّم أولوياتك وتابع الأعمال من مكان واحد.":screen==="files"?"الوصول إلى المستندات وفرزها من واجهة واضحة.":"راجع المكالمات وجدول المحادثات الصوتية في واجهة واحدة."}</p></div><span className="feature-banner-icon"><AppIcon name={screen} width={32} height={32}/></span></div></div>
           {screen==="tasks"&&<TasksWorkspace />}
-          {screen==="files"&&<div className="feature-card-grid"><article className="feature-card"><span className="feature-card-label">المكتبة</span><strong>المستندات</strong><p>عرض ملفات PDF والوثائق بعد توفير اتصال آمن.</p></article><article className="feature-card"><span className="feature-card-label">التصنيف</span><strong>المجلدات والمفضلة</strong><p>تنظيم الملفات والبحث عنها في واجهة موحّدة.</p></article><article className="feature-card"><span className="feature-card-label">حالة النظام</span><strong>لا يوجد تخزين مرتبط</strong><p>رفع الملفات والمزامنة غير مفعّلين حالياً.</p></article></div>}
+          {screen==="files"&&<FilesWorkspace />}
           {screen==="calls"&&<div className="feature-card-grid"><article className="feature-card"><span className="feature-card-label">المحادثة الصوتية</span><strong>مكالمات المساعد</strong><p>سيظهر هنا سجل المكالمات بعد تفعيل الخدمة.</p></article><article className="feature-card"><span className="feature-card-label">الإعدادات</span><strong>الميكروفون والسماعة</strong><p>معاينة مكان أدوات التحكم بالمكالمات المستقبلية.</p></article><article className="feature-card"><span className="feature-card-label">حالة النظام</span><strong>المكالمات غير مفعّلة</strong><p>الإملاء في شاشة المحادثة متاح حسب دعم المتصفح.</p></article></div>}
-          <div className="feature-footer"><AppIcon name={screen} width={23} height={23}/><span>{screen==="tasks" ? "المهام تُحفظ محلياً على هذا الجهاز فقط." : "هذه معاينة للواجهة فقط. لا يتم حفظ أو تنفيذ بيانات في هذا القسم."}</span></div>
+          <div className="feature-footer"><AppIcon name={screen} width={23} height={23}/><span>{screen==="tasks" ? "المهام تُحفظ محلياً على هذا الجهاز فقط." : screen==="files" ? "قائمة الملفات مؤقتة لهذه الجلسة، ولا يحدث رفع أو مزامنة." : "هذه معاينة للواجهة فقط. لا يتم حفظ أو تنفيذ بيانات في هذا القسم."}</span></div>
         </section>}
       </main>
       <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true"><AppIcon name={item.icon} /></span><small>{item.label}</small></button>)}</nav>
