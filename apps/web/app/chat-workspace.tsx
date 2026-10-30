@@ -17,6 +17,7 @@ export default function ChatWorkspace(){
  const [attachments,setAttachments]=useState<Attachment[]>([]);
  const [fileError,setFileError]=useState("");
  const [fileBusy,setFileBusy]=useState(false);
+ const [preview,setPreview]=useState<{name:string;url:string;kind:"image"|"pdf"}|null>(null);
  const picker=useRef<HTMLInputElement>(null);
  const [ready,setReady]=useState(false);
  const [archived,setArchived]=useState(false);
@@ -62,6 +63,31 @@ export default function ChatWorkspace(){
    } catch {setFileError("تعذر حفظ المرفق محلياً. راجع مساحة تخزين المتصفح.");}
    finally {setFileBusy(false);if(picker.current)picker.current.value="";}
  };
+ const closePreview=()=>setPreview(old=>{if(old)URL.revokeObjectURL(old.url);return null;});
+ const openAttachment=async(a:Attachment)=>{
+   setFileError("");
+   try{
+     const db=await new Promise<IDBDatabase>((resolve,reject)=>{
+       const req=indexedDB.open("safwan-files-v1",1);
+       req.onsuccess=()=>resolve(req.result);
+       req.onerror=()=>reject(req.error);
+       req.onblocked=()=>reject(new Error("blocked"));
+     });
+     let stored:{name:string;type:string;file:Blob}|undefined;
+     try{stored=await new Promise((resolve,reject)=>{
+       const tx=db.transaction("files","readonly");
+       const req=tx.objectStore("files").get(a.id);
+       req.onsuccess=()=>resolve(req.result as {name:string;type:string;file:Blob}|undefined);
+       req.onerror=()=>reject(req.error);
+     });}finally{db.close();}
+     if(!stored?.file){setFileError("المرفق غير موجود في مكتبة الجهاز. ربما حُذفت بيانات الموقع.");return;}
+     const isImage=stored.type.startsWith("image/")||stored.file.type.startsWith("image/");
+     const isPdf=stored.type==="application/pdf"||stored.file.type==="application/pdf";
+     const url=URL.createObjectURL(stored.file);
+     if(isImage||isPdf){setPreview(old=>{if(old)URL.revokeObjectURL(old.url);return {name:stored!.name,url,kind:isImage?"image":"pdf"};});}
+     else {const link=document.createElement("a");link.href=url;link.download=stored.name;document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);}
+   }catch{setFileError("تعذر فتح المرفق المحلي. حاول إعادة فتح الصفحة.");}
+ };
  const current=threads.find(t=>t.id===selected);
  const create=()=>{recognition.current?.abort();setListening(false);const t=makeThread();setThreads(old=>[t,...old]);setSelected(t.id);setDraft("");setAttachments([]);setDrawer(false);setArchived(false)};
  const open=(id:string)=>{recognition.current?.abort();setListening(false);setSelected(id);setDrawer(false);setDraft("");setAttachments([])};
@@ -97,7 +123,7 @@ export default function ChatWorkspace(){
      </div>
      <div aria-live="polite" style={{flex:1,overflowY:"auto",padding:16,display:"flex",flexDirection:"column",gap:12}}>
       {(!current||!current.messages.length)&&<div style={{margin:"auto",textAlign:"center"}}><h2>كيف أستطيع مساعدتك؟</h2><p>اكتب رسالة لتجربة واجهة الدردشة.</p></div>}
-      {current?.messages.map(m=><div key={m.id} style={{alignSelf:"flex-start",maxWidth:"92%",background:"#64748b20",borderRadius:15,padding:"10px 14px",whiteSpace:"pre-wrap",overflowWrap:"anywhere"}}><div>{m.text}</div>{m.attachments?.map(a=><div key={a.id} style={{fontSize:12,marginTop:6}}>📎 {a.name}</div>)}<div role="group" aria-label="إجراءات الرسالة" style={{display:"flex",gap:8,marginTop:8,fontSize:12}}><button type="button" onClick={()=>void copyMessage(m.text)} disabled={!m.text}>نسخ</button><button type="button" onClick={()=>editMessage(m.id)}>تعديل</button><button type="button" onClick={()=>deleteMessage(m.id)}>حذف</button></div></div>)}
+      {current?.messages.map(m=><div key={m.id} style={{alignSelf:"flex-start",maxWidth:"92%",background:"#64748b20",borderRadius:15,padding:"10px 14px",whiteSpace:"pre-wrap",overflowWrap:"anywhere"}}><div>{m.text}</div>{m.attachments?.map(a=><div key={a.id} style={{fontSize:12,marginTop:6}}><button type="button" onClick={()=>void openAttachment(a)} aria-label={"فتح المرفق "+a.name}>📎 {a.name} · فتح</button></div>)}<div role="group" aria-label="إجراءات الرسالة" style={{display:"flex",gap:8,marginTop:8,fontSize:12}}><button type="button" onClick={()=>void copyMessage(m.text)} disabled={!m.text}>نسخ</button><button type="button" onClick={()=>editMessage(m.id)}>تعديل</button><button type="button" onClick={()=>deleteMessage(m.id)}>حذف</button></div></div>)}
      </div>
      <div style={{padding:12,borderTop:"1px solid #9994",display:"grid",gap:9}}>
       <input ref={picker} type="file" multiple aria-label="إضافة مرفقات من الجهاز" style={{display:"none"}} onChange={e=>void saveAttachments(e.target.files)}/>
@@ -109,6 +135,7 @@ export default function ChatWorkspace(){
        <button onClick={send} disabled={!draft.trim()&&!attachments.length} className="composer-send" aria-label="إرسال الرسالة"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 12 15-8-4 16-3-7-8-1Zm8 1 7-9"/></svg></button>
       </div>
       {listening&&<small role="status" className="speech-status">يستمع الآن… تحدّث بالعربية، ثم راجع النص قبل الإرسال.</small>}
+      {preview&&<div role="dialog" aria-modal="true" aria-label={"معاينة "+preview.name} style={{position:"fixed",inset:0,zIndex:100,background:"#000b",padding:16,display:"grid",placeItems:"center"}}><section style={{background:"var(--surface,#fff)",color:"var(--text,#111)",borderRadius:16,padding:12,width:"min(95vw,900px)",maxHeight:"90dvh",display:"grid",gap:10}}><div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center"}}><strong style={{overflowWrap:"anywhere"}}>{preview.name}</strong><button type="button" onClick={closePreview} aria-label="إغلاق المعاينة">إغلاق ×</button></div>{preview.kind==="image"?<img src={preview.url} alt={preview.name} style={{maxWidth:"100%",maxHeight:"72dvh",objectFit:"contain",margin:"auto"}}/>:<iframe src={preview.url} title={preview.name} style={{width:"100%",height:"70dvh",border:0}}/>}</section></div>}
       {fileError&&<small role="alert" className="speech-error">{fileError}</small>}
       {speechError&&<small role="alert" className="speech-error">{speechError}</small>}
       <small style={{opacity:.75}}>الرسائل تُحفظ محلياً على هذا الجهاز فقط. المرفقات تحفظ في مكتبة الملفات المحلية على هذا الجهاز، ولا تُرسل للخادم أو إلى ذكاء اصطناعي. لا توجد مزامنة أو تشفير حساب حتى الآن. لا تكتب بيانات حساسة.</small>
