@@ -1,0 +1,31 @@
+{
+  "services": {
+    "web": {
+      "root": "apps/web"
+    },
+    "backend": {
+      "root": "services/api",
+      "entrypoint": "app.main:app",
+      "rewrites": [
+        {
+          "source": "/backend/health",
+          "destination": "/health"
+        }
+      ]
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/backend/health",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
+  ]
+}
