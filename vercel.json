@@ -16,7 +16,7 @@
   },
   "rewrites": [
     {
-      "source": "/backend/:path(.*)?",
+      "source": "/backend/health",
       "destination": {
         "service": "backend"
       }
