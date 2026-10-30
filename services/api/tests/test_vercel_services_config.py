@@ -9,7 +9,7 @@ def test_backend_only_exposes_health_and_web_keeps_routes():
     assert cfg["services"]["backend"]["root"]=="services/api"
     assert cfg["services"]["backend"]["entrypoint"]=="app.main:app"
     routes=cfg["rewrites"]
-    assert routes[0]["source"]=="/backend/:path(.*)?"
+    assert routes[0]["source"]=="/backend/health"
     assert routes[0]["destination"]=={"service":"backend"}
     assert routes[-1]["destination"]=={"service":"web"}
     assert all("/tasks" not in str(route) for route in routes)
