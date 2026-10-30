@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import ChatWorkspace from "./chat-workspace";
+import AppIcon, { type AppIconName } from "./app-icon";
 type Theme = "system" | "light" | "dark";
 type Screen = "home" | "tasks" | "files" | "calls" | "settings";
-const nav: {id:Screen;label:string;symbol:string}[] = [
-  {id:"home",label:"الرئيسية",symbol:"⌂"},{id:"tasks",label:"المهام",symbol:"☷"},
-  {id:"files",label:"الملفات",symbol:"▧"},{id:"calls",label:"المكالمات",symbol:"◌"},
-  {id:"settings",label:"الإعدادات",symbol:"⚙"}
+const nav: {id:Screen;label:string;icon:AppIconName}[] = [
+  {id:"home",label:"الرئيسية",icon:"home"},{id:"tasks",label:"المهام",icon:"tasks"},
+  {id:"files",label:"الملفات",icon:"files"},{id:"calls",label:"المكالمات",icon:"calls"},
+  {id:"settings",label:"الإعدادات",icon:"settings"}
 ];
 export default function Home(){
   const [screen,setScreen]=useState<Screen>("home");
@@ -40,7 +41,7 @@ export default function Home(){
   return <div className="app">
     <aside className="sidebar" aria-label="القائمة الرئيسية">
       <button className="brand" onClick={()=>setScreen("home")} aria-label="العودة للرئيسية"><span className="brand-symbol">✦</span><span><strong>صفوان</strong><small>المساعد الذكي</small></span></button>
-      <div className="nav-list">{nav.map(item=><button key={item.id} className={"nav-item "+(screen===item.id?"selected":"")} onClick={()=>setScreen(item.id)} aria-current={screen===item.id?"page":undefined}><span className="nav-icon" aria-hidden="true">{item.symbol}</span>{item.label}</button>)}</div>
+      <div className="nav-list">{nav.map(item=><button key={item.id} className={"nav-item "+(screen===item.id?"selected":"")} onClick={()=>setScreen(item.id)} aria-current={screen===item.id?"page":undefined}><span className="nav-icon" aria-hidden="true"><AppIcon name={item.icon} /></span>{item.label}</button>)}</div>
       <div className="sidebar-foot"><span className="state-indicator"/> النسخة التأسيسية <small>الخدمات غير متصلة</small></div>
     </aside>
     <div className="workspace">
@@ -57,9 +58,9 @@ export default function Home(){
           <section className="setting-card"><h2>الصوت واللغة</h2><div className="setting-line"><span><strong>لغة الواجهة</strong><small>العربية — من اليمين إلى اليسار</small></span><span className="muted">العربية</span></div><div className="setting-line"><span><strong>المحادثة المباشرة</strong><small>اختبار التقاط الكلام متاح؛ الرد الصوتي ينتظر الخادم والمصادقة</small></span><span className="pending">غير مفعّلة</span></div></section>
           <section className="setting-card"><h2>الخصوصية والأجهزة</h2><div className="setting-line"><span><strong>Windows السحابي</strong><small>لم يتم ربط الكمبيوتر بعد</small></span><span className="pending">غير متصل</span></div><div className="setting-line"><span><strong>حساب المستخدم</strong><small>المصادقة الآمنة قيد التطوير</small></span><span className="pending">غير مهيأ</span></div></section>
         </div>}
-        {(screen==="tasks"||screen==="files"||screen==="calls")&&<section className="empty-panel"><span className="empty-symbol">{nav.find(item=>item.id===screen)?.symbol}</span><h2>{headline[screen]} قيد الإعداد</h2><p>صُممت هذه المساحة لتكون جزءاً من تجربة متكاملة. لم يتم تفعيل تخزين البيانات أو إرسال الأوامر بعد.</p><button onClick={()=>setScreen("home")} className="secondary-button">العودة للرئيسية</button></section>}
+        {(screen==="tasks"||screen==="files"||screen==="calls")&&<section className="empty-panel"><span className="empty-symbol"><AppIcon name={screen} width={52} height={52} /></span><h2>{headline[screen]} قيد الإعداد</h2><p>صُممت هذه المساحة لتكون جزءاً من تجربة متكاملة. لم يتم تفعيل تخزين البيانات أو إرسال الأوامر بعد.</p><button onClick={()=>setScreen("home")} className="secondary-button">العودة للرئيسية</button></section>}
       </main>
-      <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true">{item.symbol}</span><small>{item.label}</small></button>)}</nav>
+      <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true"><AppIcon name={item.icon} /></span><small>{item.label}</small></button>)}</nav>
     </div>
   </div>;
 }
