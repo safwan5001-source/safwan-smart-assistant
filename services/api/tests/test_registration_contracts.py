@@ -8,7 +8,7 @@ def test_registration_contract():
     assert normalize_email(str(req.email))=="user@example.com"
 
 def test_reject_control_characters_and_blank_name():
-    for name in ["   ","bad\\nname"]:
+    for name in ["   ","bad\nname"]:
         with pytest.raises(ValidationError):
             RegistrationRequest(email="user@example.com",display_name=name)
 
