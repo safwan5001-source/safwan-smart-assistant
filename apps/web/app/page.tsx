@@ -1,12 +1,11 @@
 "use client";
 import { useEffect, useState } from "react";
-import VoicePanel from "./voice-panel";
 import ChatWorkspace from "./chat-workspace";
 type Theme = "system" | "light" | "dark";
 type Screen = "home" | "tasks" | "files" | "calls" | "settings";
 const nav: {id:Screen;label:string;symbol:string}[] = [
-  {id:"home",label:"الرئيسية",symbol:"✦"},{id:"tasks",label:"المهام",symbol:"▤"},
-  {id:"files",label:"الملفات",symbol:"▱"},{id:"calls",label:"المكالمات",symbol:"◉"},
+  {id:"home",label:"الرئيسية",symbol:"⌂"},{id:"tasks",label:"المهام",symbol:"☷"},
+  {id:"files",label:"الملفات",symbol:"▧"},{id:"calls",label:"المكالمات",symbol:"◌"},
   {id:"settings",label:"الإعدادات",symbol:"⚙"}
 ];
 export default function Home(){
@@ -48,7 +47,7 @@ export default function Home(){
       <header className="topbar"><div className="wordmark"><span className="brand-symbol small">✦</span><span>مساعد صفوان الذكي</span></div><span className="private-label">خاص بك فقط</span></header>
       <main className="content">
         <div className="page-top"><span className="eyebrow">SAFWAN INTELLIGENCE / WORKSPACE</span><h1>{headline[screen]}</h1></div>
-        {screen==="home"&&<div className="home-view"><ChatWorkspace /><details style={{marginTop:16}}><summary>تجربة الميكروفون والتفريغ العربي</summary><VoicePanel /></details></div>}
+        {screen==="home"&&<div className="home-view"><ChatWorkspace /></div>}
         {screen==="settings"&&<div className="settings-view">
           <div className="settings-intro">تحكم بمظهر المساعد وتفضيلات المهام. تُحفظ تفضيلات العرض محلياً على هذا الجهاز في هذه النسخة.</div>
           <section className="setting-card"><h2>المظهر</h2><p>اختر المظهر المناسب، أو دع النظام يحدد الوضع تلقائياً.</p><div className="theme-options" role="group" aria-label="المظهر">
