@@ -39,7 +39,6 @@ async def preview_login(request: Request):
     try:
         config = AuthConfiguration(public_origin=origin)
         config.validate(production=True)
-        subject = subject_digest(normalize_email(str(payload.email)), key.encode("utf-8"))
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     require_login_origin(request, origin)
@@ -47,6 +46,10 @@ async def preview_login(request: Request):
         payload = PreviewLoginRequest.model_validate(await request.json())
     except (ValueError, ValidationError):
         raise HTTPException(status_code=422, detail="Invalid login request") from None
+    try:
+        subject = subject_digest(normalize_email(str(payload.email)), key.encode("utf-8"))
+    except (ValueError, UnicodeError):
+        raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     try:
         import psycopg
         with psycopg.connect(database_url, connect_timeout=3) as connection:
