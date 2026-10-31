@@ -9,13 +9,16 @@ from .assistant import AssistantUnavailable, get_provider, provider_status
 from .audit import audit_log
 from .config import SERVICE_VERSION, Settings, get_settings
 from .integrations import CATALOG, get_integration, resolve_status
+from .internal import router as internal_router
 from .permissions import PermissionMode, Risk, policy_matrix
 from .security import require_auth
+from .status import health_payload, integration_summary
 from .tools import execute_tool, registry
 from .tools.builtin import register_builtin
 
 app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION)
 register_builtin(registry)
+app.include_router(internal_router)
 
 
 class TaskRequest(BaseModel):
@@ -45,24 +48,10 @@ class AssistantRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=50)
 
 
-def _integration_summary() -> dict[str, int]:
-    statuses = [resolve_status(spec, os.environ).value for spec in CATALOG]
-    return {"total": len(statuses), "connected": statuses.count("connected")}
-
-
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Public, minimal and truthful: what is actually running right now."""
-    return {
-        "status": "ok",
-        "service": "orchestrator-foundation",
-        "version": SERVICE_VERSION,
-        "features": {
-            "assistant": bool(provider_status(settings)["configured"]),
-            "connected_integrations": _integration_summary()["connected"],
-            "task_execution": False,
-        },
-    }
+    return health_payload(settings)
 
 
 @app.get("/capabilities")
@@ -73,7 +62,7 @@ def capabilities(settings: Settings = Depends(get_settings), _: str = Depends(re
         "auth_mode": settings.auth_mode,
         "assistant": provider_status(settings),
         "tools": {"total": len(tools), "implemented": sum(t.implemented for t in tools)},
-        "integrations": _integration_summary(),
+        "integrations": integration_summary(),
         "task_execution": False,
     }
 
