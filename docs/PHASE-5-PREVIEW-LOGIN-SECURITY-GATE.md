@@ -24,3 +24,8 @@ All preview auth routes remain disabled by default and gated by `VERCEL_ENV=prev
 - Preview login now checks both account and ASGI peer buckets within a transaction; failures increment both and success resets only the account bucket.
 - **Not production-safe behind an unverified proxy:** `request.client.host` may be the proxy address rather than the actual user IP. Do not enable this feature on Vercel until trusted proxy forwarding and edge-level rate limiting are verified. A shared proxy bucket can deny all users behind it.
 - Account and peer lockouts still require abuse tests and recovery rules before public activation.
+
+## Fail-closed ingress verification gate
+- `PREVIEW_NETWORK_PEER_VERIFIED=1` is now additionally required for the preview login route; unset means HTTP 503, without attempting password verification or the database.
+- This is an **operator attestation**, not a way to authenticate forwarded headers. Do not enable it on Vercel merely because the preview deployment has SSO protection. Validate the ASGI peer provenance and enforce trusted edge limits first.
+- A reverse proxy may still collapse many visitors to one IP, causing collective account denial. Resolve this before activation. Production auth remains disabled.
