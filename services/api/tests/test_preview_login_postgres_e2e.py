@@ -35,3 +35,9 @@ def test_login_issues_persisted_session_and_rejects_wrong_password(monkeypatch):
     me=client.get("/auth/me")
     assert me.status_code==200
     assert me.json()["account_id"]==str(owner)
+    csrf=me.json()["csrf_token"]
+    logout=client.post("/auth/logout",headers={"origin":"https://assistant.example.test","x-csrf-token":csrf})
+    assert logout.status_code==200
+    assert client.get("/auth/me").status_code==401
+    with psycopg.connect(dsn) as conn:
+        assert conn.execute("SELECT count(*) FROM sessions WHERE account_id=%s AND revoked_at IS NOT NULL",(owner,)).fetchone()==(1,)
