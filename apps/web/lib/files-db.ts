@@ -1,5 +1,5 @@
 /** IndexedDB library for user files (same DB/store as earlier versions). Local to this browser only. */
-export type LocalFile = { id: string; name: string; size: number; type: string; file: Blob };
+export type LocalFile = { id: string; name: string; size: number; type: string; file: Blob; added?: number };
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const DB_NAME = "safwan-files-v1";
 const STORE = "files";
@@ -41,7 +41,7 @@ export const deleteFile = (id: string) => withStore<void>("readwrite", (s) => s.
 export const clearFiles = () => withStore<void>("readwrite", (s) => s.clear());
 
 export const toLocalFiles = (list: File[]): LocalFile[] =>
-  list.map((f) => ({ id: crypto.randomUUID(), name: f.name, size: f.size, type: f.type || "غير معروف", file: f }));
+  list.map((f) => ({ id: crypto.randomUUID(), name: f.name, size: f.size, type: f.type || "غير معروف", file: f, added: Date.now() }));
 export const tooLarge = (list: File[]) => list.some((f) => f.size > MAX_FILE_BYTES);
 
 export const fileKind = (f: Pick<LocalFile, "type" | "name">): "image" | "pdf" | "sheet" | "doc" | "other" => {

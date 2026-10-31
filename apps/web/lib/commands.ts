@@ -142,7 +142,7 @@ type PayloadOf<K extends CommandId> = Parameters<(typeof COMMANDS)[K]["run"]>[0]
 type DataOf<K extends CommandId> = Awaited<ReturnType<(typeof COMMANDS)[K]["run"]>>;
 
 export const commandRisk = (id: CommandId): Risk => COMMANDS[id].risk;
-export const commandTitle = (id: CommandId): string => COMMANDS[id].title;
+export const commandTitle = (id: string): string => (id in COMMANDS ? COMMANDS[id as CommandId].title : id);
 
 function log(command: string, status: string) {
   if (command === "data.erase_all" && status === "executed") return; // keep the wipe a wipe

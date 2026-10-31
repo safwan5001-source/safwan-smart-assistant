@@ -45,9 +45,6 @@ export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a),
       if (typeof data.content !== "string" || !data.content) throw new AssistantUnavailableError("رد غير صالح من الخادم.");
       return data.content;
     },
-    async integrationStatuses(): Promise<unknown | null> {
-      try { const res = await call("/integrations"); return res.ok ? await res.json() : null; } catch { return null; }
-    },
   };
 }
 export const assistantService = createAssistantService();

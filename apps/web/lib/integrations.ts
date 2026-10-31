@@ -18,8 +18,8 @@ export const CATEGORY_LABEL: Record<string, string> = {
   scheduling: "الجدولة", accounting: "المحاسبة", automation: "الأتمتة",
 };
 
-/** Static mirror of services/api/app/integrations/catalog.py, so the screen works even when the API
- *  is unreachable. Statuses here are always "planned" until the API reports otherwise. */
+/** Static mirror of services/api/app/integrations/catalog.py. Every status is "planned": the public API
+ *  exposes no integration state (protected endpoints are locked in production), so the UI claims nothing more. */
 const R: Risk = "read", W: Risk = "write", S: Risk = "sensitive";
 export const INTEGRATIONS: IntegrationDef[] = [
   { id: "github", name: "GitHub", category: "development", description: "المستودعات وطلبات الدمج والتحقق من البناء.", status: "planned", scopes: [{ title: "قراءة طلبات الدمج", risk: R }, { title: "دمج طلب", risk: S }] },
@@ -31,17 +31,3 @@ export const INTEGRATIONS: IntegrationDef[] = [
   { id: "daftra", name: "دفترة", category: "accounting", description: "إدخال الفواتير والتحقق من مراجعها عبر الواجهة.", status: "planned", scopes: [{ title: "قراءة الفواتير", risk: R }, { title: "إنشاء فاتورة", risk: W }] },
   { id: "windows_worker", name: "Windows السحابي", category: "automation", description: "تنفيذ المهام على الكمبيوتر السحابي بالشاشة والماوس.", status: "planned", scopes: [{ title: "التقاط الشاشة", risk: R }, { title: "التحكم بالإدخال", risk: W }] },
 ];
-
-const STATUSES = new Set<IntegrationStatus>(["planned", "not_configured", "configured_unverified", "connected"]);
-
-/** Merge statuses reported by the API (validated; unknown ids/values ignored). */
-export function mergeServerStatuses(base: IntegrationDef[], payload: unknown): IntegrationDef[] {
-  const list = (payload as { integrations?: unknown })?.integrations;
-  if (!Array.isArray(list)) return base;
-  const byId = new Map<string, IntegrationStatus>();
-  for (const item of list) {
-    const o = item as { id?: unknown; status?: unknown };
-    if (typeof o?.id === "string" && typeof o.status === "string" && STATUSES.has(o.status as IntegrationStatus)) byId.set(o.id, o.status as IntegrationStatus);
-  }
-  return base.map((i) => ({ ...i, status: byId.get(i.id) ?? i.status }));
-}

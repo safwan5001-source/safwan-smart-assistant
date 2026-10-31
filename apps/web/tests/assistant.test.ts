@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AssistantUnavailableError, createAssistantService } from "@/lib/assistant";
-import { INTEGRATIONS, mergeServerStatuses } from "@/lib/integrations";
+import { INTEGRATIONS } from "@/lib/integrations";
 
 const json = (body: unknown, init: ResponseInit = {}) =>
   new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" }, ...init });
@@ -41,11 +41,5 @@ describe("assistant service", () => {
 describe("integrations catalogue", () => {
   it("ships every integration as planned (nothing is claimed connected)", () => {
     expect(INTEGRATIONS.every((i) => i.status === "planned")).toBe(true);
-  });
-  it("merges only valid server statuses", () => {
-    const merged = mergeServerStatuses(INTEGRATIONS, { integrations: [{ id: "github", status: "connected" }, { id: "gmail", status: "hacked" }, { id: "zzz", status: "connected" }] });
-    expect(merged.find((i) => i.id === "github")?.status).toBe("connected");
-    expect(merged.find((i) => i.id === "gmail")?.status).toBe("planned");
-    expect(mergeServerStatuses(INTEGRATIONS, "garbage")).toBe(INTEGRATIONS);
   });
 });
