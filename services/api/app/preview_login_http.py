@@ -44,16 +44,16 @@ async def preview_login(request: Request):
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     require_login_origin(request, origin)
+    try:
+        payload = PreviewLoginRequest.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise HTTPException(status_code=422, detail="Invalid login request") from None
     # Never use client-supplied forwarding headers for throttle identity.
     # On Vercel, verified proxy configuration is required before enabling this route.
     try:
         peer_bucket = network_subject(request.client.host if request.client else None, key.encode("utf-8"))
     except ValueError:
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
-    try:
-        payload = PreviewLoginRequest.model_validate(await request.json())
-    except (ValueError, ValidationError):
-        raise HTTPException(status_code=422, detail="Invalid login request") from None
     try:
         subject = subject_digest(normalize_email(str(payload.email)), key.encode("utf-8"))
     except (ValueError, UnicodeError):
