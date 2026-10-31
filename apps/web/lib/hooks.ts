@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useSearchParams } from "next/navigation";
 import type { Store } from "./storage";
 import { assistantService, type AssistantStatus } from "./assistant";
 
@@ -34,4 +35,10 @@ export function useAssistantStatus(): { status: AssistantStatus; refresh: () => 
     return () => { live = false; };
   }, []);
   return { status, refresh };
+}
+
+/** Keeps a local search box in sync when global search navigates to the same page with a new ?q=. */
+export function useUrlQuery(set: (q: string) => void) {
+  const q = useSearchParams().get("q");
+  useEffect(() => { if (q !== null) set(q); }, [q]); // eslint-disable-line react-hooks/exhaustive-deps
 }

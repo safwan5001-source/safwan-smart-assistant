@@ -1,5 +1,4 @@
 "use client";
-import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import Icon from "@/components/icon";
 import Modal from "@/components/modal";
@@ -7,14 +6,15 @@ import { Badge, Empty, Notice, PageHeader } from "@/components/ui";
 import { CATEGORY_LABEL, INTEGRATIONS, STATUS_LABEL, type IntegrationDef, type IntegrationStatus } from "@/lib/integrations";
 import { MODES, MODE_LABEL, RISKS, RISK_LABEL, VERDICT_LABEL, evaluate, type Risk } from "@/lib/permissions";
 import { matches } from "@/lib/search";
+import { useUrlQuery } from "@/lib/hooks";
 
 const statusTone = (s: IntegrationStatus) => (s === "connected" ? "ok" : s === "configured_unverified" ? "warn" : undefined);
 const riskTone = (r: Risk) => (r === "sensitive" ? "danger" : r === "write" ? "warn" : "info");
 
 export default function IntegrationsScreen() {
-  const params = useSearchParams();
   const items = INTEGRATIONS;
-  const [query, setQuery] = useState(params.get("q") ?? "");
+  const [query, setQuery] = useState("");
+  useUrlQuery(setQuery);
   const [category, setCategory] = useState("all");
   const [detail, setDetail] = useState<IntegrationDef | null>(null);
 

@@ -32,7 +32,9 @@ export default function SettingsScreen() {
     const ok = await confirm({ title: "مسح كل البيانات المحلية؟", message: "سيتم حذف المهام والمحادثات وسجل النشاط وجميع الملفات المحفوظة على هذا الجهاز نهائياً. لا يمكن التراجع.", confirmLabel: "مسح كل شيء", tone: "danger", requireText: "مسح" });
     if (!ok) return;
     const res = await runCommand("data.erase_all", {}, { approved: true });
-    if (res.status === "executed") { setFiles({ count: 0, bytes: 0 }); toast("تم مسح البيانات المحلية"); } else toast("تعذر المسح", "error");
+    if (res.status !== "executed") toast("تعذر المسح", "error");
+    else if (res.data.filesCleared) { setFiles({ count: 0, bytes: 0 }); toast("تم مسح البيانات المحلية"); }
+    else toast("مُسحت المهام والمحادثات، لكن تعذر الوصول إلى مكتبة الملفات فلم تُحذف.", "error");
   };
 
   return (

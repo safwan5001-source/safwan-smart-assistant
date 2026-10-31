@@ -60,3 +60,16 @@ describe("quota exhaustion", () => {
     expect(JSON.parse(data.get("quota")!)).toHaveLength(3);
   });
 });
+
+describe("full storage that is still readable", () => {
+  it("reads and resets existing data even when every write is rejected", () => {
+    const { data } = installBrowser();
+    data.set("k2", JSON.stringify([{ id: "1", title: "saved", done: false, created: 1 }]));
+    const win = (globalThis as unknown as { window: { localStorage: { setItem: () => void } } }).window;
+    win.localStorage.setItem = () => { throw new Error("QuotaExceededError"); };
+    const s = createStore<Task[]>({ key: "k2", fallback: [], ...jsonCodec(parseTasks, [] as Task[]) });
+    expect(s.getSnapshot().map((t) => t.title)).toEqual(["saved"]); // not hidden behind an empty memory map
+    s.reset();
+    expect(data.has("k2")).toBe(false); // removal reached the real storage
+  });
+});
