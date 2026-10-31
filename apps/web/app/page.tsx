@@ -1,15 +1,17 @@
 "use client";
 import { useEffect, useState } from "react";
 import ChatWorkspace from "./chat-workspace";
+import OverviewWorkspace from "./overview-workspace";
+import IntegrationsWorkspace from "./integrations-workspace";
 import TasksWorkspace from "./tasks-workspace";
 import FilesWorkspace from "./files-workspace";
 import AppIcon, { type AppIconName } from "./app-icon";
 type Theme = "system" | "light" | "dark";
-type Screen = "home" | "tasks" | "files" | "calls" | "settings";
+type Screen = "home" | "chat" | "tasks" | "files" | "calls" | "integrations" | "settings";
 const nav: {id:Screen;label:string;icon:AppIconName}[] = [
-  {id:"home",label:"الرئيسية",icon:"home"},{id:"tasks",label:"المهام",icon:"tasks"},
+  {id:"home",label:"الرئيسية",icon:"home"},{id:"chat",label:"المحادثات",icon:"chat"},{id:"tasks",label:"المهام",icon:"tasks"},
   {id:"files",label:"الملفات",icon:"files"},{id:"calls",label:"المكالمات",icon:"calls"},
-  {id:"settings",label:"الإعدادات",icon:"settings"}
+  {id:"integrations",label:"التكاملات",icon:"integrations"},{id:"settings",label:"الإعدادات",icon:"settings"}
 ];
 export default function Home(){
   const [screen,setScreen]=useState<Screen>("home");
@@ -39,7 +41,7 @@ export default function Home(){
     document.documentElement.dataset.compact=String(compact);
   },[compact,ready]);
   useEffect(()=>{if(ready)localStorage.setItem("safwan-permission",permission)},[permission,ready]);
-  const headline: Record<Screen,string>={home:"المحادثات",tasks:"المهام",files:"الملفات",calls:"المكالمات",settings:"الإعدادات"};
+  const headline: Record<Screen,string>={home:"الرئيسية",chat:"المحادثات",tasks:"المهام",files:"الملفات",calls:"المكالمات",integrations:"التكاملات",settings:"الإعدادات"};
   return <div className="app">
     <aside className="sidebar" aria-label="القائمة الرئيسية">
       <button className="brand" onClick={()=>setScreen("home")} aria-label="العودة للرئيسية"><span className="brand-symbol" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><span><strong>صفوان</strong><small>المساعد الذكي</small></span></button>
@@ -47,10 +49,12 @@ export default function Home(){
       <div className="sidebar-foot"><span className="state-indicator"/> النسخة التأسيسية <small>الخدمات غير متصلة</small></div>
     </aside>
     <div className="workspace">
-      <header className="topbar"><div className="wordmark"><span className="brand-symbol small" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><span>مساعد صفوان الذكي</span></div><span className="private-label">نسخة تجريبية محلية</span></header>
+      <header className="topbar"><div className="wordmark"><span className="brand-symbol small" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><span>مساعد صفوان الذكي</span></div><div className="topbar-actions"><span className="private-label">نسخة تجريبية محلية</span><button className="topbar-settings" onClick={()=>setScreen("settings")} aria-label="فتح الإعدادات"><AppIcon name="settings"/></button></div></header>
       <main className="content">
         <div className="page-top"><span className="eyebrow">SAFWAN INTELLIGENCE / WORKSPACE</span><h1>{headline[screen]}</h1></div>
-        {screen==="home"&&<div className="home-view"><ChatWorkspace /></div>}
+        {screen==="home"&&<OverviewWorkspace navigate={setScreen}/>}
+        {screen==="chat"&&<div className="home-view"><ChatWorkspace /></div>}
+        {screen==="integrations"&&<IntegrationsWorkspace/>}
         {screen==="settings"&&<div className="settings-view">
           <div className="settings-intro">خصّص تجربة مساعد صفوان. تُحفظ إعدادات العرض على هذا الجهاز فقط، ولا توجد مزامنة أو حساب متصل حالياً.</div><section className="settings-overview" aria-label="حالة التطبيق"><span className="settings-overview-mark" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><div><strong>مساعد صفوان الذكي</strong><small>معاينة التصميم • الخدمات الذكية غير متصلة</small></div></section>
           <section className="setting-card"><h2>المظهر</h2><p>اختر المظهر المناسب، أو دع النظام يحدد الوضع تلقائياً.</p><div className="theme-options" role="group" aria-label="المظهر">
@@ -68,7 +72,7 @@ export default function Home(){
           <div className="feature-footer"><AppIcon name={screen} width={23} height={23}/><span>{screen==="tasks" ? "المهام تُحفظ محلياً على هذا الجهاز فقط." : screen==="files" ? "الملفات تُحفظ على هذا الجهاز في المتصفح، دون رفع أو مزامنة." : "هذه معاينة للواجهة فقط. لا يتم حفظ أو تنفيذ بيانات في هذا القسم."}</span></div>
         </section>}
       </main>
-      <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true"><AppIcon name={item.icon} /></span><small>{item.label}</small></button>)}</nav>
+      <nav className="bottom-nav" aria-label="التنقل السفلي">{nav.filter(item=>["home","chat","tasks","files","integrations"].includes(item.id)).map(item=><button key={item.id} aria-current={screen===item.id?"page":undefined} className={screen===item.id?"active":""} onClick={()=>setScreen(item.id)}><span aria-hidden="true"><AppIcon name={item.icon} /></span><small>{item.label}</small></button>)}</nav>
     </div>
   </div>;
 }
