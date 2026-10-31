@@ -63,4 +63,5 @@ def test_unknown_account_performs_dummy_argon2_verification(monkeypatch):
 
 def test_unknown_account_dummy_hash_is_valid_argon2():
     from app.password_credentials import _DUMMY_HASH
+    assert verify_password("not-a-real-account-password-constant", _DUMMY_HASH) is True
     assert verify_password("incorrect", _DUMMY_HASH) is False
