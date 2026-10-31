@@ -23,6 +23,7 @@ from typing import Protocol
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from .config import Settings, get_settings
 from .db.connection import DatabaseUnavailable, connect_runtime
@@ -168,7 +169,8 @@ async def require_service_call(
 
     # Only authenticated requests may consume nonce storage (no unauthenticated write amplification).
     try:
-        fresh = store.claim(nonce, NONCE_TTL_SECONDS)
+        # psycopg is synchronous: never run it on the event loop (a slow DB must not stall unrelated requests).
+        fresh = await run_in_threadpool(store.claim, nonce, NONCE_TTL_SECONDS)
     except (DatabaseUnavailable, Exception) as exc:  # noqa: BLE001 - any store failure must fail closed
         raise _unavailable(f"nonce store error: {type(exc).__name__}", "service_auth_unavailable") from None
     if not fresh:

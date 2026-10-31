@@ -227,6 +227,28 @@ def test_full_memory_store_fails_closed_instead_of_forgetting(client):
         app.dependency_overrides.clear()
 
 
+def test_nonce_store_runs_off_the_event_loop(client):
+    import asyncio
+
+    seen = {}
+
+    class Probe:
+        def claim(self, nonce, ttl):
+            try:
+                asyncio.get_running_loop()
+                seen["on_loop"] = True
+            except RuntimeError:
+                seen["on_loop"] = False
+            return True
+
+    app.dependency_overrides[sa.get_nonce_store] = lambda: Probe()
+    try:
+        assert client.get(PATH, headers=signed()).status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+    assert seen == {"on_loop": False}, "synchronous database work must not run on the event loop"
+
+
 # ── public surface unchanged ────────────────────────────────────────────────
 def test_health_stays_public_and_protected_routes_stay_locked_in_production(client, monkeypatch):
     monkeypatch.setenv("APP_ENV", "production")
