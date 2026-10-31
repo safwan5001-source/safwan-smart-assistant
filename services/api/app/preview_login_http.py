@@ -43,6 +43,10 @@ async def preview_login(request: Request):
         config.validate(production=True)
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
+    # Explicit deployment gate: never activate peer-IP throttling on an unverified proxy.
+    # This setting alone is not proof of trust; it must follow an ingress audit.
+    if os.getenv("PREVIEW_NETWORK_PEER_VERIFIED") != "1":
+        raise HTTPException(status_code=503, detail="Preview authentication unavailable")
     require_login_origin(request, origin)
     try:
         payload = PreviewLoginRequest.model_validate(await request.json())
