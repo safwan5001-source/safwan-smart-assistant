@@ -9,7 +9,7 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError, Verificatio
 
 # Fixed dummy verifier: unknown accounts perform Argon2id work too.
 # Never derive this from a runtime user password.
-_DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=2$eWFpUjM4RzFzNk5nUE9pNw$KkOUQT89kxc6oYaMaS0QzJ8OzqdWGDvDiWZMky1VnDQ"
+_DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=2$oDzYw88sP3rHvConnCVNlA$WidH6ElUq11M290TBAxumNa1sIqpEomHwSdpmqOOLQ0"
 
 _hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2, hash_len=32, salt_len=16)
 
