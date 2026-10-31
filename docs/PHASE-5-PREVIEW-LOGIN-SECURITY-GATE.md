@@ -29,3 +29,8 @@ All preview auth routes remain disabled by default and gated by `VERCEL_ENV=prev
 - `PREVIEW_NETWORK_PEER_VERIFIED=1` is now additionally required for the preview login route; unset means HTTP 503, without attempting password verification or the database.
 - This is an **operator attestation**, not a way to authenticate forwarded headers. Do not enable it on Vercel merely because the preview deployment has SSO protection. Validate the ASGI peer provenance and enforce trusted edge limits first.
 - A reverse proxy may still collapse many visitors to one IP, causing collective account denial. Resolve this before activation. Production auth remains disabled.
+
+## Shared-network lockout remediation
+- Removed network-wide denial decisions and network bucket failure increments from preview login. Only account-specific attempt buckets can return 429.
+- Network peer parsing remains a fail-closed ingress validation step, not a rate limiter. This avoids denying a different account solely because it shares a NAT or reverse proxy.
+- This change **does not** resolve distributed credential stuffing or per-account denial of service. Verified, trusted edge request limiting and proxy identity remain mandatory before activation; `PREVIEW_NETWORK_PEER_VERIFIED` must remain unset until verified.
