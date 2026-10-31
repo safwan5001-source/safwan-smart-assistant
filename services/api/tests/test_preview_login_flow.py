@@ -42,7 +42,7 @@ def test_success_sets_secure_httponly_cookie(monkeypatch):
     monkeypatch.setattr(login, "lookup_password_account", lambda *args: owner)
     monkeypatch.setattr(login, "reset_failures", lambda *args: None)
     monkeypatch.setattr(login, "create_session", lambda *args: "private-session-token")
-    response = send({"email":"valid@example.test", "password":"long-password-value"})
+    response = send({"email":"valid@gmail.com", "password":"long-password-value"})
     assert response.status_code == 200
     assert response.json() == {"status": "authenticated"}
     cookie = response.headers["set-cookie"].lower()
@@ -57,7 +57,7 @@ def test_invalid_password_returns_generic_401_and_records_failure(monkeypatch):
     monkeypatch.setattr(login, "attempt_permitted", lambda *args: True)
     monkeypatch.setattr(login, "lookup_password_account", lambda *args: None)
     monkeypatch.setattr(login, "record_failed_attempt", lambda *args: hits.append(1))
-    response = send({"email":"unknown@example.test", "password":"wrong-password"})
+    response = send({"email":"unknown@gmail.com", "password":"wrong-password"})
     assert response.status_code == 401
     assert "set-cookie" not in response.headers
     assert hits == [1] and db.committed
@@ -68,6 +68,6 @@ def test_throttled_request_returns_429_without_password_lookup(monkeypatch):
     def forbidden_lookup(*args):
         raise AssertionError("Credential lookup must not happen while locked")
     monkeypatch.setattr(login, "lookup_password_account", forbidden_lookup)
-    response = send({"email":"locked@example.test", "password":"wrong-password"})
+    response = send({"email":"locked@gmail.com", "password":"wrong-password"})
     assert response.status_code == 429
     assert "set-cookie" not in response.headers
