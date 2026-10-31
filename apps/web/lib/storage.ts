@@ -46,10 +46,14 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
   let cachedValue: T = fallback;
   let error: string | null = null;
   let attached = false;
+  // After a failed write (quota/blocked) the in-memory value is the truth: re-reading the stale
+  // persisted value would silently discard the user's latest change. Cleared by the next successful write.
+  let degraded = false;
 
   const notify = () => listeners.forEach((l) => l());
   const read = (): T => {
     if (typeof window === "undefined") return fallback;
+    if (degraded) return cachedValue;
     let raw: string | null = null;
     try {
       raw = backend().api.getItem(key);
@@ -95,9 +99,11 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
         const b = backend();
         b.api.setItem(key, raw);
         error = b.persistent ? null : NOT_SAVED;
+        degraded = !b.persistent;
       } catch {
         memory.set(key, raw);
         error = NOT_SAVED;
+        degraded = true;
       }
       cachedRaw = raw;
       cachedValue = value;
@@ -113,6 +119,7 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
       memory.delete(key);
       cachedRaw = undefined;
       error = null;
+      degraded = false;
       notify();
     },
   };

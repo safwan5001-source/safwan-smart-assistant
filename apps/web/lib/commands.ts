@@ -83,10 +83,12 @@ const mkMessage = (text: string, attachments?: Attachment[], role?: Role): Messa
   return m;
 };
 const patchThread = (id: string, fn: (t: Thread) => Thread) => threadsStore.set((old) => old.map((t) => (t.id === id ? fn(t) : t)));
+const assertRoomForThread = () => { if (threadsStore.getSnapshot().length >= LIMITS.threads) invalid("بلغت الحد الأقصى للمحادثات؛ احذف أو أرشف محادثات قديمة."); };
 const mustThread = (id: string) => threadsStore.getSnapshot().find((t) => t.id === id) ?? invalid("المحادثة غير موجودة.");
 
 const chatCommands = {
   "chat.create": { id: "chat.create", title: "محادثة جديدة", risk: "write", run: (_: object): string => {
+    assertRoomForThread();
     const t: Thread = { id: uid(), title: "محادثة جديدة", created: Date.now(), messages: [] };
     threadsStore.set((old) => [t, ...old]);
     return t.id;
@@ -95,6 +97,7 @@ const chatCommands = {
     const m = mkMessage(p.text, p.attachments, p.role);
     if (!m.text && !m.attachments?.length) invalid("الرسالة فارغة.");
     if (!p.threadId) {
+      assertRoomForThread();
       const t: Thread = { id: uid(), title: titleFrom(m.text, m.attachments), created: Date.now(), messages: [m] };
       threadsStore.set((old) => [t, ...old]);
       return t.id;

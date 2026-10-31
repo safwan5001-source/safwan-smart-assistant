@@ -102,6 +102,16 @@ describe("chat commands", () => {
   });
 });
 
+describe("limits", () => {
+  it("refuses new conversations at the limit instead of silently losing old ones later", async () => {
+    threadsStore.set(Array.from({ length: 500 }, (_, i) => ({ id: "t" + i, title: "t", created: i, messages: [] })));
+    expect((await runCommand("chat.create", {})).status).toBe("invalid");
+    expect((await runCommand("chat.send", { threadId: null, text: "x" })).status).toBe("invalid");
+    expect(threadsStore.getSnapshot()).toHaveLength(500);
+    expect((await runCommand("chat.send", { threadId: "t0", text: "still fine" })).status).toBe("executed");
+  });
+});
+
 describe("quick commands (no AI)", () => {
   it("ignores normal text and unknown slashes", async () => {
     expect((await runQuickCommand("مرحبا")).handled).toBe(false);

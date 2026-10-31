@@ -39,3 +39,24 @@ describe("createStore", () => {
     expect(s.getSnapshot()).toEqual([]);
   });
 });
+
+describe("quota exhaustion", () => {
+  it("keeps the newest in-memory value when the real write is rejected but the probe succeeds", () => {
+    const { data } = installBrowser();
+    const win = (globalThis as unknown as { window: { localStorage: { setItem: (k: string, v: string) => void } } }).window;
+    const realSet = win.localStorage.setItem.bind(win.localStorage);
+    let full = false;
+    win.localStorage.setItem = (k, v) => { if (full && k === "quota") throw new Error("QuotaExceededError"); realSet(k, v); };
+    const s = createStore<Task[]>({ key: "quota", fallback: [], ...jsonCodec(parseTasks, [] as Task[]) });
+    s.set([{ id: "1", title: "old", done: false, created: 1 }]);
+    full = true;
+    s.set((p) => [...p, { id: "2", title: "new", done: false, created: 2 }]);
+    expect(s.getSnapshot().map((t) => t.id)).toEqual(["1", "2"]); // not reverted to the stale persisted ["1"]
+    expect(s.getError()).toMatch(/تعذر الحفظ/);
+    expect(JSON.parse(data.get("quota")!)).toHaveLength(1);
+    full = false;
+    s.set((p) => [...p, { id: "3", title: "x", done: false, created: 3 }]);
+    expect(s.getError()).toBeNull();
+    expect(JSON.parse(data.get("quota")!)).toHaveLength(3);
+  });
+});

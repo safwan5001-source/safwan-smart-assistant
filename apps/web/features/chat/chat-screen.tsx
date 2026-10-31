@@ -1,5 +1,5 @@
 "use client";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import Modal from "@/components/modal";
@@ -26,6 +26,7 @@ export default function ChatScreen() {
   const { status } = useAssistant();
   const desktop = useMediaQuery("(min-width: 900px)");
   const params = useSearchParams();
+  const router = useRouter();
 
   const [selected, setSelected] = useState<string | null>(null); // null = auto, "new" = blank chat
   const [sheet, setSheet] = useState(false);
@@ -49,12 +50,15 @@ export default function ChatScreen() {
   const current = threads.find((t) => t.id === activeId);
   const ready = aiReady(status);
 
+  // A new ?t= target (e.g. from global search while already on /chat) wins over local selection.
+  useEffect(() => { if (fromUrl) { dictation.abort(); setSelected(null); setDraft(""); setAttachments([]); setNotice(""); setSheet(false); } }, [fromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  const syncUrl = (id: string | null) => { if ((params.get("t") ?? null) !== id) router.replace(id ? `/chat?t=${id}` : "/chat", { scroll: false }); };
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [current?.messages.length, activeId]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const resetComposer = () => { dictation.abort(); setDraft(""); setAttachments([]); setNotice(""); };
-  const open = (id: string) => { resetComposer(); setSelected(id); setSheet(false); };
-  const newChat = () => { resetComposer(); setSelected("new"); setSheet(false); };
+  const open = (id: string) => { resetComposer(); setSelected(id); setSheet(false); syncUrl(id); };
+  const newChat = () => { resetComposer(); setSelected("new"); setSheet(false); syncUrl(null); };
 
   const send = async () => {
     const text = draft.trim();
@@ -64,7 +68,7 @@ export default function ChatScreen() {
       const sent = await runCommand("chat.send", { threadId: activeId, text, attachments });
       if (sent.status !== "executed") { setNotice(sent.status === "invalid" ? sent.message : "تعذر إرسال الرسالة."); return; }
       const id = sent.data;
-      setSelected(id); setDraft(""); setAttachments([]); setNotice("");
+      setSelected(id); syncUrl(id); setDraft(""); setAttachments([]); setNotice("");
       const quick = text ? await runQuickCommand(text) : { handled: false };
       if (quick.handled && quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" });
       else if (ready && text) {
