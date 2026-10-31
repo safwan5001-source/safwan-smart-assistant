@@ -1,0 +1,8 @@
+{
+  "name": "@safwan/poc-smoke1",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 Smoke-1 harness (not part of the app; not for production)",
+  "scripts": { "local": "node smoke1.mjs", "mock": "node mock-browserbase.test.mjs", "cloud": "node smoke1.mjs --cloud" },
+  "dependencies": { "playwright-core": "1.63.0" }
+}
