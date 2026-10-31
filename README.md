@@ -19,18 +19,24 @@
 
 ## التشغيل المحلي
 ```bash
-pnpm install
-pnpm dev:web                       # http://localhost:3000
-cd services/api && python -m venv .venv && . .venv/bin/activate && pip install -e '.[test]'
-APP_ENV=development uvicorn app.main:app --reload      # http://127.0.0.1:8000/docs
-API_PROXY_URL=http://127.0.0.1:8000 pnpm dev:web       # لتمرير /backend/* إلى API محلياً
-pnpm check                         # typecheck + lint + vitest + build + pytest
+pnpm install --frozen-lockfile
+cd services/api && uv sync --frozen --extra test --no-install-project && cd ../..   # قفل Python: services/api/uv.lock
+
+# واجهة + خلفية بسر خدمة مشترك (محلياً فقط)
+export SERVICE_AUTH_SECRET="$(openssl rand -base64 48)"
+(cd services/api && APP_ENV=development SERVICE_NONCE_STORE=memory uv run --frozen uvicorn app.main:app --port 8000) &
+BACKEND_URL=http://127.0.0.1:8000 pnpm dev:web     # http://localhost:3000  ← /api/health يثبت الاتصال الموقَّع
+
+# اختبارات PostgreSQL الحقيقية تتطلب قاعدة مؤقتة (لا تستخدم قاعدة حقيقية أبداً)
+export SAFWAN_TEST_DATABASE_URL=postgresql://postgres:***@localhost:5432/postgres REQUIRE_POSTGRES=1
+pnpm check                                          # typecheck + lint + vitest + build + pytest
+pnpm e2e:bff                                        # Next BFF → API (وضع إنتاج) → PostgreSQL، بعمليات حقيقية
 ```
-المتغيرات في [`.env.example`](.env.example). **لا تضع أي سر في متغير يبدأ بـ `NEXT_PUBLIC_`.**
+المتغيرات في [`.env.example`](.env.example). **لا تضع أي سر في متغير يبدأ بـ `NEXT_PUBLIC_`.** التطبيق يقرأ `APP_DATABASE_URL` (دور مقيَّد) ويتجاهل `DATABASE_URL` عمداً.
 
 ## الوثائق
 - [المعمارية](docs/ARCHITECTURE.md) · [خطة التنفيذ والقبول](docs/IMPLEMENTATION.md)
-- [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
+- [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [مراجعة B1 الأمنية](docs/B1-SECURITY-REVIEW.md) · [قائمة إثبات Preview](docs/B1-PREVIEW-CHECKLIST.md) · [سجل القرارات](docs/DECISIONS.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
 
 ## مبادئ معتمدة
 - مستخدم واحد؛ منفصل عن أَوْج. دفترة سيناريو اختبار أول لا نطاق المشروع.
