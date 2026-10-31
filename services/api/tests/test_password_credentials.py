@@ -48,3 +48,20 @@ def test_no_http_login_is_exposed():
     from app.main import app
     client=TestClient(app)
     assert client.post("/auth/login",json={"email":"test@example.invalid","password":"secret"}).status_code==404
+
+def test_unknown_account_performs_dummy_argon2_verification(monkeypatch):
+    from app import password_credentials as credentials
+    seen = []
+    original = credentials.verify_password
+    def spy(password, encoded):
+        seen.append(encoded)
+        return original(password, encoded)
+    monkeypatch.setattr(credentials, "verify_password", spy)
+    assert lookup_password_account(FakeDB(), "absent@example.invalid", "wrong-password") is None
+    assert len(seen) == 1
+    assert seen[0].startswith("$argon2id$")
+
+def test_unknown_account_dummy_hash_is_valid_argon2():
+    from app.password_credentials import _DUMMY_HASH
+    assert verify_password("not-a-real-account-password-constant", _DUMMY_HASH) is True
+    assert verify_password("incorrect", _DUMMY_HASH) is False

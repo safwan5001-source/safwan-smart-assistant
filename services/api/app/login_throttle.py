@@ -21,6 +21,9 @@ def subject_digest(normalized_email: str, server_key: bytes) -> bytes:
 
 def attempt_permitted(connection, subject: bytes, now: datetime | None = None) -> bool:
     instant = now or datetime.now(timezone.utc)
+    # Serialize absent and existing subjects before checking their lock state.
+    # A missing row would otherwise let concurrent requests all pass precheck.
+    connection.execute("SELECT pg_advisory_xact_lock(%s)", (int.from_bytes(subject[:8], "big", signed=True),))
     row = connection.execute(
         "SELECT failure_count, window_started_at, locked_until FROM login_attempt_buckets WHERE subject_key=%s FOR UPDATE",
         (subject,),
