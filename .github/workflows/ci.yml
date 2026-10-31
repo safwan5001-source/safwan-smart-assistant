@@ -1,7 +1,17 @@
 name: Foundation CI
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: foundation-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.13.6"
+
 jobs:
   web:
     runs-on: ubuntu-latest
@@ -13,19 +23,77 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: pnpm install --no-frozen-lockfile
+      # Reproducible installs: fails if pnpm-lock.yaml is missing or out of date.
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck:web
       - run: pnpm lint:web
       - run: pnpm test:web
       - run: pnpm build:web
+
   api:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Disposable CI database. REQUIRE_POSTGRES turns "no database" into a failure, never a silent skip.
+      SAFWAN_TEST_DATABASE_URL: postgresql://postgres:postgres_ci_only@localhost:5432/postgres
+      REQUIRE_POSTGRES: "1"
+    defaults:
+      run:
+        working-directory: services/api
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: python -m pip install -e '.[test]'
+          python-version-file: services/api/.python-version
+      - run: python -m pip install "uv==${UV_VERSION}"
+      - run: uv lock --check
+      - run: uv sync --frozen --extra test --no-install-project
+      - run: uv run --frozen --no-sync pytest -q
+
+  bff-e2e:
+    # Real processes: Next.js BFF -> signed hop -> FastAPI (production mode, restricted DB role) -> PostgreSQL.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SAFWAN_TEST_DATABASE_URL: postgresql://postgres:postgres_ci_only@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: services/api/.python-version
+      - run: python -m pip install "uv==${UV_VERSION}"
+      - run: uv sync --frozen --extra test --no-install-project
         working-directory: services/api
-      - run: pytest -q
-        working-directory: services/api
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:web
+      - run: bash scripts/e2e-bff.sh
+        env:
+          PYTHON: ${{ github.workspace }}/services/api/.venv/bin/python
