@@ -25,3 +25,15 @@ def test_origin_and_body_validation_before_database(monkeypatch):
     assert client.post('/auth/login', json={'email':'test@example.test','password':'pass'}).status_code == 403
     assert client.post('/auth/login', headers={'origin':'https://assistant.example.test'}, json={}).status_code == 422
     assert client.post('/auth/login', headers={'origin':'https://assistant.example.test'}, json={'email':'invalid','password':'pass'}).status_code == 422
+
+def test_preview_login_fails_closed_without_verified_proxy_peer(monkeypatch):
+    monkeypatch.setenv("VERCEL_ENV", "preview")
+    monkeypatch.setenv("SESSION_HTTP_PREVIEW_ENABLED", "1")
+    monkeypatch.delenv("PREVIEW_NETWORK_PEER_VERIFIED", raising=False)
+    monkeypatch.setenv("PUBLIC_ORIGIN", "https://assistant.example.test")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unreachable.invalid/db")
+    monkeypatch.setenv("LOGIN_THROTTLE_HMAC_KEY", "a" * 48)
+    client = TestClient(app, base_url="https://assistant.example.test")
+    response = client.post("/auth/login", headers={"origin":"https://assistant.example.test"}, json={"email":"test@gmail.com","password":"valid-test-secret"})
+    assert response.status_code == 503
+    assert "set-cookie" not in response.headers
