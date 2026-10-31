@@ -42,17 +42,17 @@ export default function Home(){
   const headline: Record<Screen,string>={home:"المحادثات",tasks:"المهام",files:"الملفات",calls:"المكالمات",settings:"الإعدادات"};
   return <div className="app">
     <aside className="sidebar" aria-label="القائمة الرئيسية">
-      <button className="brand" onClick={()=>setScreen("home")} aria-label="العودة للرئيسية"><span className="brand-symbol" aria-hidden="true"><span className="brand-monogram">S</span></span><span><strong>صفوان</strong><small>المساعد الذكي</small></span></button>
+      <button className="brand" onClick={()=>setScreen("home")} aria-label="العودة للرئيسية"><span className="brand-symbol" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><span><strong>صفوان</strong><small>المساعد الذكي</small></span></button>
       <div className="nav-list">{nav.map(item=><button key={item.id} className={"nav-item "+(screen===item.id?"selected":"")} onClick={()=>setScreen(item.id)} aria-current={screen===item.id?"page":undefined}><span className="nav-icon" aria-hidden="true"><AppIcon name={item.icon} /></span>{item.label}</button>)}</div>
       <div className="sidebar-foot"><span className="state-indicator"/> النسخة التأسيسية <small>الخدمات غير متصلة</small></div>
     </aside>
     <div className="workspace">
-      <header className="topbar"><div className="wordmark"><span className="brand-symbol small" aria-hidden="true"><span className="brand-monogram">S</span></span><span>مساعد صفوان الذكي</span></div><span className="private-label">نسخة تجريبية محلية</span></header>
+      <header className="topbar"><div className="wordmark"><span className="brand-symbol small" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><span>مساعد صفوان الذكي</span></div><span className="private-label">نسخة تجريبية محلية</span></header>
       <main className="content">
         <div className="page-top"><span className="eyebrow">SAFWAN INTELLIGENCE / WORKSPACE</span><h1>{headline[screen]}</h1></div>
         {screen==="home"&&<div className="home-view"><ChatWorkspace /></div>}
         {screen==="settings"&&<div className="settings-view">
-          <div className="settings-intro">خصّص تجربة مساعد صفوان. تُحفظ إعدادات العرض على هذا الجهاز فقط، ولا توجد مزامنة أو حساب متصل حالياً.</div><section className="settings-overview" aria-label="حالة التطبيق"><span className="settings-overview-mark" aria-hidden="true">S</span><div><strong>مساعد صفوان الذكي</strong><small>معاينة التصميم • الخدمات الذكية غير متصلة</small></div></section>
+          <div className="settings-intro">خصّص تجربة مساعد صفوان. تُحفظ إعدادات العرض على هذا الجهاز فقط، ولا توجد مزامنة أو حساب متصل حالياً.</div><section className="settings-overview" aria-label="حالة التطبيق"><span className="settings-overview-mark" aria-hidden="true"><img src="/safwan-logo.svg" alt="" /></span><div><strong>مساعد صفوان الذكي</strong><small>معاينة التصميم • الخدمات الذكية غير متصلة</small></div></section>
           <section className="setting-card"><h2>المظهر</h2><p>اختر المظهر المناسب، أو دع النظام يحدد الوضع تلقائياً.</p><div className="theme-options" role="group" aria-label="المظهر">
             {([{id:"system",label:"تلقائي",symbol:"◐"},{id:"light",label:"فاتح",symbol:"☼"},{id:"dark",label:"داكن",symbol:"☾"}] as const).map(opt=><button aria-pressed={theme===opt.id} className={"theme-option "+(theme===opt.id?"active":"")} key={opt.id} onClick={()=>setTheme(opt.id)}><span>{opt.symbol}</span>{opt.label}</button>)}
           </div><label className="switch-row"><span><strong>عرض مدمج</strong><small>تقليل المسافات بين عناصر الواجهة</small></span><input type="checkbox" checked={compact} onChange={e=>setCompact(e.target.checked)}/></label></section>
