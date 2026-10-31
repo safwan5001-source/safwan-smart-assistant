@@ -65,3 +65,7 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_rls_ci.sql
       - name: Verify persisted session lifecycle and owner isolation
         run: psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_sessions_ci.sql
+      - name: Verify preview login throttle storage
+        run: |
+          psql -v ON_ERROR_STOP=1 -f services/api/schema/phase5_login_throttle_draft.sql
+          psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_throttle_ci.sql
