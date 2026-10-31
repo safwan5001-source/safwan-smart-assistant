@@ -29,6 +29,7 @@
 | 10 | الأسرار غير مقيَّدة الشكل | يُرفض أي سر غير `token_urlsafe(32)` (43 حرفاً) **قبل** أي استعلام | `test_malformed_secrets_never_reach_the_database` |
 | 11 | `csrf_proof` يستخدم وسماً خاصاً بالخروج (`safwan:logout:csrf:v1`) | مؤجَّل لـ B2 مع تعميمه | — |
 | 12 | الاتصال لكل طلب بلا مهلة بيان | `statement_timeout` محلي للمعاملة (5ث افتراضياً) | `owner_transaction` |
+| 14 | (مراجعة Codex، P1) دالتا `SECURITY DEFINER` بلا `pg_temp` صريح: PostgreSQL يبحث في المخطط المؤقت **أولاً** عن الجداول، فيستطيع دور التشغيل (يملك TEMP افتراضياً) إنشاء `sessions`/`accounts`/`service_nonces` مؤقتة تستخدمها دالة بصلاحيات المالك — **أثبتُّ عملياً** أن جدولاً مؤقتاً مزيّفاً كان يجعل `auth_resolve_session` تُرجع حساب الضحية | `search_path = pg_catalog, public, pg_temp` + تأهيل كل الجداول بـ `public.` | `tests/test_definer_hardening.py` (5 اختبارات: تزوير جلسة، التقاط nonce، trigger بصلاحيات المالك، تثبيت المسار، فحص الأسماء المؤهلة) |
 | 13 | (اكتُشف أثناء B1) ترحيل 0001 يفشل مع مالك **غير superuser** كما في Neon: `ALTER ROLE … NOSUPERUSER` مرفوض | الترحيل **يتحقق** من أن `safwan_app` غير مميّز ويرفض المتابعة بدل تعديله | `test_migrations_run_as_a_non_superuser_owner`, `test_a_preexisting_overprivileged...` |
 
 **اختبارات الطفرات (تحقق أن الاختبارات تكشف الخلل):** أُفسدت ثلاث مرات مؤقتاً — `USING (true)` على `sync_records` (فشل 8 اختبارات)، `WITH CHECK (true)` على `sessions` (كُشف بعد إضافة اختبار #8؛ **لم يكن مكشوفاً قبل ذلك**)، وتجاهل `revoked_at` (فشل اختباران) — ثم أُعيدت الملفات كما كانت.

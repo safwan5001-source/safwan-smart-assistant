@@ -63,11 +63,14 @@ GRANT UPDATE (revoked_at, last_seen_at) ON sessions TO safwan_app;  -- nothing e
 
 -- Pre-authentication lookup: the caller does not know the account yet, so this is the single
 -- SECURITY DEFINER entry point. It answers only "which active account owns this token hash?".
+-- Hardening for every SECURITY DEFINER function here: pg_temp is listed EXPLICITLY and LAST (otherwise PostgreSQL searches
+-- the temporary schema first for relations, and a runtime login with the default TEMP privilege could shadow our tables),
+-- and every relation is schema-qualified as defence in depth.
 CREATE FUNCTION auth_resolve_session(p_token_hash bytea) RETURNS uuid
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
   SELECT s.account_id
-    FROM sessions s JOIN accounts a ON a.id = s.account_id
+    FROM public.sessions s JOIN public.accounts a ON a.id = s.account_id
    WHERE s.token_hash = p_token_hash
      AND s.revoked_at IS NULL
      AND s.expires_at > now()          -- one clock: the database's
@@ -86,7 +89,7 @@ CREATE INDEX service_nonces_expiry ON service_nonces (expires_at);
 REVOKE ALL ON service_nonces FROM PUBLIC;
 
 CREATE FUNCTION auth_claim_nonce(p_nonce_hash bytea, p_ttl_seconds integer) RETURNS boolean
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp
 AS $$
 DECLARE
   claimed integer;
@@ -97,10 +100,10 @@ BEGIN
   IF p_ttl_seconds IS NULL OR p_ttl_seconds < 1 OR p_ttl_seconds > 3600 THEN
     RAISE EXCEPTION 'invalid ttl';
   END IF;
-  DELETE FROM service_nonces WHERE nonce_hash = p_nonce_hash AND expires_at <= now();
-  DELETE FROM service_nonces
-   WHERE nonce_hash IN (SELECT nonce_hash FROM service_nonces WHERE expires_at <= now() LIMIT 100);  -- bounded housekeeping
-  INSERT INTO service_nonces (nonce_hash, expires_at)
+  DELETE FROM public.service_nonces WHERE nonce_hash = p_nonce_hash AND expires_at <= now();
+  DELETE FROM public.service_nonces
+   WHERE nonce_hash IN (SELECT nonce_hash FROM public.service_nonces WHERE expires_at <= now() LIMIT 100);  -- bounded housekeeping
+  INSERT INTO public.service_nonces (nonce_hash, expires_at)
   VALUES (p_nonce_hash, now() + make_interval(secs => p_ttl_seconds))
   ON CONFLICT (nonce_hash) DO NOTHING;
   GET DIAGNOSTICS claimed = ROW_COUNT;
