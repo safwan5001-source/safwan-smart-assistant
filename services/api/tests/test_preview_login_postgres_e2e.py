@@ -21,7 +21,7 @@ def test_login_issues_persisted_session_and_rejects_wrong_password(monkeypatch):
     monkeypatch.setenv("PUBLIC_ORIGIN","https://assistant.example.test")
     monkeypatch.setenv("DATABASE_URL",dsn)
     monkeypatch.setenv("LOGIN_THROTTLE_HMAC_KEY","ci-only-ephemeral-key-with-sufficient-length-0001")
-    client=TestClient(app,base_url="https://assistant.example.test")
+    client=TestClient(app,base_url="https://assistant.example.test",client=("192.0.2.42",54321))
     headers={"origin":"https://assistant.example.test"}
     bad=client.post("/auth/login",headers=headers,json={"email":email,"password":"wrong-password"})
     assert bad.status_code==401
