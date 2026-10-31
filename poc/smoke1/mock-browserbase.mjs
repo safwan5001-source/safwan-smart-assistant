@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = (() => { for (const n of ["playwright-core", "playwright"]) { try { return require(n); } catch {} } throw new Error("playwright missing"); })();
 
 export const MOCK_KEY = "mock-key-0000";
-export async function startMock({ bearer = true } = {}) {
+export async function startMock({ bearer = true, badConnect = false, liveBroken = false, releaseKeepsLive = false } = {}) {
   const sessions = new Map(); // id -> { browser, status, live: { token, exp } }
   const log = [];
   const sockets = new Set(); // upgraded sockets are not tracked by closeAllConnections()
@@ -16,9 +16,10 @@ export async function startMock({ bearer = true } = {}) {
     const json = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
     log.push(`${req.method} ${url.pathname}`);
     if (url.pathname.startsWith("/live/")) { // the "live view" page
+      if (liveBroken) return res.socket.destroy(); // transport failure, no HTTP answer
       const token = url.pathname.slice(6);
       const s = [...sessions.values()].find((x) => x.live?.token === token);
-      const ok = s && s.status === "RUNNING" && Date.now() < s.live.exp && (bearer || (req.headers.cookie ?? "").includes("app_session="));
+      const ok = s && (s.status === "RUNNING" || releaseKeepsLive) && Date.now() < s.live.exp && (bearer || (req.headers.cookie ?? "").includes("app_session="));
       res.writeHead(ok ? 200 : 403, { "content-type": "text/html" }); return res.end(ok ? "<title>Mock live view</title>" : "forbidden");
     }
     if (req.headers["x-bb-api-key"] !== MOCK_KEY) return json(401, { message: "unauthorized" });
@@ -26,10 +27,14 @@ export async function startMock({ bearer = true } = {}) {
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : undefined;
     if (req.method === "POST" && url.pathname === "/v1/sessions") {
       if (!(body.timeout >= 60 && body.timeout <= 21600) || body.keepAlive !== false || !body.browserSettings?.viewport) return json(400, { message: "bad request" });
+      const id = crypto.randomUUID();
+      if (badConnect) { // a connect URL that carries a secret and points nowhere: the CDP error must not leak it
+        sessions.set(id, { browser: { close: async () => {} }, status: "RUNNING" });
+        return json(201, { id, status: "RUNNING", expiresAt: new Date(Date.now() + body.timeout * 1000).toISOString(), connectUrl: "ws://127.0.0.1:1/devtools/browser/abc?signingKey=SECRET-TOKEN-XYZ-0123456789", seleniumRemoteUrl: "http://x", signingKey: "SECRET-SIGNING-KEY-ABCDEFG", projectId: "p", region: "us-west-2", keepAlive: false });
+      }
       const port = 9300 + Math.floor(Math.random() * 500);
       const browser = await chromium.launch({ args: [`--remote-debugging-port=${port}`] });
       const ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-      const id = crypto.randomUUID();
       sessions.set(id, { browser, status: "RUNNING" });
       return json(201, { id, status: "RUNNING", expiresAt: new Date(Date.now() + body.timeout * 1000).toISOString(), connectUrl: ver.webSocketDebuggerUrl, seleniumRemoteUrl: "http://x", signingKey: "mock-signing-key", projectId: "p", region: "us-west-2", keepAlive: false });
     }

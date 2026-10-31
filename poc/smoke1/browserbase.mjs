@@ -21,6 +21,18 @@ export function mask(url) {
   try { const u = new URL(url); return `${u.protocol}//${u.host}/…(${u.pathname.length} path chars, ${u.search ? "query present" : "no query"})`; } catch { return "(unparseable url)"; }
 }
 
+// Error text from Playwright/undici can contain the full connect URL (with its signing key) or a live-view URL. Anything that
+// reaches a console line or a report goes through this: known secrets are removed verbatim, every URL becomes "[url]", and any
+// long token-looking run is dropped, so the message is useful (error class, rough cause) but cannot carry a credential.
+export function redact(text, secrets = []) {
+  let t = String(text ?? "");
+  for (const s of secrets) if (typeof s === "string" && s.length >= 6) t = t.split(s).join("[redacted]");
+  t = t.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>)\]]+/gi, "[url]");
+  t = t.replace(/\b(signingKey|token|apikey|api_key|key|secret|password)=[^\s&"']+/gi, "$1=[redacted]");
+  t = t.replace(/[A-Za-z0-9_\-.]{24,}/g, "[token]");
+  return t;
+}
+
 export function createClient({ apiKey, base = DEFAULT_BASE, fetchImpl = fetch, timeoutMs = 20_000 }) {
   if (!apiKey) throw new Error("BROWSERBASE_API_KEY is not set");
   const call = async (op, method, path, body) => {
