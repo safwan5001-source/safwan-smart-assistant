@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import Icon from "@/components/icon";
+import IntegrationLogo from "@/components/integration-logo";
 import Modal from "@/components/modal";
 import { Badge, Empty, Notice, PageHeader } from "@/components/ui";
 import { CATEGORY_LABEL, INTEGRATIONS, STATUS_LABEL, type IntegrationDef, type IntegrationStatus } from "@/lib/integrations";
@@ -39,7 +40,7 @@ export default function IntegrationsScreen() {
           {shown.map((i) => (
             <li key={i.id}>
               <button className="card int-card" onClick={() => setDetail(i)} aria-haspopup="dialog" aria-label={`${i.name} — ${STATUS_LABEL[i.status].label}. عرض التفاصيل`}>
-                <span className="int-head"><span className="int-ico" aria-hidden="true">{i.name.slice(0, 1)}</span><Badge tone={statusTone(i.status)}>{STATUS_LABEL[i.status].label}</Badge></span>
+                <span className="int-head"><IntegrationLogo integration={i} /><Badge tone={statusTone(i.status)}>{STATUS_LABEL[i.status].label}</Badge></span>
                 <strong>{i.name}</strong>
                 <small className="muted">{CATEGORY_LABEL[i.category] ?? i.category}</small>
                 <span className="muted" style={{ fontSize: 13.5 }}>{i.description}</span>
@@ -71,7 +72,7 @@ export default function IntegrationsScreen() {
       <Modal open={!!detail} onClose={() => setDetail(null)} label={detail ? detail.name : "تفاصيل"}>
         {detail && (
           <div className="dialog-card">
-            <div className="row"><span className="int-ico" aria-hidden="true">{detail.name.slice(0, 1)}</span><div style={{ flex: 1 }}><h2>{detail.name}</h2><small className="muted">{CATEGORY_LABEL[detail.category]}</small></div><button className="icon-btn" onClick={() => setDetail(null)} aria-label="إغلاق"><Icon name="close" size={20} /></button></div>
+            <div className="row"><IntegrationLogo integration={detail} /><div style={{ flex: 1 }}><h2>{detail.name}</h2><small className="muted">{CATEGORY_LABEL[detail.category]}</small></div><button className="icon-btn" onClick={() => setDetail(null)} aria-label="إغلاق"><Icon name="close" size={20} /></button></div>
             <p>{detail.description}</p>
             <div className="status-line" style={{ padding: 0, border: 0 }}><span><strong>الحالة</strong><small>{STATUS_LABEL[detail.status].hint}</small></span><Badge tone={statusTone(detail.status)}>{STATUS_LABEL[detail.status].label}</Badge></div>
             <div><h3 style={{ marginBlockEnd: 6 }}>الصلاحيات المطلوبة</h3>
