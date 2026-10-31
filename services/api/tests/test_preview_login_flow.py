@@ -71,3 +71,15 @@ def test_throttled_request_returns_429_without_password_lookup(monkeypatch):
     response = send({"email":"locked@gmail.com", "password":"wrong-password"})
     assert response.status_code == 429
     assert "set-cookie" not in response.headers
+
+def test_login_offloads_blocking_work_to_worker(monkeypatch):
+    configured(monkeypatch)
+    seen=[]
+    async def worker(func):
+        seen.append(True)
+        return func()
+    monkeypatch.setattr(login, "run_in_threadpool", worker)
+    monkeypatch.setattr(login, "attempt_permitted", lambda *args: False)
+    response=send({"email":"locked@gmail.com","password":"wrong-password"})
+    assert response.status_code==429
+    assert seen==[True]
