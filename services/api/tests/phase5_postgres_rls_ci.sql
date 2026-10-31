@@ -27,13 +27,16 @@ BEGIN
  IF EXISTS (SELECT 1 FROM sync_records WHERE account_id='22222222-2222-4222-8222-222222222222') THEN
    RAISE EXCEPTION 'FAIL: cross-owner read';
  END IF;
- IF (SELECT count(*) FROM (UPDATE sync_records SET body='{"wrong":true}' WHERE account_id='22222222-2222-4222-8222-222222222222' RETURNING id) AS illegal_write) <> 0 THEN
+ UPDATE sync_records SET body='{"wrong":true}' WHERE account_id='22222222-2222-4222-8222-222222222222';
+ IF FOUND THEN
    RAISE EXCEPTION 'FAIL: cross-owner write';
  END IF;
- IF (SELECT count(*) FROM (UPDATE sync_records SET body='{"name":"new"}',revision=revision+1 WHERE account_id='11111111-1111-4111-8111-111111111111' AND revision=999 RETURNING id) AS stale_update) <> 0 THEN
+ UPDATE sync_records SET body='{"name":"new"}',revision=revision+1 WHERE account_id='11111111-1111-4111-8111-111111111111' AND revision=999;
+ IF FOUND THEN
    RAISE EXCEPTION 'FAIL: stale revision accepted';
  END IF;
- IF (SELECT count(*) FROM (UPDATE sync_records SET body='{"name":"new"}',revision=revision+1 WHERE account_id='11111111-1111-4111-8111-111111111111' AND revision=1 RETURNING id) AS correct_update) <> 1 THEN
+ UPDATE sync_records SET body='{"name":"new"}',revision=revision+1 WHERE account_id='11111111-1111-4111-8111-111111111111' AND revision=1;
+ IF NOT FOUND THEN
    RAISE EXCEPTION 'FAIL: valid revision rejected';
  END IF;
 END $$;
