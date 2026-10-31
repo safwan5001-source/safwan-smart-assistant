@@ -19,3 +19,8 @@ Status: **draft only**. Last green CI is not production authorization.
 8. **Security review:** cover credential stuffing, timing leaks, CSRF, session fixation, same-site vs cross-site usage, abuse limits, audit logging without secrets and password recovery.
 
 All preview auth routes remain disabled by default and gated by `VERCEL_ENV=preview`. The feature branch is not production-ready.
+
+## Network throttling implementation status
+- Preview login now checks both account and ASGI peer buckets within a transaction; failures increment both and success resets only the account bucket.
+- **Not production-safe behind an unverified proxy:** `request.client.host` may be the proxy address rather than the actual user IP. Do not enable this feature on Vercel until trusted proxy forwarding and edge-level rate limiting are verified. A shared proxy bucket can deny all users behind it.
+- Account and peer lockouts still require abuse tests and recovery rules before public activation.
