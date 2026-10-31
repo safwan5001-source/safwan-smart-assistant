@@ -1,5 +1,4 @@
 "use client";
-import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Icon, { type IconName } from "@/components/icon";
 import Modal from "@/components/modal";
@@ -7,6 +6,7 @@ import { Empty, ListSkeleton, Notice, PageHeader } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
 import { deleteFile, downloadBlob, fileKind, listFiles, MAX_FILE_BYTES, putFiles, toLocalFiles, tooLarge, type LocalFile } from "@/lib/files-db";
 import { formatSize, formatTime } from "@/lib/format";
+import { useUrlQuery } from "@/lib/hooks";
 import { matches } from "@/lib/search";
 
 type Kind = "all" | "image" | "pdf" | "sheet" | "doc" | "other";
@@ -15,12 +15,12 @@ const ICON: Record<Exclude<Kind, "all">, IconName> = { image: "image", pdf: "pdf
 
 export default function FilesScreen() {
   const { confirm, toast } = useDialogs();
-  const params = useSearchParams();
   const [files, setFiles] = useState<LocalFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [query, setQuery] = useState(params.get("q") ?? "");
+  const [query, setQuery] = useState("");
+  useUrlQuery(setQuery);
   const [kind, setKind] = useState<Kind>("all");
   const [over, setOver] = useState(false);
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null);

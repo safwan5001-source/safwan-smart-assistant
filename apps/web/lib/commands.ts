@@ -133,10 +133,12 @@ const chatCommands = {
 
 // ── data ────────────────────────────────────────────────────────────────
 const dataCommands = {
-  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: async (_: object) => {
+  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: async (_: object): Promise<{ filesCleared: boolean }> => {
     tasksStore.reset(); threadsStore.reset(); activityStore.reset();
-    await clearFiles().catch(() => undefined);
-  } } satisfies Def<object, Promise<void>>,
+    // Report (don't hide) a failure to clear files so the UI never claims a complete wipe it didn't do.
+    const filesCleared = await clearFiles().then(() => true, () => false);
+    return { filesCleared };
+  } } satisfies Def<object, Promise<{ filesCleared: boolean }>>,
 };
 
 const COMMANDS = { ...taskCommands, ...chatCommands, ...dataCommands } as const;
