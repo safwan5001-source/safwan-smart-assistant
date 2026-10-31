@@ -17,27 +17,13 @@ type Options<T> = { key: string; fallback: T; decode: (raw: string | null) => T;
 
 const memory = new Map<string, string>();
 
-type Backend = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-function backend(): { api: Backend; persistent: boolean } {
+/** The real localStorage if the browser exposes it (it can still reject writes when full). */
+function ls(): Storage | null {
   try {
-    if (typeof window !== "undefined" && window.localStorage) {
-      const probe = "__safwan_probe__";
-      window.localStorage.setItem(probe, "1");
-      window.localStorage.removeItem(probe);
-      return { api: window.localStorage, persistent: true };
-    }
+    return typeof window !== "undefined" && window.localStorage ? window.localStorage : null;
   } catch {
-    /* blocked (private mode, policy): fall through to memory */
+    return null; // access itself blocked by policy
   }
-  return {
-    persistent: false,
-    api: {
-      getItem: (k) => memory.get(k) ?? null,
-      setItem: (k, v) => void memory.set(k, v),
-      removeItem: (k) => void memory.delete(k),
-    },
-  };
 }
 
 export function createStore<T>({ key, fallback, decode, encode }: Options<T>): Store<T> {
@@ -56,9 +42,9 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
     if (degraded) return cachedValue;
     let raw: string | null = null;
     try {
-      raw = backend().api.getItem(key);
+      raw = ls()?.getItem(key) ?? memory.get(key) ?? null;
     } catch {
-      raw = null;
+      raw = memory.get(key) ?? null;
     }
     if (raw === cachedRaw) return cachedValue;
     cachedRaw = raw;
@@ -96,10 +82,12 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
       const raw = encode(value);
       const NOT_SAVED = "تعذر الحفظ على هذا الجهاز؛ التغييرات ستبقى حتى إغلاق الصفحة فقط.";
       try {
-        const b = backend();
-        b.api.setItem(key, raw);
-        error = b.persistent ? null : NOT_SAVED;
-        degraded = !b.persistent;
+        const storage = ls();
+        if (!storage) throw new Error("no storage");
+        storage.setItem(key, raw);
+        memory.delete(key);
+        error = null;
+        degraded = false;
       } catch {
         memory.set(key, raw);
         error = NOT_SAVED;
@@ -112,7 +100,7 @@ export function createStore<T>({ key, fallback, decode, encode }: Options<T>): S
     getError: () => error,
     reset() {
       try {
-        backend().api.removeItem(key);
+        ls()?.removeItem(key);
       } catch {
         /* ignore */
       }

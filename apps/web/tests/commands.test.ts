@@ -58,7 +58,10 @@ describe("permission enforcement in the command layer", () => {
   it("erase_all wipes data after user approval and leaves no activity trail", async () => {
     await runCommand("tasks.add", { title: "a" });
     await runCommand("chat.send", { threadId: null, text: "hi" });
-    expect((await runCommand("data.erase_all", {}, { approved: true })).status).toBe("executed");
+    const wipe = await runCommand("data.erase_all", {}, { approved: true });
+    expect(wipe.status).toBe("executed");
+    // no IndexedDB in node: the wipe must say the files were NOT cleared rather than claim success
+    expect(wipe.status === "executed" && wipe.data.filesCleared).toBe(false);
     expect(tasksStore.getSnapshot()).toEqual([]);
     expect(threadsStore.getSnapshot()).toEqual([]);
     expect(activityStore.getSnapshot()).toEqual([]);

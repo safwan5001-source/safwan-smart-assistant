@@ -1,11 +1,10 @@
 "use client";
-import { useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import Icon from "@/components/icon";
 import Modal from "@/components/modal";
 import { Badge, Empty, ListSkeleton, Notice, PageHeader } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
-import { useHydrated, useStore, useStoreError } from "@/lib/hooks";
+import { useHydrated, useStore, useStoreError, useUrlQuery } from "@/lib/hooks";
 import { tasksStore } from "@/lib/stores";
 import { runCommand } from "@/lib/commands";
 import type { Priority, Task } from "@/lib/domain";
@@ -22,7 +21,6 @@ export default function TasksScreen() {
   const tasks = useStore(tasksStore);
   const storageError = useStoreError(tasksStore);
   const { confirm, toast } = useDialogs();
-  const params = useSearchParams();
 
   const [title, setTitle] = useState("");
   const [priority, setPriority] = useState<Priority>("normal");
@@ -30,7 +28,8 @@ export default function TasksScreen() {
   const [formError, setFormError] = useState("");
   const [filter, setFilter] = useState<Filter>("pending");
   const [sort, setSort] = useState<Sort>("due");
-  const [query, setQuery] = useState(params.get("q") ?? "");
+  const [query, setQuery] = useState("");
+  useUrlQuery(setQuery);
   const [editing, setEditing] = useState<Task | null>(null);
 
   const today = localDateKey();
