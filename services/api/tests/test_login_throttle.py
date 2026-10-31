@@ -26,7 +26,8 @@ def test_expired_lock_is_allowed_and_live_lock_denied():
     assert not attempt_permitted(db,s,NOW)
     db.row=(5,NOW-timedelta(minutes=20),NOW-timedelta(seconds=1))
     assert attempt_permitted(db,s,NOW)
-    assert "FOR UPDATE" in db.calls[0][0]
+    assert "pg_advisory_xact_lock" in db.calls[0][0]
+    assert "FOR UPDATE" in db.calls[1][0]
 
 def test_failure_and_reset_are_parameterized():
     db=DB()
