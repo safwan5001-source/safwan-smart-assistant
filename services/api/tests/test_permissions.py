@@ -18,3 +18,13 @@ def test_sensitive_is_never_auto_allowed():
 
 def test_matrix_is_complete():
     assert len(policy_matrix()) == len(M) * len(R)
+
+
+def test_matches_shared_matrix_used_by_the_web_app():
+    import json
+    from pathlib import Path
+
+    shared = json.loads((Path(__file__).resolve().parents[3] / "shared" / "permission-matrix.json").read_text(encoding="utf-8"))
+    expected = {(r["mode"], r["risk"]): r["verdict"] for r in shared["matrix"]}
+    actual = {(r["mode"], r["risk"]): r["verdict"] for r in policy_matrix()}
+    assert actual == expected
