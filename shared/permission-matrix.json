@@ -1,0 +1,50 @@
+{
+  "_comment": "Single source of truth for the permission policy. Verified against services/api/app/permissions.py and apps/web/lib/permissions.ts by their test suites.",
+  "matrix": [
+    {
+      "mode": "review",
+      "risk": "read",
+      "verdict": "allow"
+    },
+    {
+      "mode": "review",
+      "risk": "write",
+      "verdict": "deny"
+    },
+    {
+      "mode": "review",
+      "risk": "sensitive",
+      "verdict": "deny"
+    },
+    {
+      "mode": "execute",
+      "risk": "read",
+      "verdict": "allow"
+    },
+    {
+      "mode": "execute",
+      "risk": "write",
+      "verdict": "allow"
+    },
+    {
+      "mode": "execute",
+      "risk": "sensitive",
+      "verdict": "require_approval"
+    },
+    {
+      "mode": "approve",
+      "risk": "read",
+      "verdict": "allow"
+    },
+    {
+      "mode": "approve",
+      "risk": "write",
+      "verdict": "require_approval"
+    },
+    {
+      "mode": "approve",
+      "risk": "sensitive",
+      "verdict": "require_approval"
+    }
+  ]
+}
