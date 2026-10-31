@@ -18,6 +18,7 @@ def test_login_issues_persisted_session_and_rejects_wrong_password(monkeypatch):
         conn.execute("INSERT INTO account_password_credentials (account_id,password_hash) VALUES (%s,%s)",(owner,hash_password(password)))
     monkeypatch.setenv("VERCEL_ENV","preview")
     monkeypatch.setenv("SESSION_HTTP_PREVIEW_ENABLED","1")
+    monkeypatch.setenv("PREVIEW_NETWORK_PEER_VERIFIED","1")
     monkeypatch.setenv("PUBLIC_ORIGIN","https://assistant.example.test")
     monkeypatch.setenv("DATABASE_URL",dsn)
     monkeypatch.setenv("LOGIN_THROTTLE_HMAC_KEY","ci-only-ephemeral-key-with-sufficient-length-0001")
