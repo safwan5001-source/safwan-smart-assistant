@@ -17,6 +17,7 @@ def test_login_not_advertised():
 def test_origin_and_body_validation_before_database(monkeypatch):
     monkeypatch.setenv('VERCEL_ENV', 'preview')
     monkeypatch.setenv('SESSION_HTTP_PREVIEW_ENABLED', '1')
+    monkeypatch.setenv('PREVIEW_NETWORK_PEER_VERIFIED', '1')
     monkeypatch.setenv('PUBLIC_ORIGIN', 'https://assistant.example.test')
     monkeypatch.setenv('DATABASE_URL', 'postgresql://unreachable.invalid/db')
     monkeypatch.setenv('LOGIN_THROTTLE_HMAC_KEY', 'a' * 48)
