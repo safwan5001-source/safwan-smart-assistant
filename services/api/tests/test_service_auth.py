@@ -349,3 +349,61 @@ def test_body_up_to_the_limit_is_accepted_and_still_readable_downstream(client):
         assert r.status_code == 200 and r.json() == {"len": 1000}
     finally:
         app.router.routes[:] = [rt for rt in app.router.routes if getattr(rt, "path", "") != "/internal/v1/echo-len"]
+
+
+# ── freshness must also hold at the moment the nonce is claimed (after a slow body) ──
+def test_a_slowly_delivered_body_cannot_outlive_the_nonce_retention_window():
+    """Replay attempt: valid headers, then the body trickles in until the original nonce has expired from the store.
+    Freshness is therefore re-checked right before claiming, so a request can never be accepted later than ts+SKEW."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from app.config import get_settings
+
+    ts = 1_800_000_000
+    clock = {"now": float(ts)}
+    h = signed(ts=ts)  # signed for ts; the first freshness check happens at "now == ts"
+    scope = {"type": "http", "method": "GET", "path": PATH, "query_string": b"", "headers": [(k.encode(), v.encode()) for k, v in h.items()]}
+    calls = {"n": 0}
+
+    async def receive():
+        calls["n"] += 1
+        clock["now"] = ts + sa.NONCE_TTL_SECONDS + 1  # the body takes "181 seconds" to arrive
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    real_time = sa.time.time
+    sa.time.time = lambda: clock["now"]
+    try:
+        store = MemoryNonceStore()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(sa.require_service_call(Request(scope, receive), get_settings(), store))
+        assert exc.value.status_code == 401
+        assert store._seen == {}, "the nonce must not even be claimed for a stale request"
+    finally:
+        sa.time.time = real_time
+
+
+def test_body_reading_has_a_deadline(client):
+    import asyncio
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    from app.config import get_settings
+
+    h = signed()
+    scope = {"type": "http", "method": "GET", "path": PATH, "query_string": b"", "headers": [(k.encode(), v.encode()) for k, v in h.items()]}
+
+    async def receive():  # a client that never finishes sending
+        await asyncio.sleep(3600)
+
+    old = sa.BODY_READ_DEADLINE_SECONDS
+    sa.BODY_READ_DEADLINE_SECONDS = 0.05
+    try:
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(sa.require_service_call(Request(scope, receive), get_settings(), MemoryNonceStore()))
+        assert exc.value.status_code == 408
+    finally:
+        sa.BODY_READ_DEADLINE_SECONDS = old

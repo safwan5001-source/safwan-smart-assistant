@@ -10,7 +10,8 @@ cd "$(dirname "$0")/.."
 PYTHON="${PYTHON:-python}"
 API_PORT="${API_PORT:-8765}"; WEB_PORT="${WEB_PORT:-3101}"
 SECRET="e2e-secret-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-DB="safwan_e2e_$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+RAND="$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+DB="safwan_e2e_$RAND"; LOGIN_ROLE="safwan_e2e_login_$RAND"   # roles are cluster-wide: never share a fixed name with other tooling
 PIDS=(); FAILS=0
 pass() { echo "PASS  $1"; }
 fail() { echo "FAIL  $1"; FAILS=$((FAILS+1)); }
@@ -18,7 +19,10 @@ check() { if [ "$2" = "$3" ]; then pass "$1"; else fail "$1 (expected '$3', got 
 cleanup() {
   for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null || true; done
   "$PYTHON" - <<PY 2>/dev/null || true
-import psycopg; psycopg.connect("$SAFWAN_TEST_DATABASE_URL", autocommit=True).execute('DROP DATABASE IF EXISTS "$DB" WITH (FORCE)')
+import psycopg
+c = psycopg.connect("$SAFWAN_TEST_DATABASE_URL", autocommit=True)
+c.execute('DROP DATABASE IF EXISTS "$DB" WITH (FORCE)')
+c.execute('DROP ROLE IF EXISTS $LOGIN_ROLE')
 PY
 }
 trap cleanup EXIT
@@ -38,8 +42,8 @@ DSN_RUNTIME=$("$PYTHON" - <<PY
 import psycopg
 from psycopg.conninfo import make_conninfo
 c=psycopg.connect("$DSN_OWNER", autocommit=True)
-c.execute("DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='safwan_login') THEN CREATE ROLE safwan_login LOGIN PASSWORD 'e2e' IN ROLE safwan_app NOSUPERUSER NOBYPASSRLS; END IF; END \$\$")
-print(make_conninfo("$DSN_OWNER", user="safwan_login", password="e2e"))
+c.execute("CREATE ROLE $LOGIN_ROLE LOGIN PASSWORD 'e2e' IN ROLE safwan_app NOSUPERUSER NOBYPASSRLS")
+print(make_conninfo("$DSN_OWNER", user="$LOGIN_ROLE", password="e2e"))
 PY
 )
 

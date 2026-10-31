@@ -55,12 +55,15 @@ def pg_app(pg_dsn, pg_owner):
 
 @pytest.fixture(scope="session")
 def pg_runtime_dsn(pg_dsn):
-    """A LOGIN role that is merely a member of safwan_app: what production should connect as."""
+    """A LOGIN role that is merely a member of safwan_app: what production should connect as.
+    Unique per session and dropped afterwards (roles are cluster-wide, so a fixed name would collide with other tooling)."""
+    import secrets
+
     from psycopg.conninfo import make_conninfo
 
+    name, password = "safwan_login_" + secrets.token_hex(4), secrets.token_hex(8)
     with psycopg.connect(pg_dsn, autocommit=True) as c:
-        c.execute(
-            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='safwan_login') THEN "
-            "CREATE ROLE safwan_login LOGIN PASSWORD 'ci-only' IN ROLE safwan_app NOSUPERUSER NOBYPASSRLS; END IF; END $$"
-        )
-    return make_conninfo(pg_dsn, user="safwan_login", password="ci-only")
+        c.execute(f"CREATE ROLE {name} LOGIN PASSWORD '{password}' IN ROLE safwan_app NOSUPERUSER NOBYPASSRLS")
+    yield make_conninfo(pg_dsn, user=name, password=password)
+    with psycopg.connect(pg_dsn, autocommit=True) as c:
+        c.execute(f"DROP ROLE IF EXISTS {name}")

@@ -12,6 +12,7 @@ All authentication failures return the SAME 401 body (no oracle); the precise re
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -33,6 +34,7 @@ log = logging.getLogger("safwan.service_auth")
 SKEW_SECONDS = 60
 NONCE_TTL_SECONDS = 180          # must outlive the accepted timestamp window (2 x skew)
 MAX_BODY_BYTES = 1_048_576
+BODY_READ_DEADLINE_SECONDS = 10.0   # a slow-loris body must not keep an authentication attempt open
 MIN_SECRET_BYTES = 32
 CONTEXT = "safwan-svc-v1"
 H_TS, H_NONCE, H_SIG, H_ACCT = "x-svc-ts", "x-svc-nonce", "x-svc-sig", "x-svc-acct"
@@ -168,7 +170,11 @@ async def require_service_call(
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
         raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
-    body = await _read_body_limited(request)
+    try:
+        async with asyncio.timeout(BODY_READ_DEADLINE_SECONDS):
+            body = await _read_body_limited(request)
+    except TimeoutError:
+        raise HTTPException(status_code=408, detail={"code": "request_timeout"}) from None
 
     target = request.url.path + (("?" + request.url.query) if request.url.query else "")
     message = canonical(request.method, target, ts, nonce, body_sha256(body), acct.lower() if acct else None)
@@ -180,6 +186,10 @@ async def require_service_call(
     if not matched:
         raise _deny("bad signature")
 
+    # Freshness must hold at the moment the nonce is claimed, not only when the headers arrived: otherwise a captured request
+    # whose body is delivered slowly could outlive the nonce's retention (NONCE_TTL > 2 x SKEW) and be accepted twice.
+    if abs(time.time() - ts) > SKEW_SECONDS:
+        raise _deny("timestamp outside window at claim time")
     # Only authenticated requests may consume nonce storage (no unauthenticated write amplification).
     try:
         # psycopg is synchronous: never run it on the event loop (a slow DB must not stall unrelated requests).
