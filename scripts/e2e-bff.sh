@@ -7,7 +7,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${SAFWAN_TEST_DATABASE_URL:?set SAFWAN_TEST_DATABASE_URL to a disposable PostgreSQL superuser DSN}"
-PYTHON="${PYTHON:-python}"
+# Prefer the API's locked environment (created by `uv sync` per the README) so a clean machine needs no global installs.
+if [ -z "${PYTHON:-}" ]; then
+  if [ -x "$PWD/services/api/.venv/bin/python" ]; then PYTHON="$PWD/services/api/.venv/bin/python"; else PYTHON=python; fi
+fi
 API_PORT="${API_PORT:-8765}"; WEB_PORT="${WEB_PORT:-3101}"
 SECRET="e2e-secret-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 RAND="$(head -c 4 /dev/urandom | od -An -tx1 | tr -d ' \n')"
