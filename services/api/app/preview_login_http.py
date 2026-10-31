@@ -2,7 +2,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from .auth_config import AuthConfiguration, cookie_policy
 from .login_throttle import attempt_permitted, record_failed_attempt, reset_failures, subject_digest
 from .password_credentials import lookup_password_account
@@ -28,7 +28,7 @@ def require_login_origin(request: Request, public_origin: str) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 @router.post("/auth/login", include_in_schema=False)
-def preview_login(request: Request, payload: PreviewLoginRequest):
+async def preview_login(request: Request):
     if not preview_enabled():
         raise HTTPException(status_code=404, detail="Not found")
     origin = os.getenv("PUBLIC_ORIGIN")
@@ -43,6 +43,10 @@ def preview_login(request: Request, payload: PreviewLoginRequest):
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     require_login_origin(request, origin)
+    try:
+        payload = PreviewLoginRequest.model_validate(await request.json())
+    except (ValueError, ValidationError):
+        raise HTTPException(status_code=422, detail="Invalid login request") from None
     try:
         import psycopg
         with psycopg.connect(database_url, connect_timeout=3) as connection:
