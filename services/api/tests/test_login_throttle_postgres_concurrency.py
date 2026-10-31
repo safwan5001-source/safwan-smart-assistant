@@ -43,3 +43,41 @@ def test_same_subject_login_attempts_serialize():
     with psycopg.connect(dsn) as conn:
         row=conn.execute("SELECT failure_count FROM login_attempt_buckets WHERE subject_key=%s",(subject,)).fetchone()
         assert row == (1,)
+
+
+@pytest.mark.skipif(not os.getenv("SAFWAN_CI_POSTGRES_DSN"), reason="Requires disposable CI PostgreSQL")
+def test_real_postgres_lock_expires_and_bucket_resets():
+    """A timed-out lock must not permanently deny a legitimate account."""
+    from os import urandom
+    from app.login_throttle import reset_failures
+    dsn = os.environ["SAFWAN_CI_POSTGRES_DSN"]
+    subject = urandom(32)
+    with psycopg.connect(dsn) as conn:
+        with conn.transaction():
+            for attempt in range(5):
+                assert attempt_permitted(conn, subject)
+                record_failed_attempt(conn, subject)
+            assert not attempt_permitted(conn, subject)
+    with psycopg.connect(dsn) as conn:
+        with conn.transaction():
+            conn.execute(
+                """UPDATE login_attempt_buckets
+                   SET window_started_at=now()-interval '31 minutes',
+                       locked_until=now()-interval '1 minute'
+                   WHERE subject_key=%s""",
+                (subject,),
+            )
+            assert attempt_permitted(conn, subject)
+            record_failed_attempt(conn, subject)
+            row = conn.execute(
+                "SELECT failure_count,locked_until FROM login_attempt_buckets WHERE subject_key=%s",
+                (subject,),
+            ).fetchone()
+            assert row[0] == 1
+            assert row[1] is None
+            reset_failures(conn, subject)
+            assert attempt_permitted(conn, subject)
+            assert conn.execute(
+                "SELECT count(*) FROM login_attempt_buckets WHERE subject_key=%s",
+                (subject,),
+            ).fetchone() == (0,)
