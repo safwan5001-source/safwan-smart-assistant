@@ -69,3 +69,14 @@ jobs:
         run: |
           psql -v ON_ERROR_STOP=1 -f services/api/schema/phase5_login_throttle_draft.sql
           psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_throttle_ci.sql
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PostgreSQL concurrency test dependencies
+        run: python -m pip install -e '.[test]'
+        working-directory: services/api
+      - name: Check real PostgreSQL concurrent login attempts
+        env:
+          SAFWAN_CI_POSTGRES_DSN: postgresql://postgres:postgres_ci_only@localhost:5432/safwan_ci
+        run: python -m pytest -q tests/test_login_throttle_postgres_concurrency.py
+        working-directory: services/api
