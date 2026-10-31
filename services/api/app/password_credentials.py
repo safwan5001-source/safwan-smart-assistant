@@ -7,6 +7,10 @@ from uuid import UUID
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerifyMismatchError, VerificationError
 
+# Fixed dummy verifier: unknown accounts perform Argon2id work too.
+# Never derive this from a runtime user password.
+_DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=2$eWFpUjM4RzFzNk5nUE9pNw$KkOUQT89kxc6oYaMaS0QzJ8OzqdWGDvDiWZMky1VnDQ"
+
 _hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2, hash_len=32, salt_len=16)
 
 def hash_password(password: str) -> str:
@@ -41,6 +45,9 @@ def lookup_password_account(connection, email_normalized: str, password: str) ->
              AND a.deleted_at IS NULL LIMIT 1""",
         (email_normalized,),
     ).fetchone()
-    if row is None or not verify_password(password, row[1]):
+    if row is None:
+        verify_password(password, _DUMMY_HASH)
+        return None
+    if not verify_password(password, row[1]):
         return None
     return row[0]
