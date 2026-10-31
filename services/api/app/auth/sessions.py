@@ -21,7 +21,7 @@ from ..db.scope import owner_transaction, verified_account_id
 
 SESSION_DEFAULT_TTL = timedelta(days=7)
 SESSION_REMEMBER_TTL = timedelta(days=30)
-_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")  # token_urlsafe(32) is exactly 43 chars
+_SECRET_RE = re.compile(r"[A-Za-z0-9_-]{43}")  # token_urlsafe(32) is exactly 43 chars
 
 
 def issue_secret() -> str:
@@ -29,7 +29,7 @@ def issue_secret() -> str:
 
 
 def digest_secret(secret: str) -> bytes:
-    if not isinstance(secret, str) or not _SECRET_RE.match(secret):
+    if not isinstance(secret, str) or not _SECRET_RE.fullmatch(secret):
         raise ValueError("invalid session secret")
     return hashlib.sha256(secret.encode("ascii")).digest()
 

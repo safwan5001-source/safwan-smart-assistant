@@ -38,8 +38,9 @@ BODY_READ_DEADLINE_SECONDS = 10.0   # a slow-loris body must not keep an authent
 MIN_SECRET_BYTES = 32
 CONTEXT = "safwan-svc-v1"
 H_TS, H_NONCE, H_SIG, H_ACCT = "x-svc-ts", "x-svc-nonce", "x-svc-sig", "x-svc-acct"
-_NONCE_RE = re.compile(r"^[A-Za-z0-9_-]{22,64}$")
-_SIG_RE = re.compile(r"^[0-9a-f]{64}$")
+_NONCE_RE = re.compile(r"[A-Za-z0-9_-]{22,64}")  # used with fullmatch: `$` would also accept a trailing newline
+_SIG_RE = re.compile(r"[0-9a-f]{64}")
+_TS_RE = re.compile(r"[0-9]{1,12}")  # ASCII only: str.isdigit() is True for e.g. '²', and int() then raises
 
 
 def body_sha256(body: bytes) -> str:
@@ -153,7 +154,7 @@ async def require_service_call(
     ts_raw, nonce, sig, acct = h.get(H_TS), h.get(H_NONCE), h.get(H_SIG), h.get(H_ACCT)
     if not ts_raw or not nonce or not sig:
         raise _deny("missing headers")
-    if not ts_raw.isdigit() or len(ts_raw) > 12 or not _NONCE_RE.match(nonce) or not _SIG_RE.match(sig):
+    if not _TS_RE.fullmatch(ts_raw) or not _NONCE_RE.fullmatch(nonce) or not _SIG_RE.fullmatch(sig):
         raise _deny("malformed headers")
     ts = int(ts_raw)
     if abs(time.time() - ts) > SKEW_SECONDS:
