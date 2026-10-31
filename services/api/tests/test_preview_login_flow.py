@@ -30,7 +30,7 @@ def configured(monkeypatch):
     return db
 
 def send(payload):
-    return TestClient(app, base_url="https://assistant.example.test").post(
+    return TestClient(app, base_url="https://assistant.example.test", client=("192.0.2.42", 54321)).post(
         "/auth/login", headers={"origin":"https://assistant.example.test"},
         json=payload
     )
