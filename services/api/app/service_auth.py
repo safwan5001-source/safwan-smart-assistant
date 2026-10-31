@@ -121,6 +121,21 @@ def _secrets(settings: Settings) -> list[bytes]:
     return [s for s in out if len(s) >= MIN_SECRET_BYTES]
 
 
+async def _read_body_limited(request: Request) -> bytes:
+    """Read the body incrementally and stop as soon as the limit is exceeded. `request.body()` would buffer an entire
+    chunked upload (no Content-Length) before any size check, letting an unsigned caller exhaust worker memory."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    request._body = body  # type: ignore[attr-defined]  # let the route handler read it again (Starlette's own cache slot)
+    return body
+
+
 async def require_service_call(
     request: Request,
     settings: Settings = Depends(get_settings),
@@ -153,9 +168,7 @@ async def require_service_call(
     declared = request.headers.get("content-length")
     if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
         raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
-    body = await request.body()
-    if len(body) > MAX_BODY_BYTES:
-        raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
+    body = await _read_body_limited(request)
 
     target = request.url.path + (("?" + request.url.query) if request.url.query else "")
     message = canonical(request.method, target, ts, nonce, body_sha256(body), acct.lower() if acct else None)

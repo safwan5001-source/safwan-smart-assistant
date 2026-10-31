@@ -309,3 +309,43 @@ def test_the_owner_style_DATABASE_URL_is_ignored_entirely(client, pg_dsn, monkey
     monkeypatch.setenv("DATABASE_URL", pg_dsn)  # what a managed-Postgres integration injects
     r = client.get(PATH, headers=signed())
     assert r.status_code == 503 and r.json()["detail"]["code"] == "service_auth_unavailable"
+
+
+# ── request body limit is enforced while streaming, before the whole body is buffered ──
+def test_chunked_oversize_body_is_cut_off_early_without_content_length():
+    """ASGI-level: count what the server actually pulled from the socket (TestClient pre-reads, so it cannot show this)."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from starlette.requests import Request
+
+    chunk, delivered = b"x" * 65536, {"n": 0}
+
+    async def receive():
+        delivered["n"] += 1
+        return {"type": "http.request", "body": chunk, "more_body": delivered["n"] < 64}  # 4 MiB offered, no Content-Length
+
+    scope = {"type": "http", "method": "GET", "path": PATH, "headers": [], "query_string": b""}
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(sa._read_body_limited(Request(scope, receive)))
+    assert exc.value.status_code == 413
+    assert delivered["n"] * 65536 <= sa.MAX_BODY_BYTES + 2 * 65536, f"pulled {delivered['n']} chunks before refusing"
+
+
+def test_body_up_to_the_limit_is_accepted_and_still_readable_downstream(client):
+    from fastapi import APIRouter, Request
+
+    router = APIRouter(prefix="/internal/v1")
+
+    @router.post("/echo-len")
+    async def echo(request: Request, call: sa.ServiceCall = __import__("fastapi").Depends(sa.require_service_call)):
+        return {"len": len(await request.body())}  # the dependency must not have swallowed the stream
+
+    app.include_router(router)
+    try:
+        payload = b"y" * 1000
+        h = signed(method="POST", target="/internal/v1/echo-len", body=payload)
+        r = client.post("/internal/v1/echo-len", headers=h, content=payload)
+        assert r.status_code == 200 and r.json() == {"len": 1000}
+    finally:
+        app.router.routes[:] = [rt for rt in app.router.routes if getattr(rt, "path", "") != "/internal/v1/echo-len"]
