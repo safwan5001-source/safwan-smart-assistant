@@ -63,3 +63,5 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f services/api/schema/phase5_preview_consolidated.sql
       - name: Verify account RLS and optimistic concurrency
         run: psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_rls_ci.sql
+      - name: Verify persisted session lifecycle and owner isolation
+        run: psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_sessions_ci.sql
