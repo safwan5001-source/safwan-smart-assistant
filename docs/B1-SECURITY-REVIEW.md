@@ -29,6 +29,7 @@
 | 10 | الأسرار غير مقيَّدة الشكل | يُرفض أي سر غير `token_urlsafe(32)` (43 حرفاً) **قبل** أي استعلام | `test_malformed_secrets_never_reach_the_database` |
 | 11 | `csrf_proof` يستخدم وسماً خاصاً بالخروج (`safwan:logout:csrf:v1`) | مؤجَّل لـ B2 مع تعميمه | — |
 | 12 | الاتصال لكل طلب بلا مهلة بيان | `statement_timeout` محلي للمعاملة (5ث افتراضياً) | `owner_transaction` |
+| 13 | (اكتُشف أثناء B1) ترحيل 0001 يفشل مع مالك **غير superuser** كما في Neon: `ALTER ROLE … NOSUPERUSER` مرفوض | الترحيل **يتحقق** من أن `safwan_app` غير مميّز ويرفض المتابعة بدل تعديله | `test_migrations_run_as_a_non_superuser_owner`, `test_a_preexisting_overprivileged...` |
 
 **اختبارات الطفرات (تحقق أن الاختبارات تكشف الخلل):** أُفسدت ثلاث مرات مؤقتاً — `USING (true)` على `sync_records` (فشل 8 اختبارات)، `WITH CHECK (true)` على `sessions` (كُشف بعد إضافة اختبار #8؛ **لم يكن مكشوفاً قبل ذلك**)، وتجاهل `revoked_at` (فشل اختباران) — ثم أُعيدت الملفات كما كانت.
 
@@ -37,7 +38,7 @@
 **الضوابط (`app/service_auth.py` ⇄ `apps/web/server/*`):**
 - HMAC-SHA256 على سلسلة معيارية: سياق الإصدار + الطريقة + المسار والاستعلام + الطابع الزمني + nonce + SHA-256 للجسم + معرّف الحساب. أي تغيير في أي عنصر يُبطل التوقيع.
 - نافذة ±60ث؛ nonce لمرة واحدة في **PostgreSQL** (مشترك بين النسخ، `INSERT … ON CONFLICT`، اختبار تزامن 24 طلباً → فائز واحد)؛ يُستهلك **بعد** نجاح التوقيع فقط (لا تضخيم كتابة لغير الموثَّقين).
-- فشل مغلق: سر ناقص/أقل من 32 بايت → 503؛ لا مخزن nonce → 503؛ الإنتاج لا يقبل مخزن الذاكرة أبداً؛ **دور قاعدة بيانات مميّز في الإنتاج → رفض** (`OverPrivilegedRole`)؛ `DATABASE_URL` (الذي تحقنه تكاملات Postgres بدور المالك) **يُتجاهل** عمداً لصالح `APP_DATABASE_URL`.
+- فشل مغلق: سر ناقص/أقل من 32 بايت → 503؛ لا مخزن nonce → 503؛ الإنتاج لا يقبل مخزن الذاكرة أبداً؛ **دور قاعدة بيانات مميّز في الإنتاج → رفض** (`OverPrivilegedRole`): superuser، BYPASSRLS، CREATEROLE/CREATEDB/REPLICATION، **أو مالك (مباشر أو بالوراثة) لأي جدول في التطبيق** — وهو الدور الافتراضي في Postgres المُدار وغير superuser لكنه يتجاوز RLS على الجداول بلا FORCE (ملاحظة مراجعة Codex؛ اختبار `test_nonsuperuser_owner.py`)؛ `DATABASE_URL` (الذي تحقنه تكاملات Postgres بدور المالك) **يُتجاهل** عمداً لصالح `APP_DATABASE_URL`.
 - ردّ موحّد `401 service_auth_failed` لكل أنواع الفشل (لا oracle)؛ السبب في السجل فقط وبلا أسرار (اختبار caplog).
 - دعم تدوير المفتاح (`SERVICE_AUTH_SECRET_PREVIOUS`)، مقارنة ثابتة الزمن مع كل المفاتيح دون short-circuit.
 - العقد مُثبَّت بمتجهات مشتركة (`shared/service-signature-vectors.json`) تتحقق منها اختبارات Python وTypeScript.

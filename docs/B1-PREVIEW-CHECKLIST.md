@@ -5,7 +5,7 @@
 ## أ) إجراءات تقوم بها أنت (لا أسرار في المحادثة أو المستودع)
 1. **Neon:** أنشئ قاعدة/فرع للمعاينة (ليس الإنتاج).
 2. بدور **المالك**: `MIGRATION_DATABASE_URL=<owner dsn> pnpm db:migrate` (يُنشئ `safwan_app` والجداول). أو شغّل ملفات `services/api/migrations/*.sql` بالترتيب.
-3. أنشئ دور الدخول (بكلمة مرور قوية تولّدها أنت):
+3. أنشئ دور الدخول **بنفس دور المالك الذي شغّل الترحيل** (هو من أنشأ `safwan_app` فيملك ADMIN عليه؛ إن أُنشئ `safwan_app` من لوحة أخرى فقد تحتاج `GRANT safwan_app TO <owner> WITH ADMIN OPTION`). كلمة مرور قوية تولّدها أنت:
    ```sql
    CREATE ROLE safwan_runtime LOGIN PASSWORD '<generated>' IN ROLE safwan_app NOSUPERUSER NOBYPASSRLS;
    ```
@@ -37,7 +37,7 @@
 |---|---|
 | غيّر `SERVICE_AUTH_SECRET` في خدمة web فقط ثم أعد النشر | `/api/health` → 503 و`backend:"rejected"` |
 | احذف `APP_DATABASE_URL` من الخلفية | 503 و`backend:"unavailable"` |
-| اجعل `APP_DATABASE_URL` يشير إلى دور المالك | 503 (`service_auth_unavailable`، رفض دور مميّز) |
+| اجعل `APP_DATABASE_URL` يشير إلى دور المالك (حتى لو لم يكن superuser) | 503 (`service_auth_unavailable`، رفض دور مميّز) |
 
 ## د) إن ظهر `backend:"rejected"` رغم تطابق السر
 الاحتمال الأرجح أن المنصة تغيّر المسار الذي تراه الخلفية (بادئة) فيختلف الهدف الموقَّع. سجّل ما تراه (دون أسرار) وأبلغني: الحل إعداد بادئة مسار موثَّقة في جانب الـ API (تغيير صغير ومختبَر)، وليس إضعاف التحقق.

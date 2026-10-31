@@ -8,7 +8,15 @@ BEGIN
     CREATE ROLE safwan_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
   END IF;
 END $$;
-ALTER ROLE safwan_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+-- Never ALTER the role's attributes: a non-superuser owner (e.g. a managed-Postgres default owner) is not allowed to,
+-- and silently "fixing" a pre-existing over-privileged role is the wrong behaviour anyway. Verify instead, and refuse.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'safwan_app'
+               AND (rolsuper OR rolbypassrls OR rolcreaterole OR rolcreatedb OR rolcanlogin OR rolreplication)) THEN
+    RAISE EXCEPTION 'role safwan_app exists with excessive privileges; refusing to continue';
+  END IF;
+END $$;
 GRANT USAGE ON SCHEMA public TO safwan_app;
 
 -- Transaction-local account scope. NULL (no rows) when unset, empty or the nil UUID;
