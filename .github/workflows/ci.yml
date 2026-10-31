@@ -80,3 +80,10 @@ jobs:
           SAFWAN_CI_POSTGRES_DSN: postgresql://postgres:postgres_ci_only@localhost:5432/safwan_ci
         run: python -m pytest -q tests/test_login_throttle_postgres_concurrency.py
         working-directory: services/api
+      - name: Check HTTP login against disposable PostgreSQL
+        env:
+          SAFWAN_CI_POSTGRES_DSN: postgresql://postgres:postgres_ci_only@localhost:5432/safwan_ci
+        run: |
+          psql -v ON_ERROR_STOP=1 -f schema/phase5_password_credentials_draft.sql
+          python -m pytest -q tests/test_preview_login_postgres_e2e.py
+        working-directory: services/api
