@@ -23,6 +23,8 @@ const holdArg = process.argv.find((a) => a.startsWith("--hold-live="));
 const holdSeconds = holdArg ? Math.min(Number(holdArg.split("=")[1]) || 0, 240) : 0;
 const base = process.env.BROWSERBASE_API_BASE || "https://api.browserbase.com";
 const WALL_CLOCK_MS = 240_000;
+// the real TTL wait is 65 s for a 60 s TTL; a shorter wait is honoured ONLY against a non-Browserbase (mock) API, for tests
+const ttlWaitMs = !isRealApi(base) && Number(process.env.SMOKE1_TTL_WAIT_MS) > 0 ? Number(process.env.SMOKE1_TTL_WAIT_MS) : 65_000;
 
 if (process.argv.some((a) => /key|token|secret/i.test(a))) { console.error("refusing: credentials must come from the environment, not argv"); process.exit(2); }
 if (cloud) {
@@ -40,7 +42,10 @@ const timed = async (fn) => { const t = Date.now(); const v = await fn(); return
 
 // status: HTTP number, or "error" for a transport failure (timeout, DNS, TLS, reset). A transport failure says NOTHING about
 // whether the server would have refused: it is never counted as a denial.
-const isDenied = (r) => (typeof r.status === "number" ? r.status !== 200 : null); // true = refused, false = served, null = inconclusive
+// Only responses that actually ESTABLISH a refusal count as denied: 401/403 (access refused) and 404/410 (gone). 200 = served.
+// Everything else — transport errors, 5xx/502/503 gateway trouble, 429/408, redirects — says nothing reliable about access control.
+const DENIAL = new Set([401, 403, 404, 410]);
+const isDenied = (r) => (r.status === 200 ? false : DENIAL.has(r.status) ? true : null); // true = refused, false = served, null = inconclusive
 async function anonymousGet(url) {
   try { const r = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(10_000), headers: {} }); const t = await r.text(); return { status: r.status, title: (t.match(/<title>([^<]{0,80})/i) || [])[1] ?? null, bytes: t.length }; }
   catch { return { status: "error" }; }
@@ -118,10 +123,13 @@ try {
     const anonWs = await anonymousWs(live.wsUrl);
     rec("S6-anon-ws", "live-view WebSocket opened with NO credentials", null, { observed: anonWs, note: anonWs === "opened" ? "anonymous WS opened (interactive control must be verified manually)" : String(anonWs) });
     if (holdSeconds) { fs.writeFileSync(path.join(here, "out", "live-url.txt"), live.debuggerFullscreenUrl, { mode: 0o600 }); console.log(`holding ${holdSeconds}s: manual check URL written to ./out/live-url.txt (mode 0600, git-ignored)`); await sleep(holdSeconds * 1000); }
-    if (ttlTest) {
-      await sleep(65_000);
+    if (ttlTest && anon.status !== 200) {
+      // expiry is only meaningful for a URL that worked at the start; otherwise "refused later" proves nothing about the TTL
+      rec("S6-ttl", "live-view URL after its 60 s TTL", null, { observed: { before: anon.status }, inconclusive: isDenied(anon) === null, note: isDenied(anon) === null ? `inconclusive: baseline HTTP ${anon.status} establishes neither access nor refusal` : "untestable: the URL was refused anonymously from the start (bound live view)" });
+    } else if (ttlTest) {
+      await sleep(ttlWaitMs);
       const after = await anonymousGet(live.debuggerFullscreenUrl); const d = isDenied(after);
-      rec("S6-ttl", "live-view URL after its 60 s TTL", d, { observed: after, inconclusive: d === null, note: d === null ? "inconclusive: transport error, no HTTP answer" : `HTTP ${after.status}` });
+      rec("S6-ttl", "live-view URL after its 60 s TTL (200 before, refused after)", d, { observed: { before: 200, after: after.status }, inconclusive: d === null, note: d === null ? `inconclusive: HTTP ${after.status} does not establish a refusal` : `HTTP 200 → ${after.status}` });
     }
     // A FRESH, unexpired URL (no expiresIn => valid for the whole session): if it stops working after release, that is revocation,
     // not TTL expiry. It is kept in memory only.
@@ -142,8 +150,8 @@ try {
     rec("S7-released", "session no longer running after release", ["COMPLETED", "TIMED_OUT"].includes(status), { note: `status=${status}` });
     if (freshLive) {
       const post = await anonymousGet(freshLive.url); const d = isDenied(post);
-      if (freshLive.pre.status !== 200) rec("S7-live-dead", "live-view URL revoked by release", null, { observed: { pre: freshLive.pre.status, post: post.status }, inconclusive: freshLive.pre.status === "error", note: "untestable: the URL was not loadable anonymously even before release" });
-      else rec("S7-live-dead", "live-view URL revoked by release (URL was unexpired and loadable before)", d, { observed: { pre: 200, post: post.status }, inconclusive: d === null, note: d === null ? "inconclusive: transport error, no HTTP answer" : `HTTP 200 → ${post.status}` });
+      if (freshLive.pre.status !== 200) rec("S7-live-dead", "live-view URL revoked by release", null, { observed: { pre: freshLive.pre.status, post: post.status }, inconclusive: isDenied(freshLive.pre) === null, note: isDenied(freshLive.pre) === null ? `inconclusive: baseline HTTP ${freshLive.pre.status} establishes neither access nor refusal` : "untestable: the URL was refused anonymously from the start (bound live view)" });
+      else rec("S7-live-dead", "live-view URL revoked by release (URL was unexpired and loadable before)", d, { observed: { pre: 200, post: post.status }, inconclusive: d === null, note: d === null ? `inconclusive: HTTP ${post.status} does not establish a refusal` : `HTTP 200 → ${post.status}` });
     }
   }
 }

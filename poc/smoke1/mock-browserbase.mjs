@@ -7,7 +7,7 @@ const require = createRequire(import.meta.url);
 const { chromium } = (() => { for (const n of ["playwright-core", "playwright"]) { try { return require(n); } catch {} } throw new Error("playwright missing"); })();
 
 export const MOCK_KEY = "mock-key-0000";
-export async function startMock({ bearer = true, badConnect = false, liveBroken = false, releaseKeepsLive = false } = {}) {
+export async function startMock({ bearer = true, badConnect = false, liveBroken = false, liveStatus = 0, releaseKeepsLive = false, ttlMs = undefined } = {}) {
   const sessions = new Map(); // id -> { browser, status, live: { token, exp } }
   const log = [];
   const sockets = new Set(); // upgraded sockets are not tracked by closeAllConnections()
@@ -17,6 +17,7 @@ export async function startMock({ bearer = true, badConnect = false, liveBroken 
     log.push(`${req.method} ${url.pathname}`);
     if (url.pathname.startsWith("/live/")) { // the "live view" page
       if (liveBroken) return res.socket.destroy(); // transport failure, no HTTP answer
+      if (liveStatus) { res.writeHead(liveStatus); return res.end("gateway trouble"); }
       const token = url.pathname.slice(6);
       const s = [...sessions.values()].find((x) => x.live?.token === token);
       const ok = s && (s.status === "RUNNING" || releaseKeepsLive) && Date.now() < s.live.exp && (bearer || (req.headers.cookie ?? "").includes("app_session="));
@@ -44,7 +45,7 @@ export async function startMock({ bearer = true, badConnect = false, liveBroken 
     if (req.method === "GET" && m[2]) {
       const ttl = Number(url.searchParams.get("expiresIn") ?? 21600);
       if (!(ttl >= 60 && ttl <= 21600)) return json(400, { message: "bad ttl" });
-      const token = crypto.randomBytes(16).toString("hex"); s.live = { token, exp: Date.now() + ttl * 1000 };
+      const token = crypto.randomBytes(16).toString("hex"); s.live = { token, exp: Date.now() + (url.searchParams.has("expiresIn") && ttlMs !== undefined ? ttlMs : ttl * 1000) }; // ttlMs: test override (Infinity = a vendor that ignores expiresIn)
       const base = `http://${req.headers.host}`;
       return json(200, { debuggerFullscreenUrl: `${base}/live/${token}`, debuggerUrl: `${base}/live/${token}?chrome=1`, wsUrl: `ws://${req.headers.host}/ws/${token}`, pages: [] });
     }

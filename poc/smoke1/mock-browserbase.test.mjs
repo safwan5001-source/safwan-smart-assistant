@@ -11,7 +11,7 @@ let failed = 0;
 const check = (name, ok, d = "") => { console.log(`${ok ? "PASS" : "FAIL"}  ${name}${d ? "  — " + d : ""}`); if (!ok) failed++; };
 // async on purpose: the mock server lives in THIS process and must keep serving while the harness runs
 const run = (extra, env) => new Promise((resolve) => {
-  const c = spawn("node", [path.join(here, "smoke1.mjs"), ...extra], { env: { ...process.env, ...env } });
+  const c = spawn("node", [path.join(here, "smoke1.mjs"), ...extra], { env: { SMOKE1_TTL_WAIT_MS: "2500", ...process.env, ...env } });
   let stdout = "", stderr = ""; c.stdout.on("data", (d) => (stdout += d)); c.stderr.on("data", (d) => (stderr += d));
   const t = setTimeout(() => c.kill("SIGKILL"), 200_000);
   c.on("close", (status) => { clearTimeout(t); resolve({ status, stdout, stderr }); });
@@ -47,8 +47,8 @@ try {
   check("mask() hides path and query", !mask("https://h.example/abc/def?token=SECRET").includes("SECRET") && !mask("https://h.example/abc/def?token=SECRET").includes("abc"));
 } finally { await mock.stop(); }
 
-// 3) TTL enforcement observed (adds ~65 s)
-const mock2 = await startMock({ bearer: true });
+// 3) TTL enforcement observed (the mock lets the wait be shortened; the real run always waits 65 s)
+const mock2 = await startMock({ bearer: true, ttlMs: 1000 });
 try {
   r = await run(["--cloud"], { BROWSERBASE_API_KEY: MOCK_KEY, BROWSERBASE_API_BASE: mock2.base });
   const R = JSON.parse(latest());
@@ -78,8 +78,8 @@ try {
   check("failed CDP connection: no secret in console or report", ["SECRET-TOKEN-XYZ", "SECRET-SIGNING-KEY", "signingKey=", MOCK_KEY].every((x) => !out.includes(x) && !rep.includes(x)));
 } finally { await mockBad.stop(); }
 
-// 4c) a transport failure is INCONCLUSIVE, never a pass (TTL enabled: ~65 s)
-const mockDown = await startMock({ bearer: true, liveBroken: true });
+// 4c) a transport failure is INCONCLUSIVE, never a pass (TTL enabled)
+const mockDown = await startMock({ bearer: true, liveBroken: true, ttlMs: 1000 });
 try {
   r = await run(["--cloud"], { BROWSERBASE_API_KEY: MOCK_KEY, BROWSERBASE_API_BASE: mockDown.base });
   const R = JSON.parse(latest()); const st = (id) => R.steps.find((x) => x.id === id);
@@ -87,6 +87,26 @@ try {
   check("transport errors: revocation check is inconclusive, not a pass", st("S7-live-dead")?.ok === null && st("S7-live-dead")?.inconclusive === true);
   check("transport errors: verdict 'inconclusive' and exit code 4 (not 0)", R.verdict === "inconclusive" && r.status === 4, `exit=${r.status}`);
 } finally { await mockDown.stop(); }
+
+// 4c2) gateway errors (5xx) and a missing baseline do not establish anything either
+const mock503 = await startMock({ bearer: true, liveStatus: 503, ttlMs: 1000 });
+try {
+  r = await run(["--cloud"], { BROWSERBASE_API_KEY: MOCK_KEY, BROWSERBASE_API_BASE: mock503.base });
+  const R = JSON.parse(latest()); const st = (id) => R.steps.find((x) => x.id === id);
+  check("HTTP 503 from the live view: TTL and revocation are INCONCLUSIVE, verdict not passed, exit 4", st("S6-ttl")?.ok === null && st("S6-ttl")?.inconclusive === true && st("S7-live-dead")?.inconclusive === true && R.verdict === "inconclusive" && r.status === 4, `verdict=${R.verdict} exit=${r.status}`);
+} finally { await mock503.stop(); }
+const mockBound = await startMock({ bearer: false, ttlMs: 1000 });
+try {
+  r = await run(["--cloud"], { BROWSERBASE_API_KEY: MOCK_KEY, BROWSERBASE_API_BASE: mockBound.base });
+  const R = JSON.parse(latest()); const t = R.steps.find((x) => x.id === "S6-ttl");
+  check("bound live view (403 from the start): TTL is UNTESTABLE, not a pass", t?.ok === null && !t?.inconclusive && /untestable/.test(t?.note ?? ""), JSON.stringify(t?.observed));
+} finally { await mockBound.stop(); }
+const mockNoTtl = await startMock({ bearer: true, ttlMs: Infinity });
+try {
+  r = await run(["--cloud"], { BROWSERBASE_API_KEY: MOCK_KEY, BROWSERBASE_API_BASE: mockNoTtl.base });
+  const R = JSON.parse(latest());
+  check("a vendor that ignores expiresIn: S6-ttl FAILS", R.steps.find((x) => x.id === "S6-ttl")?.ok === false && R.verdict === "failed");
+} finally { await mockNoTtl.stop(); }
 
 // 4d) a vendor that does NOT revoke on release is caught even though the URL is unexpired
 const mockKeep = await startMock({ bearer: true, releaseKeepsLive: true });
