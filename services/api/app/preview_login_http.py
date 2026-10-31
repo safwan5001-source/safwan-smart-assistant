@@ -55,7 +55,7 @@ async def preview_login(request: Request):
     # Never use client-supplied forwarding headers for throttle identity.
     # On Vercel, verified proxy configuration is required before enabling this route.
     try:
-        peer_bucket = network_subject(request.client.host if request.client else None, key.encode("utf-8"))
+        network_subject(request.client.host if request.client else None, key.encode("utf-8"))
     except ValueError:
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     try:
@@ -67,15 +67,13 @@ async def preview_login(request: Request):
         import psycopg
         with psycopg.connect(database_url, connect_timeout=3) as connection:
             with connection.transaction():
-                # Check in stable order to avoid lock-order inversions.
-                buckets = sorted((subject, peer_bucket))
-                for bucket in buckets:
-                    if not attempt_permitted(connection, bucket):
-                        raise HTTPException(status_code=429, detail="Too many attempts")
+                # Only the per-account bucket can deny login. A shared peer
+                # must never lock other accounts behind the same proxy/NAT.
+                if not attempt_permitted(connection, subject):
+                    raise HTTPException(status_code=429, detail="Too many attempts")
                 verified_owner = lookup_password_account(connection, normalize_email(str(payload.email)), payload.password)
                 if verified_owner is None:
-                    for bucket in buckets:
-                        record_failed_attempt(connection, bucket)
+                    record_failed_attempt(connection, subject)
                     return None, None
                 reset_failures(connection, subject)
                 session_token = create_session(connection, verified_owner, config.session_ttl_seconds)
