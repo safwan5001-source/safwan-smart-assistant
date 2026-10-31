@@ -32,3 +32,34 @@ jobs:
         working-directory: services/api
       - run: pytest -q
         working-directory: services/api
+
+  postgres-rls:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_ci_only
+          POSTGRES_DB: safwan_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d safwan_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres_ci_only
+      PGDATABASE: safwan_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply preview schema to disposable CI database
+        run: psql -v ON_ERROR_STOP=1 -f services/api/schema/phase5_preview_consolidated.sql
+      - name: Verify account RLS and optimistic concurrency
+        run: psql -v ON_ERROR_STOP=1 -f services/api/tests/phase5_postgres_rls_ci.sql
