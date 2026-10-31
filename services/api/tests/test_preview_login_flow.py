@@ -22,6 +22,7 @@ class FakeConnection:
 def configured(monkeypatch):
     monkeypatch.setenv("VERCEL_ENV", "preview")
     monkeypatch.setenv("SESSION_HTTP_PREVIEW_ENABLED", "1")
+    monkeypatch.setenv("PREVIEW_NETWORK_PEER_VERIFIED", "1")
     monkeypatch.setenv("PUBLIC_ORIGIN", "https://assistant.example.test")
     monkeypatch.setenv("DATABASE_URL", "postgresql://preview-only")
     monkeypatch.setenv("LOGIN_THROTTLE_HMAC_KEY", "s" * 48)
