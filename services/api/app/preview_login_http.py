@@ -2,6 +2,7 @@
 import os
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, ValidationError
 from .auth_config import AuthConfiguration, cookie_policy
 from .login_throttle import attempt_permitted, record_failed_attempt, reset_failures, subject_digest
@@ -50,18 +51,22 @@ async def preview_login(request: Request):
         subject = subject_digest(normalize_email(str(payload.email)), key.encode("utf-8"))
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
-    try:
+    # Argon2id and psycopg are synchronous; isolate them from the async event loop.
+    def authenticate_in_worker():
         import psycopg
         with psycopg.connect(database_url, connect_timeout=3) as connection:
             with connection.transaction():
                 if not attempt_permitted(connection, subject):
                     raise HTTPException(status_code=429, detail="Too many attempts")
-                owner = lookup_password_account(connection, normalize_email(str(payload.email)), payload.password)
-                if owner is None:
+                verified_owner = lookup_password_account(connection, normalize_email(str(payload.email)), payload.password)
+                if verified_owner is None:
                     record_failed_attempt(connection, subject)
-                else:
-                    reset_failures(connection, subject)
-                    token = create_session(connection, owner, config.session_ttl_seconds)
+                    return None, None
+                reset_failures(connection, subject)
+                session_token = create_session(connection, verified_owner, config.session_ttl_seconds)
+                return verified_owner, session_token
+    try:
+        owner, token = await run_in_threadpool(authenticate_in_worker)
     except HTTPException:
         raise
     except Exception:
