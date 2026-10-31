@@ -289,8 +289,16 @@ a.stat:hover { border-color: var(--accent-border); }
 .int-card { display: grid; gap: 8px; align-content: start; padding: 16px; text-align: start; width: 100%; }
 .int-card:hover { border-color: var(--accent-border); }
 .int-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.int-ico { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--surface-2); font-weight: 800; color: var(--primary); font-size: 16px; }
-:root[data-theme="dark"] .int-ico { color: var(--accent); }
+.int-logo { --s: 42px; position: relative; flex-shrink: 0; display: grid; place-items: center; width: var(--s); height: var(--s); border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--primary); --brand-fg: currentColor; }
+.int-logo[data-size="sm"] { --s: 36px; border-radius: 10px; }
+.int-logo[data-kind="image"] { background: var(--logo-tile); }
+.int-logo svg { width: 56%; height: 56%; fill: var(--brand-fg); }
+.int-logo img { width: 58%; height: 58%; object-fit: contain; }
+.int-logo .int-mono { font-weight: 800; font-size: 16px; line-height: 1; }
+.int-logo[data-status]::after { content: ""; position: absolute; inset-block-start: -3px; inset-inline-end: -3px; width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--surface); background: var(--ok); }
+.int-logo[data-status="warn"]::after { background: var(--warn); }
+:root[data-theme="dark"] .int-logo { color: var(--accent); }
+:root[data-theme="dark"] .int-logo[data-kind="glyph"] svg { fill: var(--brand-fg-dark, #fff); }
 .scope-list { display: grid; gap: 6px; }
 .scope-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13.5px; padding: 8px 0; border-block-end: 1px solid var(--border); }
 .scope-list li:last-child { border-bottom: 0; }
