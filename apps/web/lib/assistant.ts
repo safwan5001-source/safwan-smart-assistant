@@ -1,7 +1,7 @@
 /**
  * Assistant service boundary. The UI talks to this, never to a provider.
- * Nothing here claims AI is available: `status()` reports only what the server's public
- * /health says, and `respond()` refuses unless that report says the assistant is configured.
+ * Nothing here claims AI is available: `status()` reports only what the BFF's public
+ * /api/health says (web tier + signed backend hop), and `respond()` refuses unless that report says the assistant is configured.
  * API keys live on the server; there is no key (and must never be one) in this bundle.
  */
 export type AssistantStatus =
@@ -16,7 +16,7 @@ export class AssistantUnavailableError extends Error {
 export type ChatTurn = { role: "user" | "assistant" | "system"; content: string };
 type Fetch = typeof fetch;
 
-export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/backend", timeoutMs = 4000) {
+export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/api", timeoutMs = 4000) {
   const call = async (path: string, init?: RequestInit) => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), timeoutMs);

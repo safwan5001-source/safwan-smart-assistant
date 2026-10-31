@@ -10,6 +10,15 @@ describe("assistant service", () => {
     const svc = createAssistantService(async () => json({ status: "ok", version: "0.2.0", features: { assistant: false } }));
     expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0" });
   });
+  it("probes the BFF health route, not a public backend path", async () => {
+    const f = vi.fn(async () => json({ status: "ok", features: { assistant: false } }));
+    await createAssistantService(f as unknown as typeof fetch).status();
+    expect(String((f.mock.calls[0] as unknown[])[0])).toBe("/api/health");
+  });
+  it("treats the BFF's degraded 503 as offline", async () => {
+    const svc = createAssistantService(async () => json({ status: "degraded", web: "ok", backend: "unconfigured" }, { status: 503 }));
+    expect(await svc.status()).toEqual({ server: "offline" });
+  });
   it("treats an HTML 404 page (e.g. unrouted /backend) as offline, not online", async () => {
     const svc = createAssistantService(async () => new Response("<html>404</html>", { status: 200, headers: { "content-type": "text/html" } }));
     expect(await svc.status()).toEqual({ server: "offline" });
