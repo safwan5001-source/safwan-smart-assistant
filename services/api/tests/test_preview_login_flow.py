@@ -60,7 +60,7 @@ def test_invalid_password_returns_generic_401_and_records_failure(monkeypatch):
     response = send({"email":"unknown@gmail.com", "password":"wrong-password"})
     assert response.status_code == 401
     assert "set-cookie" not in response.headers
-    assert hits == [1] and db.committed
+    assert hits == [1, 1] and db.committed
 
 def test_throttled_request_returns_429_without_password_lookup(monkeypatch):
     configured(monkeypatch)
@@ -83,3 +83,16 @@ def test_login_offloads_blocking_work_to_worker(monkeypatch):
     response=send({"email":"locked@gmail.com","password":"wrong-password"})
     assert response.status_code==429
     assert seen==[True]
+
+def test_account_and_network_buckets_are_both_checked(monkeypatch):
+    configured(monkeypatch)
+    checked=[]
+    def probe(db, subject):
+        checked.append(subject)
+        return True
+    monkeypatch.setattr(login, "attempt_permitted", probe)
+    monkeypatch.setattr(login, "lookup_password_account", lambda *args: None)
+    monkeypatch.setattr(login, "record_failed_attempt", lambda *args: None)
+    response=send({"email":"probe@gmail.com","password":"wrong-password"})
+    assert response.status_code==401
+    assert len(checked)==2 and checked[0]!=checked[1]
