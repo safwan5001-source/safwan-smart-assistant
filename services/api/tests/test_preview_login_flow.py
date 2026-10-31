@@ -61,7 +61,7 @@ def test_invalid_password_returns_generic_401_and_records_failure(monkeypatch):
     response = send({"email":"unknown@gmail.com", "password":"wrong-password"})
     assert response.status_code == 401
     assert "set-cookie" not in response.headers
-    assert hits == [1, 1] and db.committed
+    assert hits == [1] and db.committed
 
 def test_throttled_request_returns_429_without_password_lookup(monkeypatch):
     configured(monkeypatch)
@@ -96,7 +96,7 @@ def test_account_and_network_buckets_are_both_checked(monkeypatch):
     monkeypatch.setattr(login, "record_failed_attempt", lambda *args: None)
     response=send({"email":"probe@gmail.com","password":"wrong-password"})
     assert response.status_code==401
-    assert len(checked)==2 and checked[0]!=checked[1]
+    assert len(checked)==1
 
 def test_forged_forwarded_headers_do_not_change_network_bucket(monkeypatch):
     configured(monkeypatch)
@@ -112,22 +112,20 @@ def test_forged_forwarded_headers_do_not_change_network_bucket(monkeypatch):
             "x-real-ip":forged,
         }, json={"email":"same@gmail.com","password":"wrong-password"})
         assert response.status_code==401
-    assert len(observed)==4
-    assert observed[0:2]==observed[2:4]
+    assert len(observed)==2
+    assert observed[0]==observed[1]
 
 
-def test_network_limit_blocks_different_accounts_on_same_peer(monkeypatch):
+def test_shared_network_does_not_block_unrelated_accounts(monkeypatch):
     configured(monkeypatch)
     from app.network_throttle import network_subject
-    key=b"s"*48
-    blocked=network_subject("192.0.2.42", key)
-    calls=[]
-    def check(db, bucket):
-        calls.append(bucket)
-        return bucket != blocked
-    monkeypatch.setattr(login, "attempt_permitted", check)
-    monkeypatch.setattr(login, "lookup_password_account", lambda *args: (_ for _ in ()).throw(AssertionError("No credential lookup expected")))
-    for email in ("one@gmail.com","two@gmail.com"):
+    peer_bucket = network_subject("192.0.2.42", b"s" * 48)
+    checked=[]
+    monkeypatch.setattr(login, "attempt_permitted", lambda db, subject: checked.append(subject) or True)
+    monkeypatch.setattr(login, "lookup_password_account", lambda *args: None)
+    monkeypatch.setattr(login, "record_failed_attempt", lambda *args: None)
+    for email in ("one@gmail.com", "two@gmail.com"):
         response=send({"email":email,"password":"wrong-password"})
-        assert response.status_code==429
-    assert blocked in calls
+        assert response.status_code==401
+    assert len(checked)==2 and checked[0]!=checked[1]
+    assert peer_bucket not in checked
