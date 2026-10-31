@@ -5,6 +5,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 app = FastAPI(title="Safwan Assistant API", version="0.1.0")
+from .preview_session_http import router as preview_session_router
+app.include_router(preview_session_router)
 
 class PermissionMode(str, Enum):
     review = "review"
