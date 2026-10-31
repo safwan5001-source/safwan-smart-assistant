@@ -1,18 +1,27 @@
-from enum import Enum
+import os
+from typing import Any
 from uuid import uuid4
-from fastapi import FastAPI
+
+from fastapi import Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 
-app = FastAPI(title="Safwan Assistant API", version="0.1.0")
+from .assistant import AssistantUnavailable, get_provider, provider_status
+from .audit import audit_log
+from .config import SERVICE_VERSION, Settings, get_settings
+from .integrations import CATALOG, get_integration, resolve_status
+from .permissions import PermissionMode, Risk, policy_matrix
+from .security import require_auth
+from .tools import execute_tool, registry
+from .tools.builtin import register_builtin
 
-class PermissionMode(str, Enum):
-    review = "review"
-    execute = "execute"
-    approve = "approve"
+app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION)
+register_builtin(registry)
+
 
 class TaskRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=4000)
     permission_mode: PermissionMode
+
 
 class TaskReceipt(BaseModel):
     task_id: str
@@ -20,12 +29,108 @@ class TaskReceipt(BaseModel):
     permission_mode: PermissionMode
     message: str
 
+
+class ToolExecuteRequest(BaseModel):
+    tool: str = Field(min_length=1, max_length=100)
+    arguments: dict[str, Any] = Field(default_factory=dict, max_length=20)
+    permission_mode: PermissionMode
+
+
+class ChatMessage(BaseModel):
+    role: str = Field(pattern="^(user|assistant|system)$")
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class AssistantRequest(BaseModel):
+    messages: list[ChatMessage] = Field(min_length=1, max_length=50)
+
+
+def _integration_summary() -> dict[str, int]:
+    statuses = [resolve_status(spec, os.environ).value for spec in CATALOG]
+    return {"total": len(statuses), "connected": statuses.count("connected")}
+
+
 @app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok", "service": "orchestrator-foundation"}
+def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    """Public, minimal and truthful: what is actually running right now."""
+    return {
+        "status": "ok",
+        "service": "orchestrator-foundation",
+        "version": SERVICE_VERSION,
+        "features": {
+            "assistant": bool(provider_status(settings)["configured"]),
+            "connected_integrations": _integration_summary()["connected"],
+            "task_execution": False,
+        },
+    }
+
+
+@app.get("/capabilities")
+def capabilities(settings: Settings = Depends(get_settings), _: str = Depends(require_auth)) -> dict[str, Any]:
+    tools = registry.all()
+    return {
+        "environment": settings.env,
+        "auth_mode": settings.auth_mode,
+        "assistant": provider_status(settings),
+        "tools": {"total": len(tools), "implemented": sum(t.implemented for t in tools)},
+        "integrations": _integration_summary(),
+        "task_execution": False,
+    }
+
+
+@app.get("/permissions/policy")
+def permissions_policy(_: str = Depends(require_auth)) -> dict[str, Any]:
+    return {"modes": [m.value for m in PermissionMode], "risks": [r.value for r in Risk], "matrix": policy_matrix()}
+
+
+@app.get("/tools")
+def list_tools(_: str = Depends(require_auth)) -> dict[str, Any]:
+    return {"tools": [t.public() for t in registry.all()]}
+
+
+@app.post("/tools/execute")
+def run_tool(request: ToolExecuteRequest, actor: str = Depends(require_auth)) -> dict[str, Any]:
+    result = execute_tool(registry, request.tool, request.arguments, request.permission_mode, actor=actor)
+    if result.status == "unknown_tool":
+        raise HTTPException(status_code=404, detail={"code": "unknown_tool", "message": "Unknown tool."})
+    return result.public()
+
+
+@app.get("/integrations")
+def list_integrations(_: str = Depends(require_auth)) -> dict[str, Any]:
+    return {"integrations": [spec.public(os.environ) for spec in CATALOG]}
+
+
+@app.get("/integrations/{integration_id}")
+def get_one_integration(integration_id: str, _: str = Depends(require_auth)) -> dict[str, Any]:
+    spec = get_integration(integration_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail={"code": "unknown_integration", "message": "Unknown integration."})
+    return spec.public(os.environ)
+
+
+@app.post("/assistant/respond")
+def assistant_respond(
+    request: AssistantRequest, settings: Settings = Depends(get_settings), _: str = Depends(require_auth)
+) -> dict[str, str]:
+    try:
+        provider = get_provider(settings)
+    except AssistantUnavailable:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "assistant_not_configured", "message": "No AI provider is configured; no reply was generated."},
+        ) from None
+    return {"provider": provider.name, "content": provider.respond([m.model_dump() for m in request.messages])}
+
+
+@app.get("/audit")
+def get_audit(limit: int = Query(50, ge=1, le=200), _: str = Depends(require_auth)) -> dict[str, Any]:
+    return {"entries": audit_log.recent(limit)}
+
 
 @app.post("/tasks", response_model=TaskReceipt, status_code=202)
-def create_task(request: TaskRequest) -> TaskReceipt:
+def create_task(request: TaskRequest, actor: str = Depends(require_auth)) -> TaskReceipt:
     # Deliberately does not persist, dispatch or execute anything yet.
+    audit_log.record("task.receive", actor=actor, mode=request.permission_mode.value, status="not_scheduled")
     return TaskReceipt(task_id=str(uuid4()), status="not_scheduled", permission_mode=request.permission_mode,
                        message="Foundation only: task was not saved or executed.")

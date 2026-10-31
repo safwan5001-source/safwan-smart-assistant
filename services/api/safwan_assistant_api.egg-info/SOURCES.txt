@@ -1,0 +1,9 @@
+pyproject.toml
+app/__init__.py
+app/main.py
+safwan_assistant_api.egg-info/PKG-INFO
+safwan_assistant_api.egg-info/SOURCES.txt
+safwan_assistant_api.egg-info/dependency_links.txt
+safwan_assistant_api.egg-info/requires.txt
+safwan_assistant_api.egg-info/top_level.txt
+tests/test_main.py

@@ -1,18 +1,17 @@
-from fastapi.testclient import TestClient
-from app.main import app
-
-client = TestClient(app)
-
-def test_health():
+def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json()["status"] == "ok"
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["features"] == {"assistant": False, "connected_integrations": 0, "task_execution": False}
 
-def test_task_does_not_execute():
+
+def test_task_does_not_execute(client):
     response = client.post("/tasks", json={"instruction": "راجع الفواتير", "permission_mode": "review"})
     assert response.status_code == 202
     assert response.json()["status"] == "not_scheduled"
 
-def test_permission_required():
+
+def test_permission_required(client):
     response = client.post("/tasks", json={"instruction": "راجع الفواتير"})
     assert response.status_code == 422
