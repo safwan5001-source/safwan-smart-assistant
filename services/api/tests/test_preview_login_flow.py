@@ -97,3 +97,37 @@ def test_account_and_network_buckets_are_both_checked(monkeypatch):
     response=send({"email":"probe@gmail.com","password":"wrong-password"})
     assert response.status_code==401
     assert len(checked)==2 and checked[0]!=checked[1]
+
+def test_forged_forwarded_headers_do_not_change_network_bucket(monkeypatch):
+    configured(monkeypatch)
+    observed=[]
+    monkeypatch.setattr(login, "attempt_permitted", lambda db, bucket: observed.append(bucket) or True)
+    monkeypatch.setattr(login, "lookup_password_account", lambda *args: None)
+    monkeypatch.setattr(login, "record_failed_attempt", lambda *args: None)
+    client=TestClient(app, base_url="https://assistant.example.test", client=("192.0.2.42", 54321))
+    for forged in ("198.51.100.5", "203.0.113.6"):
+        response=client.post("/auth/login", headers={
+            "origin":"https://assistant.example.test",
+            "x-forwarded-for":forged,
+            "x-real-ip":forged,
+        }, json={"email":"same@gmail.com","password":"wrong-password"})
+        assert response.status_code==401
+    assert len(observed)==4
+    assert observed[0:2]==observed[2:4]
+
+
+def test_network_limit_blocks_different_accounts_on_same_peer(monkeypatch):
+    configured(monkeypatch)
+    from app.network_throttle import network_subject
+    key=b"s"*48
+    blocked=network_subject("192.0.2.42", key)
+    calls=[]
+    def check(db, bucket):
+        calls.append(bucket)
+        return bucket != blocked
+    monkeypatch.setattr(login, "attempt_permitted", check)
+    monkeypatch.setattr(login, "lookup_password_account", lambda *args: (_ for _ in ()).throw(AssertionError("No credential lookup expected")))
+    for email in ("one@gmail.com","two@gmail.com"):
+        response=send({"email":email,"password":"wrong-password"})
+        assert response.status_code==429
+    assert blocked in calls
