@@ -10,6 +10,7 @@ from .password_credentials import lookup_password_account
 from .registration_contracts import normalize_email
 from .session_issuer import create_session
 from .preview_session_http import preview_enabled
+from .network_throttle import network_subject
 from urllib.parse import urlsplit
 
 router = APIRouter()
@@ -43,6 +44,12 @@ async def preview_login(request: Request):
     except (ValueError, UnicodeError):
         raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     require_login_origin(request, origin)
+    # Never use client-supplied forwarding headers for throttle identity.
+    # On Vercel, verified proxy configuration is required before enabling this route.
+    try:
+        peer_bucket = network_subject(request.client.host if request.client else None, key.encode("utf-8"))
+    except ValueError:
+        raise HTTPException(status_code=503, detail="Preview authentication unavailable") from None
     try:
         payload = PreviewLoginRequest.model_validate(await request.json())
     except (ValueError, ValidationError):
@@ -56,11 +63,15 @@ async def preview_login(request: Request):
         import psycopg
         with psycopg.connect(database_url, connect_timeout=3) as connection:
             with connection.transaction():
-                if not attempt_permitted(connection, subject):
-                    raise HTTPException(status_code=429, detail="Too many attempts")
+                # Check in stable order to avoid lock-order inversions.
+                buckets = sorted((subject, peer_bucket))
+                for bucket in buckets:
+                    if not attempt_permitted(connection, bucket):
+                        raise HTTPException(status_code=429, detail="Too many attempts")
                 verified_owner = lookup_password_account(connection, normalize_email(str(payload.email)), payload.password)
                 if verified_owner is None:
-                    record_failed_attempt(connection, subject)
+                    for bucket in buckets:
+                        record_failed_attempt(connection, bucket)
                     return None, None
                 reset_failures(connection, subject)
                 session_token = create_session(connection, verified_owner, config.session_ttl_seconds)
