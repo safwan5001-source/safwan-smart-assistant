@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 app = FastAPI(title="Safwan Assistant API", version="0.1.0")
 from .preview_session_http import router as preview_session_router
 app.include_router(preview_session_router)
+from .preview_login_http import router as preview_login_router
+app.include_router(preview_login_router)
 
 class PermissionMode(str, Enum):
     review = "review"
