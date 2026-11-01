@@ -45,7 +45,7 @@
 ## نتائج الاختبار (محلي)
 | الفحص | النتيجة |
 |---|---|
-| web: typecheck / lint / vitest / `next build` | نظيف / نظيف / 64 ناجح / ناجح (`ƒ /api/health` ديناميكي) |
+| web: typecheck / lint / vitest / `next build` | نظيف / نظيف / 67 ناجح / ناجح (`ƒ /api/health` ديناميكي) |
 | API: pytest | 47 ناجح |
 | تكامل حي (uvicorn إنتاج + `next start`) | API يعمل → 200 `backend:"ok"`؛ API متوقف → 503 `unreachable`؛ بلا `BACKEND_URL` → 503 `unconfigured`؛ HTML الصفحة الرئيسية لا يحوي أي عنوان داخلي |
 | لم يُختبر | الشبكة الخاصة الفعلية على Railway (تُختبر عند أول نشر) |
