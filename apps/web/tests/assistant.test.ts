@@ -10,7 +10,7 @@ describe("assistant service", () => {
     const svc = createAssistantService(async () => json({ status: "ok", version: "0.2.0", features: { assistant: false } }));
     expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0" });
   });
-  it("treats an HTML 404 page (e.g. unrouted /backend) as offline, not online", async () => {
+  it("treats an HTML 404 page (e.g. an unrouted /api path) as offline, not online", async () => {
     const svc = createAssistantService(async () => new Response("<html>404</html>", { status: 200, headers: { "content-type": "text/html" } }));
     expect(await svc.status()).toEqual({ server: "offline" });
   });
