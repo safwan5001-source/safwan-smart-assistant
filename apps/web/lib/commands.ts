@@ -10,9 +10,14 @@
  */
 import { evaluate, type PermissionMode, type Risk } from "./permissions";
 import { LIMITS, type Priority, type Task, type Thread, type Message, type Attachment, type Role } from "./domain";
-import { activityStore, tasksStore, threadsStore } from "./stores";
+import { activityStore, firedStore, noticesStore, prefsStore, remindersStore, tasksStore, threadsStore } from "./stores";
 import { clearFiles } from "./files-db";
 import { parseSlash } from "./slash";
+import { Invalid, invalid, uid, type Def } from "./command-core";
+import { notificationCommands, reminderCommands } from "./commands-notify";
+import { isReminderIntent, parseReminderText, type Clarification } from "./reminder-parser";
+import type { Reminder, ReminderInput } from "./reminders";
+import { deliverAlert } from "./alerts";
 
 export type Ctx = { origin?: "user" | "assistant"; mode?: PermissionMode; approved?: boolean };
 export type CommandResult<T = unknown> =
@@ -21,10 +26,6 @@ export type CommandResult<T = unknown> =
   | { status: "invalid"; message: string }
   | { status: "failed"; message: string };
 
-type Def<P, R> = { id: string; title: string; risk: Risk; run: (p: P) => R | Promise<R> };
-class Invalid extends Error {}
-const invalid = (m: string): never => { throw new Invalid(m); };
-const uid = () => crypto.randomUUID();
 
 const cleanTitle = (s: unknown, max: number = LIMITS.title) => {
   const t = typeof s === "string" ? s.trim().slice(0, max) : "";
@@ -46,8 +47,10 @@ const taskCommands = {
     return task;
   } } satisfies Def<TaskAdd, Task>,
   "tasks.toggle": { id: "tasks.toggle", title: "تغيير حالة مهمة", risk: "write", run: (p: { id: string }) => {
-    if (!tasksStore.getSnapshot().some((t) => t.id === p.id)) invalid("المهمة غير موجودة.");
+    const before = tasksStore.getSnapshot().find((t) => t.id === p.id) ?? invalid("المهمة غير موجودة.");
     tasksStore.set((old) => old.map((t) => t.id !== p.id ? t : t.done ? { ...t, done: false, completedAt: undefined } : { ...t, done: true, completedAt: Date.now() }));
+    // completing a task: success tone + low-priority inbox item (idempotent per completion)
+    if (!before.done) void deliverAlert({ key: `task-done:${p.id}:${Date.now()}`, type: "task", priority: "low", title: "أُنجزت المهمة", body: before.title, href: "/tasks", category: "success" }).catch(() => undefined);
   } } satisfies Def<{ id: string }, void>,
   "tasks.update": { id: "tasks.update", title: "تعديل مهمة", risk: "write", run: (p: TaskPatch) => {
     if (!tasksStore.getSnapshot().some((t) => t.id === p.id)) invalid("المهمة غير موجودة.");
@@ -135,13 +138,14 @@ const chatCommands = {
 const dataCommands = {
   "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: async (_: object): Promise<{ filesCleared: boolean }> => {
     tasksStore.reset(); threadsStore.reset(); activityStore.reset();
+    remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset();
     // Report (don't hide) a failure to clear files so the UI never claims a complete wipe it didn't do.
     const filesCleared = await clearFiles().then(() => true, () => false);
     return { filesCleared };
   } } satisfies Def<object, Promise<{ filesCleared: boolean }>>,
 };
 
-const COMMANDS = { ...taskCommands, ...chatCommands, ...dataCommands } as const;
+const COMMANDS = { ...taskCommands, ...chatCommands, ...dataCommands, ...reminderCommands, ...notificationCommands } as const;
 export type CommandId = keyof typeof COMMANDS;
 type PayloadOf<K extends CommandId> = Parameters<(typeof COMMANDS)[K]["run"]>[0];
 type DataOf<K extends CommandId> = Awaited<ReturnType<(typeof COMMANDS)[K]["run"]>>;
@@ -176,12 +180,23 @@ export async function runCommand<K extends CommandId>(id: K, payload: PayloadOf<
 }
 
 // ── chat quick commands (deterministic, no AI) ───────────────────────────
-export type QuickReply = { handled: boolean; reply?: string };
+export type ReminderOffer = { draft: Partial<ReminderInput>; clarification: Clarification; notes: string[] };
+export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer };
 export async function runQuickCommand(text: string): Promise<QuickReply> {
+  // «ذكرني بكرة الساعة 9 …» — typed or dictated. Ambiguity is asked about BEFORE anything is saved.
+  if (isReminderIntent(text)) {
+    const out = parseReminderText(text, Date.now());
+    if (out.kind === "ready") {
+      const res = await runCommand("reminders.add", out.draft);
+      if (res.status === "executed") return { handled: true, reminderCreated: res.data, reply: `تم ضبط التذكير: «${res.data.title}».` };
+      return { handled: true, reply: res.status === "invalid" ? res.message : "تعذر ضبط التذكير." };
+    }
+    if (out.kind === "clarify") return { handled: true, reply: out.clarification.question, reminderOffer: { draft: out.draft, clarification: out.clarification, notes: out.notes } };
+  }
   const slash = parseSlash(text);
   if (!slash) return { handled: false };
   if (slash.name === "help") {
-    return { handled: true, reply: "الأوامر السريعة المتاحة:\n/مهمة <العنوان> — إضافة مهمة\n/مساعدة — عرض هذه القائمة\nهذه أوامر محلية ثابتة وليست ذكاءً اصطناعياً." };
+    return { handled: true, reply: "الأوامر السريعة المتاحة:\n/مهمة <العنوان> — إضافة مهمة\nذكرني بكرة الساعة 9 صباحاً <ما تريد> — ضبط تذكير (يمكنك أيضاً: بعد 30 دقيقة، كل يوم، قبل الموعد بنصف ساعة)\n/مساعدة — عرض هذه القائمة\nهذه أوامر محلية ثابتة وليست ذكاءً اصطناعياً." };
   }
   const res = await runCommand("tasks.add", { title: slash.arg });
   return { handled: true, reply: res.status === "executed" ? `تمت إضافة المهمة: «${res.data.title}».` : res.status === "invalid" ? "اكتب عنوان المهمة بعد الأمر، مثل: /مهمة مراجعة الفواتير" : "تعذر تنفيذ الأمر." };
