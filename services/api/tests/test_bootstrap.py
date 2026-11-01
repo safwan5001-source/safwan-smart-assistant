@@ -11,7 +11,11 @@ import psycopg
 import pytest
 from psycopg.conninfo import make_conninfo
 
-from app.db.bootstrap import BootstrapError, bootstrap_owner, bootstrap_runtime, main
+import base64
+
+from psycopg import sql as psql
+
+from app.db.bootstrap import BootstrapError, bootstrap_owner, bootstrap_runtime, main, scram_verifier
 from app.db.connection import OverPrivilegedRole, connect_runtime
 from app.db.migrate import migrate
 from tests import pg_support
@@ -134,7 +138,7 @@ def test_identifiers_are_validated_and_reserved_names_refused(host, bad):
         bootstrap_owner(a, database=bad, owner=n["owner"], owner_password=PW_OWNER)
 
 
-@pytest.mark.parametrize("pw", ["", "short", "x" * 23, "p" * 30 + "\x00"])
+@pytest.mark.parametrize("pw", ["", "short", "x" * 23, "p" * 30 + "\x00", "has space " + "p" * 20, "é" * 30, "p" * 201, "p" * 30 + "\n"])
 def test_weak_passwords_are_refused_and_nothing_is_created(host, pw):
     base, n = host
     with admin(base) as a, pytest.raises(BootstrapError, match="password"):
@@ -178,3 +182,62 @@ def test_the_cli_reports_missing_configuration_and_never_echoes_secrets(monkeypa
     assert main(["owner"]) == 1  # connection refused
     out = capsys.readouterr()
     assert "topsecret-dsn-pw" not in out.out + out.err and "p" * 30 not in out.out + out.err
+
+
+# ── secrets never travel as plaintext ───────────────────────────────────────────────────────────────────────────────
+def test_scram_verifier_is_exactly_what_postgresql_itself_would_store(host):
+    """Known-answer test against the server: let PostgreSQL hash a password, then rebuild its verifier from the salt/iterations
+    it chose. If our algorithm differed by a single bit the server would not accept our verifiers either."""
+    base, n = host
+    pw = "kat-" + "k" * 30
+    with admin(base) as a:
+        a.execute("SET password_encryption = 'scram-sha-256'")
+        a.execute(psql.SQL("CREATE ROLE {} LOGIN PASSWORD {}").format(psql.Identifier(n["stranger"]), psql.Literal(pw)))
+        stored = a.execute("SELECT rolpassword FROM pg_authid WHERE rolname = %s", (n["stranger"],)).fetchone()[0]
+    assert stored.startswith("SCRAM-SHA-256$")
+    iterations, salt = int(stored.split("$")[1].split(":")[0]), base64.b64decode(stored.split("$")[1].split(":")[1])
+    assert scram_verifier(pw, salt=salt, iterations=iterations) == stored
+    assert scram_verifier(pw, salt=salt, iterations=iterations) != scram_verifier(pw + "x", salt=salt, iterations=iterations)
+    assert scram_verifier(pw) != scram_verifier(pw)  # fresh random salt every time
+
+
+class Recording:
+    """Delegates to a real connection and remembers every SQL text sent."""
+
+    def __init__(self, conn):
+        self._conn, self.sent = conn, []
+
+    def execute(self, query, params=None, **kw):
+        text = query.as_string(self._conn) if isinstance(query, psql.Composable) else str(query)
+        self.sent.append(text if not params else text + " | params=" + repr(params))
+        return self._conn.execute(query, params, **kw) if params is not None else self._conn.execute(query, **kw)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+def test_no_sql_statement_ever_contains_a_plaintext_password(host):
+    """The hosted image preloads pg_stat_statements and pgaudit; anything in the SQL text can end up in a view or a log."""
+    base, n = host
+    with admin(base) as a:
+        rec = Recording(a)
+        bootstrap_owner(rec, database=n["db"], owner=n["owner"], owner_password=PW_OWNER)
+        bootstrap_owner(rec, database=n["db"], owner=n["owner"], owner_password="again-" + "a" * 30)  # rotation path
+        sent_owner = list(rec.sent)
+    with psycopg.connect(owner_dsn(base, n, "again-" + "a" * 30), autocommit=True) as o:
+        migrate(o)
+    with admin(base) as a:
+        a.execute(f'GRANT safwan_app TO "{n["owner"]}" WITH ADMIN OPTION')
+    with psycopg.connect(owner_dsn(base, n, "again-" + "a" * 30), autocommit=True) as o:
+        rec = Recording(o)
+        bootstrap_runtime(rec, runtime=n["runtime"], runtime_password=PW_RUNTIME)
+        bootstrap_runtime(rec, runtime=n["runtime"], runtime_password="rot-" + "r" * 30)  # rotation path
+        sent_runtime = list(rec.sent)
+    everything = "\n".join(sent_owner + sent_runtime)
+    for plaintext in (PW_OWNER, "again-" + "a" * 30, PW_RUNTIME, "rot-" + "r" * 30):
+        assert plaintext not in everything
+    assert everything.count("SCRAM-SHA-256$") >= 4  # every password went out as a verifier
+    # ...and the verifiers really work: the rotated passwords log in, the old ones no longer do.
+    connect_runtime(make_conninfo(base, dbname=n["db"], user=n["runtime"], password="rot-" + "r" * 30), production=True).close()
+    with pytest.raises(psycopg.OperationalError):
+        psycopg.connect(make_conninfo(base, dbname=n["db"], user=n["runtime"], password=PW_RUNTIME), connect_timeout=3)

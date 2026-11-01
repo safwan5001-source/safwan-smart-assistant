@@ -83,6 +83,7 @@
 | 22 | `APP_ENV=development` على Railway يفتح الـAPI | أي `RAILWAY_*` يفرض `production` |
 | 23 | الترحيل عبر Pre-deploy يضع بيانات المالك في بيئة تشغيل الـAPI | خدمة مهام مستقلة؛ الـAPI لا يملك إلا دور التشغيل |
 | 24 | مالك الجداول ودوال DEFINER = `postgres` (superuser) على Railway | `app.db.bootstrap`: مالك غير مميَّز + قاعدة مغلقة على PUBLIC + دخول تشغيل بسقف اتصالات |
+| 25 | صورة PostgreSQL لدى Railway تحمّل `pg_stat_statements`/`pgaudit`؛ `PASSWORD 'نص صريح'` يظهر في نص الأمر | `bootstrap` يرسل مُحقِّق SCRAM-SHA-256 محسوبًا عند العميل (مطابق لمخرجات الخادم، مُختبَر) |
+| 26 | لا فحص للإطلاق من داخل المنصة | `app.db.smoke`: قراءة فقط، بلا بيانات مستخدمين، كتابات مُلغاة، واتصال المالك بوضع القراءة فقط |
 
 **مثبَّت عمدًا باختبار:** FORCE RLS على `sync_records`/`audit_log` فقط؛ `accounts`/`sessions` بلا FORCE لأن دالة البحث `SECURITY DEFINER` تعمل بصفة المالك (تفسير في `test_row_level_security_flags_are_pinned`). **مخاطر باقية:** انظر §4 في وثيقة Railway (لا مصادقة مستخدم بعد؛ اختراق الويب = انتحال حساب؛ ترميز المسار؛ بلا تحديد معدّل؛ اتصال لكل نونس).
-

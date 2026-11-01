@@ -17,6 +17,7 @@ import psycopg
 import pytest
 
 from app.auth.sessions import create_session, digest_secret, resolve_session, revoke_all_sessions, revoke_session
+from app.db import smoke
 from app.db.connection import connect_runtime
 from app.db.scope import owner_transaction
 from tests.pg_support import ACCOUNT_A, ACCOUNT_B, make_account
@@ -153,14 +154,7 @@ def test_session_secrets_are_not_recoverable_from_the_database(runtime, pg_owner
 
 
 # ── privileges: the runtime role is exactly least-privilege ──────────────────────────────────────────────────────────
-TABLE_PRIVILEGES = {
-    "accounts": {"SELECT"},                      # created only by a reviewed bootstrap path, never by request code
-    "sessions": {"SELECT", "INSERT"},            # + column-level UPDATE(revoked_at, last_seen_at), asserted below
-    "sync_records": {"SELECT", "INSERT", "UPDATE"},  # no DELETE: removal is a tombstone
-    "audit_log": {"SELECT", "INSERT"},           # append-only
-    "service_nonces": set(),                     # reachable only through the SECURITY DEFINER function
-    "schema_migrations": set(),                  # the runner's bookkeeping is invisible to the application
-}
+TABLE_PRIVILEGES = smoke.EXPECTED_TABLE_PRIVILEGES  # one source of truth, shared with the on-platform smoke check
 
 
 def test_runtime_role_privileges_are_exactly_the_intended_set(runtime):
@@ -175,7 +169,7 @@ def test_runtime_role_privileges_are_exactly_the_intended_set(runtime):
     updatable = {c for (c,) in runtime.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'sessions'").fetchall()
         if runtime.execute("SELECT has_column_privilege(current_user, 'public.sessions', %s, 'UPDATE')", (c,)).fetchone()[0]}
-    assert updatable == {"revoked_at", "last_seen_at"}
+    assert updatable == smoke.EXPECTED_UPDATABLE_SESSION_COLUMNS
 
 
 def test_row_level_security_flags_are_pinned(pg_owner):
@@ -186,8 +180,4 @@ def test_row_level_security_flags_are_pinned(pg_owner):
     flags = {r[0]: (r[1], r[2]) for r in pg_owner.execute(
         "SELECT relname, relrowsecurity, relforcerowsecurity FROM pg_class "
         "WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' ORDER BY 1").fetchall()}
-    assert flags == {
-        "accounts": (True, False), "sessions": (True, False),
-        "sync_records": (True, True), "audit_log": (True, True),
-        "service_nonces": (False, False), "schema_migrations": (False, False),
-    }
+    assert flags == smoke.EXPECTED_RLS_FLAGS

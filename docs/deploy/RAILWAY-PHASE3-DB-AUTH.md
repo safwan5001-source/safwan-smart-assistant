@@ -7,7 +7,7 @@
 | السؤال | الجواب |
 |---|---|
 | هل PR #26 متوافق مع Railway؟ | **نعم، كود وتصميمًا.** الموقِّع والـRLS والجلسات لا تعتمد على منصة. الجزء الوحيد الخاص بـVercel هو `vercel.json` (Service Binding) وقد أُعيد إلى نسخة `main`. |
-| هل هو جاهز للدمج؟ | **تقنيًا نعم، وإجرائيًا لا**: يحتاج PostgreSQL وأسرارًا وترتيب إطلاق (§7). **لم يُدمج.** |
+| هل هو جاهز للدمج؟ | **تقنيًا نعم، وإجرائيًا لا**: يحتاج PostgreSQL وأسرارًا وترتيب إطلاق (§8). **لم يُدمج.** |
 | هل المصادقة مكتملة؟ | **لا — وهذا مقصود.** الموجود: توقيع خدمة↔خدمة (BFF→API) ونواة جلسات في قاعدة البيانات. **لا يوجد مسار تسجيل دخول ولا إنشاء حساب** (Passkeys في B2). لا مستخدم نهائي يستطيع الدخول بعد هذا الإطلاق. |
 | أكبر خطر اكتُشف | قاعدة Railway هي **PostgreSQL 18** بينما كان CI على **16** فقط. أُصلح: CI على 16 و18 معًا، وكل الاختبارات تمر عليهما. |
 
@@ -36,21 +36,23 @@
 | 8 | الترحيل عبر Pre-deploy command يضع بيانات **المالك** في بيئة تشغيل الـAPI | اختراق الـAPI يكشف مفتاح تغيير المخطط | خدمة مهام مستقلة `safwan-db-job` لا يصلها الـAPI (§6). |
 | 9 | مستخدم Railway الافتراضي `postgres` **superuser** | يملك الجداول ودوال `SECURITY DEFINER` فتعمل بصلاحية superuser، ويتجاوز RLS | وحدة `app.db.bootstrap` (جديدة): مالك غير مميَّز + قاعدة مغلقة على PUBLIC + دخول تشغيل مقيَّد بسقف 40 اتصالًا. 23 اختبارًا + تجربة على عنقود فارغ. |
 | 10 | FORCE RLS غير مفعّل على `accounts`/`sessions` | (بالتصميم) | دالة البحث `SECURITY DEFINER` تعمل بصفة المالك وسيفلترها FORCE إلى لا شيء. الحماية: دور التشغيل ليس مالكًا ولا BYPASSRLS (يُفرض عند الاتصال)، ولا مسار مباشر. **FORCE مفعّل على `sync_records` و`audit_log`.** الآن مثبّت باختبار. |
+| 11 | صورة PostgreSQL لدى Railway تحمّل `pg_stat_statements` و`pgaudit` مسبقًا (من `init-ssl.sh`)، و`CREATE/ALTER ROLE … PASSWORD 'نص صريح'` يضع كلمة المرور في نص الأمر | قد تُسجَّل في إحصاءات الخادم أو سجلاته | `app.db.bootstrap` يرسل **مُحقِّق SCRAM-SHA-256** محسوبًا عند العميل؛ لا يصل النص الصريح إلى الخادم أبدًا. اختبار known-answer: مطابق بتًّا ببت لما يخزّنه PostgreSQL نفسه (16 و18)، واختبار يلتقط كل SQL مُرسَل ويثبت خلوه من النص الصريح. |
+| 12 | لا وسيلة لإثبات سلامة القاعدة من داخل Railway دون كتابة بيانات | بروفة الإطلاق ستكون عمياء | `app.db.smoke`: 12 فحصًا للقراءة فقط، بلا بيانات مستخدمين، وكل كتابة تجريبية داخل معاملة تُلغى (§6.4). |
 
 ## 4. مخاطر متبقية (صريحة)
 1. **لا مصادقة مستخدم بعد.** الـBFF يدّعي الحساب في ترويسة موقَّعة؛ **اختراق الويب = انتحال أي حساب** (يملك السر). لذلك السر Sealed ويُدوَّر.
 2. **ترميز المسار:** الـAPI يوقّع على المسار *بعد فك الترميز* (`/internal/v1/%70ing` ≡ `/ping`). مسارات الـBFF ثابتة بأحرف بسيطة فلا يُستغل، لكنه لو اختلف ترميز العميل عن الخادم لفشل مغلقًا. لم أغيّر ما يمسّ العقد المثبَّت.
 3. **لا تحديد معدّل** على `/api/health` غير الكاش (B2).
 4. **اتصال جديد لكل نونس** (لا pool)؛ الكاش يبقيه ضئيلًا. يلزم pool قبل أي حمل حقيقي.
-5. **TLS للقاعدة:** قالب Railway يفعّل SSL بشهادة ذاتية؛ الاتصال داخل شبكة خاصة مشفّرة (WireGuard). أوصي بـ`?sslmode=require` في الـDSN — **لم أتحقق منه** (لا قاعدة Railway لأجرّب عليها)؛ أول فحص صحة سيكشف الخطأ.
-6. **السرّ في سجلات الخادم:** `CREATE/ALTER ROLE … PASSWORD` قد يظهر في سجل PostgreSQL إن فُعِّل `log_statement=ddl`. الافتراضي `none`؛ تحقق منه.
+5. **TLS للقاعدة:** قالب Railway يفعّل SSL بشهادة ذاتية، والاتصال داخل شبكة خاصة مشفّرة. `sslmode=require` **جُرِّب محليًا على PostgreSQL 18 بشهادة ذاتية التوقيع** (يعمل، ويُثبَته `smoke`)، ولم يُجرَّب على Railway نفسه؛ أول تشغيل لـ`smoke` هناك يحسم.
+6. **السرّ في سجلات الخادم:** أُغلق (§3 #11): لا نص صريح في أي SQL.
 7. **`/docs` و`/openapi.json`** في الـAPI عامَّان داخليًا (الـAPI خاص). عطّلهما قبل أي كشف.
 
 ## 5. نتائج الاختبارات
 | الفحص | النتيجة |
 |---|---|
-| pytest على **PostgreSQL 16.15** (حقيقي، `REQUIRE_POSTGRES=1`، لا تخطّي) | **237 ناجح** |
-| pytest على **PostgreSQL 18.6** (نفس إصدار قالب Railway) | **237 ناجح** |
+| pytest على **PostgreSQL 16.15** (حقيقي، `REQUIRE_POSTGRES=1`، لا تخطّي) | **261 ناجح** |
+| pytest على **PostgreSQL 18.6** (نفس إصدار قالب Railway)، وأيضًا مع TLS بشهادة ذاتية | **261 ناجح** |
 | vitest | **108 ناجح** (typecheck وlint و`next build` نظيفة) |
 | e2e حقيقي: Next.js → API (إنتاج، دور مقيَّد) → PostgreSQL، على 16 و18 | **كل الفحوص ناجحة** (توقيع، إعادة 401، سرّ خاطئ، غير مضبوط، الـAPI متوقف، حدّ الحمل) |
 | تمرين نسخ احتياطي/استعادة بين عنقودين (`scripts/backup-restore-rehearsal.sh`) | **ناجح مرتين** |
@@ -63,73 +65,104 @@
 - **الصلاحيات:** مصفوفة صلاحيات دور التشغيل مثبّتة حرفيًا (جدول جديد لا يُضاف دون مراجعة).
 - **الترويسات:** التكرار، والمسار/الاستعلام/الطريقة/الجسم/الحساب مغطاة بالتوقيع.
 
-## 6. إعداد PostgreSQL على Railway (Runbook — لم يُنفَّذ)
-### البنية المقترحة
-```
-@safwan/web ──signed──▶ safwan-api ──runtime login──▶ Postgres (خاص، بلا نطاق/TCP proxy)
-                                                          ▲
-safwan-db-job ───owner login (migrate + bootstrap)────────┘   (لا يصله الـAPI ولا الويب)
-```
-| الدور | يملكه | يستخدمه |
+## 6. إعداد PostgreSQL على Railway (مُعتمَد للتنفيذ — لم يُنفَّذ بعد)
+### 6.1 الخدمات النهائية (بيئة `production`، مشروع `f66bca9a-…`)
+| الخدمة | المصدر | الإعدادات | الموارد (سقف) |
+|---|---|---|---|
+| `Postgres` (جديدة) | قالب `postgres` الرسمي، `postgres-ssl:18` دون تثبيت minor | منطقة **`ams`**؛ volume على `/var/lib/postgresql/data`؛ **بلا نطاق عام وبلا TCP proxy**؛ بلا PITR/HA/PgBouncer؛ نسخ احتياطي **يومي** | 0.5 vCPU · 0.5 GB |
+| `safwan-db-job` (جديدة) | المستودع، **فرع `feat/b0-b1-foundation` أولًا** ثم `main` بعد الدمج | Root `/services/api`؛ Railpack/uv؛ بلا نطاق؛ Restart Policy `NEVER`؛ Watch `/services/api/migrations/**` | 0.25 vCPU · 0.25 GB |
+| `safwan-api` (قائمة) | `main` | تُضاف `APP_DATABASE_URL` و`RUNTIME_PASSWORD` و`SERVICE_AUTH_SECRET` | بلا تغيير |
+| `@safwan/web` (قائمة) | `main` | يُضاف `SERVICE_AUTH_SECRET` (`BACKEND_URL` موجود) | بلا تغيير |
+
+### 6.2 الفصل الكامل بين المالك والتشغيل
+| الجهة | تملك | لا تملك أبدًا |
 |---|---|---|
-| `postgres` (superuser، يُنشئه القالب) | Railway | **مرة واحدة** فقط في `bootstrap owner`، ثم يُحذف متغيره من الخدمة |
-| `safwan_owner` (NOSUPERUSER، CREATEROLE) | يملك القاعدة `safwan` والجداول | `safwan-db-job` فقط |
-| `safwan_runtime` (عضو في `safwan_app`، بلا BYPASSRLS، سقف 40 اتصالًا) | لا يملك شيئًا | `safwan-api` فقط |
+| `safwan-api` | دخول التشغيل `safwan_runtime` فقط | أي رابط مالك أو superuser، وأي `DATABASE_URL` |
+| `@safwan/web` | سرّ التوقيع فقط | أي بيانات قاعدة |
+| `safwan-db-job` | المالك + التشغيل (لإنشائه والتحقق منه) | الـsuperuser **بعد المرحلة 1** (يُحذف متغيره) |
+| `postgres` (superuser) | Railway | يُستعمل مرة واحدة فقط ثم لا يلمسه أي تطبيق |
 
-### الأسرار (تُضبط من لوحة Railway، **Sealed**؛ لا تمرّ عبر هذه المحادثة)
-| المتغير | الخدمة | ملاحظة |
+الحارس في الـAPI يرفض الاتصال بدور مالك أو superuser في الإنتاج، و`smoke` يتحقق من ذلك على الخدمة الحية.
+
+### 6.3 الأسرار: التوليد والإدخال دون ظهور في المحادثة أو السجلات
+**ما لن يحدث:** لا أطلب منك قيمة سرّ، ولا أستدعي `set-variables` بسرّ، ولا `list-variables` على `Postgres` (يُرجع `POSTGRES_PASSWORD` نصًّا). أضبط **مراجع فقط** (لا قيم).
+
+**ما تفعله أنت (ثلاث قيم، كلها hex آمنة للـURL، 256 بتًا):**
+```bash
+# macOS                              # Linux (Wayland: wl-copy)                     # Windows PowerShell
+openssl rand -hex 32 | pbcopy        openssl rand -hex 32 | xclip -selection clipboard   $b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Fill($b); (($b|%{$_.ToString('x2')}) -join '') | Set-Clipboard
+```
+القيمة تذهب إلى الحافظة **دون طباعتها في الطرفية**، ثم: لوحة Railway ← الخدمة ← Variables ← New Variable ← الصق ← ⋮ ← **Seal**. كرّر لكل قيمة جديدة.
+
+| المتغير | الخدمات (الصق **القيمة نفسها** في كل منها) | القيمة |
 |---|---|---|
-| `SERVICE_AUTH_SECRET` | **مشترك** `${{shared.SERVICE_AUTH_SECRET}}` في الويب والـAPI | `openssl rand -base64 48` (≥32 بايت). التدوير: `SERVICE_AUTH_SECRET_PREVIOUS` أثناء النافذة. |
-| `RUNTIME_PASSWORD` | مشترك | يستخدمه `safwan-db-job` (يُنشئ الدور) والـAPI (يتصل به) |
-| `OWNER_PASSWORD` | `safwan-db-job` فقط | |
-| `BOOTSTRAP_DATABASE_URL` | `safwan-db-job` **مؤقتًا** | `postgresql://postgres:${{Postgres.POSTGRES_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/railway` — يُحذف بعد المرحلة 1 |
-| `MIGRATION_DATABASE_URL` | `safwan-db-job` فقط | `postgresql://safwan_owner:${{OWNER_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/safwan?sslmode=require` |
-| `APP_DATABASE_URL` | `safwan-api` فقط | `postgresql://safwan_runtime:${{shared.RUNTIME_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/safwan?sslmode=require` |
+| `OWNER_PASSWORD` | `safwan-db-job` | قيمة جديدة |
+| `RUNTIME_PASSWORD` | `safwan-db-job` و`safwan-api` | قيمة جديدة (واحدة) |
+| `SERVICE_AUTH_SECRET` | `safwan-api` و`@safwan/web` | قيمة جديدة (واحدة) |
+| `MIGRATION_DATABASE_URL` | `safwan-db-job` | `postgresql://safwan_owner:${{OWNER_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/safwan?sslmode=require` |
+| `APP_DATABASE_URL` | `safwan-db-job` و`safwan-api` | `postgresql://safwan_runtime:${{RUNTIME_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/safwan?sslmode=require` |
+| `BOOTSTRAP_DATABASE_URL` | `safwan-db-job` **مؤقتًا** | `postgresql://postgres:${{Postgres.POSTGRES_PASSWORD}}@${{Postgres.RAILWAY_PRIVATE_DOMAIN}}:5432/railway?sslmode=require` — **يُحذف بعد المرحلة 1** |
 
-**ممنوع** على الـAPI: `DATABASE_URL` أو أي مرجع إلى `${{Postgres.DATABASE_URL}}` (دور superuser). الكود يتجاهله، والحارس يرفض الاتصال به في الإنتاج. المتغيرات المحمية Sealed لا تُمرَّر إلى `railway run` — فلا تُشغَّل الترحيلات بهذه الطريقة.
+الصفوف الثلاثة الأخيرة مراجع بلا قيم سرّية؛ أنا أضبطها معلّقة. (استخدام مراجع المتغيرات المحمية داخل الخدمة نفسها لم أتحقق منه على Railway؛ إن لم تُحَلّ فالفشل صريح في `smoke` دون تسريب، والبديل لصق الرابط الكامل كمتغير Sealed.)
+**التحقق دون قراءة القيم** (المحمية لا تُقرأ): `smoke` ينجح ⇒ كلمة مرور التشغيل صحيحة في المهام؛ `/api/health` = `ok` ⇒ السرّ مطابق والرابط صحيح في الـAPI والويب؛ `rejected` ⇒ سرّان مختلفان.
+**أين يمكن أن تتسرب القيم وكيف أُغلقت:** المحادثة (أعلاه) · سجلات التشغيل (الوحدات لا تطبع أسرارًا؛ اختُبر: صفر ظهور) · سجلات/إحصاءات PostgreSQL (مُحقِّق SCRAM، §3 #11) · Git (لا قيم في المستودع) · تاريخ الطرفية (حافظة بلا طباعة) · `railway run` (لا يمرّر المحمي، ولا يُستعمل).
+**التدوير:** قيمة جديدة ← الصقها في الخدمات المعنية ← للتشغيل: أعد نشر `safwan-db-job` (يدوّر كلمة الدور ويُجري `smoke`) ثم الـAPI؛ لسرّ التوقيع: ضع القديم في `SERVICE_AUTH_SECRET_PREVIOUS` أثناء النافذة.
 
-### الخطوات (وكلها جُرّبت بالأوامر نفسها على عنقود 18 فارغ)
-1. **PostgreSQL:** قالب `postgres` (الصورة `ghcr.io/railwayapp-templates/postgres-ssl:18`، volume على `/var/lib/postgresql/data`). **لا TCP proxy ولا نطاق.** فعّل Volume Backups المجدولة (§8).
-2. **`safwan-db-job`:** خدمة جديدة من المستودع، Root `/services/api`، بلا نطاق، Restart Policy `NEVER`، Watch `/services/api/migrations/**`.
-   - Start Command مؤقتًا: `python -m app.db.bootstrap owner` ← ينشئ `safwan_owner` وقاعدة `safwan` ويغلقها على PUBLIC. المتوقع في السجل: `created owner role safwan_owner; created database safwan; database safwan closed to PUBLIC`.
-   - احذف `BOOTSTRAP_DATABASE_URL`. غيّر Start Command إلى: `python -m app.db.migrate && python -m app.db.bootstrap runtime` ← `applied: 0001, 0002, 0003` ثم `created runtime login safwan_runtime; runtime may connect`. إعادة التشغيل آمنة (`nothing (up to date)` ويدوّر كلمة المرور).
-3. **الـAPI:** أضف `APP_DATABASE_URL` و`SERVICE_AUTH_SECRET`. **الويب:** أضف `SERVICE_AUTH_SECRET`. (`BACKEND_URL` موجود.)
-4. **ثم** ادمج #26 (الشيفرة الموقَّعة تبدأ العمل عند النشر).
+### 6.4 `app.db.smoke` — فحص الإطلاق للقراءة فقط
+`python -m app.db.smoke` يعمل داخل شبكة Railway الخاصة بدور التشغيل: دخول مقبول عند الحارس · TLS (يُبلَّغ، ويُلزَم بـ`SMOKE_REQUIRE_SSL=1`) · مصفوفة صلاحيات دقيقة · أعلام RLS/FORCE · كل سياسة مربوطة بنطاق الحساب (فحص بنيوي لا يحتاج بيانات) · بلا نطاق لا قراءة ولا كتابة · نطاق مجهول لا يقرأ شيئًا · جلسة مجهولة تُحَلّ إلى لا شيء · نونس يُطالَب به مرة وإعادته تُرفض · رفض المالك والـsuperuser · ترحيلات هذا البناء مطبَّقة بالـchecksum.
+**إثبات عدم الكشف والتغيير:** أسماء حسابات ومحتوى سجلات وأسرار جلسات وكلمات مرور كانت في القاعدة (canaries) ولم يظهر منها حرف في المخرجات؛ بصمة المحتوى لكل الجداول **وقيم التسلسلات** متطابقة قبل وبعد ثلاث تشغيلات؛ اتصال المالك مُلزَم بوضع القراءة فقط. اختبارات طفرات: الكتابة الدائمة وتسريب الرابط التُقطتا.
+
+### 6.5 تشغيل `safwan-db-job` (الأوامر جُرِّبت حرفيًا على عنقود 18 فارغ بـTLS)
+1. **المرحلة 1** — Start Command: `python -m app.db.bootstrap owner` ← `created owner role safwan_owner; created database safwan; database safwan closed to PUBLIC`. ثم **احذف `BOOTSTRAP_DATABASE_URL`**.
+2. **المرحلة 2** — Start Command: `python -m app.db.migrate && python -m app.db.bootstrap runtime && python -m app.db.smoke` ← `applied: 0001, 0002, 0003` · `created runtime login safwan_runtime; runtime may connect` · 12 فحصًا `PASS` · `SMOKE PASSED`. إعادة التشغيل آمنة (`nothing (up to date)`، تدوير كلمة الدور، `smoke` أخضر).
 
 ### ترتيب الترحيلات وسياسة الأمان
-- الترحيلات متسلسلة (`0001…`)، كل ملف في معاملة واحدة، مع checksum وقفل استشاري؛ **تعديل ترحيل مُطبَّق = رفض**، وقاعدة أحدث من البناء = رفض.
-- لأن الـAPI و`safwan-db-job` يُبنيان من الـcommit نفسه قد يبدآن معًا: **كل ترحيل متوافق مع الكود السابق (إضافة فقط)، وPR الترحيل يسبق PR الكود الذي يستخدمه.**
+- متسلسلة (`0001…`)، كل ملف في معاملة، مع checksum وقفل استشاري؛ تعديل ترحيل مُطبَّق = رفض، وقاعدة أحدث من البناء = رفض.
+- الـAPI و`safwan-db-job` يُبنيان من الـcommit نفسه فقد يبدآن معًا: **كل ترحيل متوافق مع الكود السابق (إضافة فقط)، وPR الترحيل يسبق PR الكود الذي يستخدمه.**
 
-## 7. خطة النشر التدريجية
-| المرحلة | الإجراء | التحقق | الرجوع |
-|---|---|---|---|
-| 0 | موافقتك + إنشاء الأسرار Sealed (لا تمرّ بي) | — | — |
-| 1 | PostgreSQL (الخطوة 1) | الخدمة Online؛ `list-domains` و`list-tcp-proxies` فارغتان؛ Backups مفعّلة | احذف الخدمة (لا بيانات بعد) |
-| 2 | `safwan-db-job` (الخطوة 2) | سجل المرحلتين كما في §6؛ لا أخطاء | أعد التشغيل (آمن) أو احذف الخدمة والقاعدة |
-| 3 | متغيرات الـAPI والويب (معلّقة، دون نشر) | مراجعة Staged Changes: تخص الخدمتين فقط | ألغِ التغييرات المعلّقة |
-| 4 | دمج #26 → نشر تلقائي للخدمتين | `https://safwanai.up.railway.app/api/health` ⇒ **200 و`backend:"ok"`**؛ سجل الـAPI بلا `service auth denied` غير متوقعة؛ إعادة نفس الطلب ⇒ 401 | **Railway Rollback** لنشر الويب/الـAPI السابق (`canRollback`) أو revert للـPR؛ المتغيرات الإضافية لا تضر |
-| 5 | تمرين استعادة على Railway (§8) | قبل أي بيانات حقيقية | — |
-| 6 | تنبيهات (webhook للفشل) ومراقبة اتصالات القاعدة | — | — |
-
-حالات فشل متوقعة وتشخيصها من `/api/health`: `unconfigured` ⇒ سرّ/عنوان ناقص في الويب؛ `rejected` ⇒ سرّان مختلفان؛ `unavailable` ⇒ الـAPI يرفض القاعدة (دور خاطئ/غير مهاجَر/كلمة مرور)؛ `unreachable` ⇒ الشبكة الخاصة أو الـAPI متوقف.
-
-## 8. النسخ الاحتياطي والاستعادة
-| الطبقة | الأداة | الحالة |
+## 7. التكلفة والحدود (تقديرات من مقاييس فعلية؛ **ليست فاتورة**)
+| البند | تقدير شهري | الأساس |
 |---|---|---|
-| لقطات مجدولة للـvolume | Backups في Railway (تزايدية؛ تُفوتر بمقدار البيانات الفريدة) | **تُفعَّل في المرحلة 1** (بعد موافقتك على التكلفة) |
-| استعادة لحظية (PITR) | pgBackRest إلى bucket (أسبوعيًا full، يوميًا differential، آخر 4 full ≈ 4 أسابيع) | **اختيارية** وتتطلب bucket مدفوعًا — قرارك |
-| نسخة منطقية خارج المنصة | `pg_dump --format=custom` | شهريًا على الأقل وقبل كل ترحيل؛ يلزم TCP proxy مؤقت أو خدمة مجدولة (قرار لاحق) |
+| أَوْج AWJ (قراءة فقط، 7 أيام) | **≈ 18.5 دولار** | 7 خدمات؛ الذاكرة الوسطية 1.82 GB ($18.2)؛ أكبرها `awj-clamav` ≈ 1.0 GB (≈ $10)؛ حجما volume 0.5+1 GB |
+| Safwan الحالي (Web+API) | ≈ 2.8–3.5 دولار | ذاكرة 0.24 + 0.035 GB |
+| `Postgres` | ≈ 1.5 دولار | مرجع حقيقي: `nibras-db` (نفس القالب PG18) يستهلك **0.145 GB** وسطيًا (ذروة 0.154) و0.236 GB قرصًا من 0.5 GB |
+| volume (500 MB) | ≈ 0.08 دولار | |
+| نسخ يومي | < 0.10 دولار | تزايدي |
+| `safwan-db-job` | < 0.01 دولار | ثوانٍ عند كل تغيير ترحيل |
+| الاتصال الصادر | 0 | شبكة خاصة؛ بلا TCP proxy |
+| **إضافة المرحلة 3** | **≈ 1.7 دولار (1.3–3)** | |
+| **مساحة العمل كلها** | **≈ 23–25 دولار استهلاكًا** | |
 
-**الاستعادة من لقطة:** تبويب Backups ← Restore ← يُجهَّز volume جديد باسم تاريخ اللقطة ويبقى القديم محفوظًا ← راجع التغييرات المعلّقة ← Deploy. بعدها: `/api/health` ثم تحقق الأدوار.
-**الاستعادة المنطقية (جُرّبت فعلًا بين عنقودين):** الترتيب مهم — **أنشئ الأدوار أولًا** (`CREATE ROLE safwan_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`) وإلا يُرفض `pg_restore` (جُرّب)، ثم `pg_restore --no-owner`، ثم `python -m app.db.migrate` (لا يفعل شيئًا) و`bootstrap runtime`. أثبت التمرين بعد الاستعادة: الأعداد سليمة، RLS/FORCE كما هي، مصفوفة الصلاحيات نفسها، جلسة حيّة تعمل، **جلسة مُبطَلة تبقى مُبطَلة**، trigger الإبطال سليم، والدور المميَّز مرفوض.
-**غير مُجرَّب بعد:** استعادة اللقطات على Railway نفسها (لا قاعدة هناك). هذا شرط قبل البيانات الحقيقية (المرحلة 5).
+- رصيد الخطة المضمَّن مستهلَك أصلًا بأَوْج، فالتكلفة الحدّية للمرحلة 3 ≈ استهلاكها فقط (≈ 1.7 دولار)، **دون اشتراك إضافي**، سواء Hobby (5$) أو Pro (20$): الفاتورة المتوقعة ≈ 24 دولارًا في الحالتين. **الخطة غير قابلة للقراءة من الأدوات** — راجعها في لوحة Railway.
+- **Spending Hard Limit: لا يُفعَّل** (يوقف كل خدمات مساحة العمل ومنها أَوْج). تنبيه بريدي (soft) عند **30 دولارًا** فقط.
+- الأسقف في §6.1 تحدّ أسوأ حالة؛ تُراجَع الفعلية في Usage بعد 24 ساعة ثم أسبوع.
+- **ملاحظة:** `max_connections = 500` في صورة Railway، وسقف دور التشغيل 40 اتصالًا.
 
-## 9. ما يلزم منك قبل الإطلاق
-1. موافقة على **موارد مدفوعة**: خدمة PostgreSQL + volume + (اختياريًا) Backups/PITR/bucket، وخدمة `safwan-db-job`. لم أنشئ شيئًا.
-2. إنشاء الأسرار Sealed بنفسك (`SERVICE_AUTH_SECRET`، `RUNTIME_PASSWORD`، `OWNER_PASSWORD`).
-3. تحديث حماية الفرع إن كان فحص `api` مطلوبًا (صار `api (postgres 16/18)`).
-4. قرار PITR، وقرار سياسة النسخ المنطقي.
-5. موافقة صريحة على دمج #26 بعد المرحلة 3.
+## 8. خطة النشر التدريجية
+| # | الإجراء | التحقق | الأثر على Web/API | الرجوع |
+|---|---|---|---|---|
+| 0 | أنت: تنبيه الإنفاق (30$) دون Hard limit | — | لا | — |
+| 1 | أجهّز `Postgres` و`safwan-db-job` **معلّقين** (مراجع فقط)، أعرض الفروق، **وأنت تضغط Deploy** | `Postgres` Online في `ams`؛ لا نطاقات ولا TCP proxy | لا | احذف الخدمتين (لا بيانات) |
+| 2 | أنت: الأسرار الثلاثة Sealed (§6.3) | — | لا | احذف المتغيرات |
+| 3 | المرحلة 1 للمهام (من فرع #26) | سجل المرحلة 1 | لا | أعد التشغيل (آمن) |
+| 4 | المرحلة 2 للمهام | 12 `PASS` و`SMOKE PASSED` | لا | أعد التشغيل (آمن) |
+| 5 | أضبط على Web وAPI المتغيرات (الشيفرة الحالية تتجاهلها) | `/api/health` ما زال `ok` | إعادة نشر لنفس الشيفرة | احذف المتغيرات |
+| 6 | نسخة يدوية "pre-merge" ثم **أمرك الصريح** بدمج #26 | نشر Web وAPI | إعادة نشر عادية؛ الـAPI يبقى DB-free في `/health` | Railway Rollback (صور 72 ساعة Hobby / 120 Pro) أو revert |
+| 7 | تحويل مصدر `safwan-db-job` إلى `main` | يُعاد تشغيله دون تغيير | لا | — |
+| 8 | تحقق `https://safwanai.up.railway.app/api/health` ⇒ 200 و`"backend":"ok"` ثم صفحة الاستهلاك بعد 24 ساعة وأسبوع | | | |
+| 9 | تمرين استعادة لقطة على Railway قبل أي بيانات حقيقية | | | |
+
+## 9. النسخ الاحتياطي والاستعادة
+| الطبقة | القرار |
+|---|---|
+| لقطات الـvolume | **يومي** (يُحتفظ 6 أيام) + يدوي قبل كل ترحيل |
+| PITR | **مؤجَّل** (bucket + نقل صادر، ويشترط صورة بلا تثبيت minor) — عند وجود بيانات حقيقية |
+| HA / PgBouncer | **مؤجَّلان** |
+| نسخة منطقية `pg_dump` | شهريًا وقبل كل ترحيل (TCP proxy مؤقت أو خدمة مجدولة لاحقًا) |
+
+**الاستعادة من لقطة:** Backups ← Restore ← volume جديد باسم التاريخ ويبقى القديم ← راجع التغييرات المعلّقة ← Deploy، ثم `smoke`.
+**الاستعادة المنطقية (جُرِّبت بين عنقودين):** أنشئ الأدوار أولًا وإلا يُرفض `pg_restore`، ثم `pg_restore --no-owner`، ثم `migrate` و`bootstrap runtime` و`smoke`. بعدها: الأعداد سليمة، RLS/FORCE كما هي، مصفوفة الصلاحيات نفسها، **الجلسة المُبطَلة تبقى مُبطَلة**، trigger الإبطال سليم.
+**غير مُجرَّب بعد:** استعادة اللقطات على Railway نفسها (شرط قبل البيانات الحقيقية — الخطوة 9).
 
 ## 10. مراجع الشيفرة والأدوات
-`services/api/app/db/{bootstrap,migrate,connection,scope}.py` · `migrations/0001–0003` · `app/service_auth.py` · `app/auth/sessions.py` · `apps/web/server/{backend,health,service-signature}.ts` · `scripts/{e2e-bff,backup-restore-rehearsal}.sh` · `tests/{test_phase3_adversarial,test_bootstrap,test_deploy_topology,test_runtime_deps}.py`.
+`services/api/app/db/{bootstrap,migrate,connection,scope}.py` · `migrations/0001–0003` · `app/service_auth.py` · `app/auth/sessions.py` · `apps/web/server/{backend,health,service-signature}.ts` · `services/api/app/db/smoke.py` · `scripts/{e2e-bff,backup-restore-rehearsal}.sh` · `tests/{test_smoke,test_phase3_adversarial,test_bootstrap,test_deploy_topology,test_runtime_deps}.py`.

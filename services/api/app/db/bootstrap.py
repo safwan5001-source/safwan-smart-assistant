@@ -15,6 +15,9 @@ excess privileges is REFUSED, never silently "fixed".
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
 import re
 import sys
@@ -38,10 +41,29 @@ def _ident(value: str, what: str) -> str:
     return value
 
 
+_PASSWORD = re.compile(r"[\x21-\x7e]{24,200}")  # printable ASCII, no spaces: SASLprep is the identity on it, so client and server agree
+SCRAM_ITERATIONS = 4096  # PostgreSQL's default `scram_iterations`
+
+
 def _password(value: str, what: str) -> str:
-    if not isinstance(value, str) or len(value) < MIN_PASSWORD_CHARS or "\x00" in value:
-        raise BootstrapError(f"{what} password must be at least {MIN_PASSWORD_CHARS} characters")
+    if not isinstance(value, str) or not _PASSWORD.fullmatch(value):
+        raise BootstrapError(f"{what} password must be 24-200 printable ASCII characters without spaces")
     return value
+
+
+def scram_verifier(password: str, *, salt: bytes | None = None, iterations: int = SCRAM_ITERATIONS) -> str:
+    """The `SCRAM-SHA-256$…` verifier PostgreSQL stores for a password (RFC 5802/7677, as in pg's scram_build_secret).
+
+    Why: `CREATE/ALTER ROLE … PASSWORD 'plain'` puts the plaintext into the SQL text, which the hosted image's preloaded
+    `pg_stat_statements`/`pgaudit` (and any `log_statement` setting) can record. Sending only the verifier means the plaintext
+    never leaves this process; the server still accepts it as an already-encrypted password. Verified against the server's own
+    output in tests."""
+    salt = os.urandom(16) if salt is None else salt
+    salted = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations, dklen=32)
+    stored = hashlib.sha256(hmac.new(salted, b"Client Key", hashlib.sha256).digest()).digest()
+    server = hmac.new(salted, b"Server Key", hashlib.sha256).digest()
+    b64 = lambda raw: base64.b64encode(raw).decode("ascii")  # noqa: E731
+    return f"SCRAM-SHA-256${iterations}:{b64(salt)}${b64(stored)}:{b64(server)}"
 
 
 def _role(conn: psycopg.Connection, name: str):
@@ -64,13 +86,13 @@ def bootstrap_owner(admin: psycopg.Connection, *, database: str, owner: str, own
     existing = _role(admin, owner)
     if existing is None:
         admin.execute(sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB CREATEROLE NOREPLICATION PASSWORD {}")
-                      .format(sql.Identifier(owner), sql.Literal(owner_password)))
+                      .format(sql.Identifier(owner), sql.Literal(scram_verifier(owner_password))))
         done.append(f"created owner role {owner}")
     else:
         sup, byp, cdb, crole, repl, login = existing
         if sup or byp or cdb or repl or not login or not crole:
             raise BootstrapError(f"role {owner} exists with unexpected privileges; refusing to continue")
-        admin.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(owner), sql.Literal(owner_password)))
+        admin.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(owner), sql.Literal(scram_verifier(owner_password))))
         done.append(f"rotated password of {owner}")
 
     row = admin.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = %s", (database,)).fetchone()
@@ -98,7 +120,7 @@ def bootstrap_runtime(owner_conn: psycopg.Connection, *, runtime: str, runtime_p
     if existing is None:
         owner_conn.execute(sql.SQL(
             "CREATE ROLE {} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION CONNECTION LIMIT {} "
-            "IN ROLE safwan_app PASSWORD {}").format(sql.Identifier(runtime), sql.Literal(RUNTIME_CONNECTION_LIMIT), sql.Literal(runtime_password)))
+            "IN ROLE safwan_app PASSWORD {}").format(sql.Identifier(runtime), sql.Literal(RUNTIME_CONNECTION_LIMIT), sql.Literal(scram_verifier(runtime_password))))
         done.append(f"created runtime login {runtime}")
     else:
         if any(existing[:5]) or not existing[5]:
@@ -109,7 +131,7 @@ def bootstrap_runtime(owner_conn: psycopg.Connection, *, runtime: str, runtime_p
         if member is None:
             raise BootstrapError(f"role {runtime} exists but is not a member of safwan_app; refusing to continue")
         owner_conn.execute(sql.SQL("ALTER ROLE {} PASSWORD {} CONNECTION LIMIT {}")
-                           .format(sql.Identifier(runtime), sql.Literal(runtime_password), sql.Literal(RUNTIME_CONNECTION_LIMIT)))
+                           .format(sql.Identifier(runtime), sql.Literal(scram_verifier(runtime_password)), sql.Literal(RUNTIME_CONNECTION_LIMIT)))
         done.append(f"rotated password of {runtime}")
     db = owner_conn.execute("SELECT current_database()").fetchone()[0]
     owner_conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO safwan_app").format(sql.Identifier(db)))
