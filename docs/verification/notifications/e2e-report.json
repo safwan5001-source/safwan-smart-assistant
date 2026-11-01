@@ -1,0 +1,252 @@
+{
+  "base": "http://127.0.0.1:3100",
+  "total": 49,
+  "failed": 0,
+  "results": [
+    {
+      "name": "RTL document",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: /reminders (empty)",
+      "ok": true,
+      "detail": "overflow=0"
+    },
+    {
+      "name": "quick-add creates a reminder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "title parsed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "alert banner shown when reminder fires",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "reminder tone actually played (HTMLAudioElement.play resolved)",
+      "ok": true,
+      "detail": "[{\"id\":\"reminder-bell\",\"result\":\"played\"}]"
+    },
+    {
+      "name": "bell badge shows 1 unread",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "reminder card marked as awaiting action",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no duplicate alert for the same occurrence",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "snooze from banner marks reminder snoozed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "snoozed reminder fires again after 10 minutes",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "completing from the banner completes the reminder",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "inbox keeps both reminder alerts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: /notifications",
+      "ok": true,
+      "detail": "overflow=0"
+    },
+    {
+      "name": "acting on a reminder (snooze/complete) marks its notifications read",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "bell badge counts new unread alerts",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "unread tab lists unread items",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "mark-all-read empties unread tab and clears badge",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "archive moves item to archived tab",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "delete removes the notice",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "ambiguous reminder (no time) asks a clarifying question",
+      "ok": true,
+      "detail": "في أي ساعة تريد التذكير؟"
+    },
+    {
+      "name": "nothing is saved before the user answers",
+      "ok": true,
+      "detail": "count=1"
+    },
+    {
+      "name": "reminder saved after the user completes the dialog",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "pause moves reminder to paused tab",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "resume returns it to active",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "edit updates the title",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "delete removes the reminder (with confirmation)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: /settings",
+      "ok": true,
+      "detail": "overflow=0"
+    },
+    {
+      "name": "preview plays tone: notification-soft",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "preview plays tone: reminder-bell",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "preview plays tone: critical-alert",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "preview plays tone: success-tone",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "volume 0 → muted (no sound)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "quiet hours: no sound, alert still stored",
+      "ok": true,
+      "detail": "{\"a\":{\"sound\":\"quiet\",\"speech\":\"quiet\",\"dup\":false,\"title\":\"تنبيه تجريبي\"},\"s\":0}"
+    },
+    {
+      "name": "sound disabled in settings → silent alert",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "lock-screen content is OFF by default",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no uncaught page errors in flows A–B",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "push state is reported (not stuck loading)",
+      "ok": true,
+      "detail": "غير مفعّلة"
+    },
+    {
+      "name": "service worker registers at scope /",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "info: chromium push subscribe outcome",
+      "ok": true,
+      "detail": "خطأ"
+    },
+    {
+      "name": "iPhone iOS 17 Safari (not installed): shows 'add to Home Screen' guidance",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "iPhone: no enable button offered before install",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "iOS < 16.4: reported as unsupported with honest explanation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: / (dashboard)",
+      "ok": true,
+      "detail": "overflow=0"
+    },
+    {
+      "name": "server: push configured with a persistent store",
+      "ok": true,
+      "detail": "{\"push\":true,\"publicKey\":true,\"store\":\"postgres\",\"dispatcher\":true}"
+    },
+    {
+      "name": "server: device endpoints reject unauthenticated calls",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "server: dispatch endpoint is closed without the secret",
+      "ok": true,
+      "detail": "503"
+    },
+    {
+      "name": "service worker is served as JS with no long cache",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "manifest is installable (standalone, id, icons)",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

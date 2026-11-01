@@ -5,6 +5,16 @@ on:
 jobs:
   web:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # exercises the real PostgreSQL notification store contract (skipped when unset)
+      NOTIFY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -29,3 +39,36 @@ jobs:
         working-directory: services/api
       - run: pytest -q
         working-directory: services/api
+  notify-e2e:
+    # Real Chromium against a production build: reminders, in-app alerts, tones, quiet hours, iOS install guidance, server surface.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_PASSWORD: postgres }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm --filter @safwan/web exec playwright install --with-deps chromium
+      - run: pnpm build:web
+      - name: Start the app (throw-away VAPID keys, local PostgreSQL)
+        working-directory: apps/web
+        run: |
+          eval "$(npx web-push generate-vapid-keys --json | python3 -c "import json,sys;d=json.load(sys.stdin);print('export VAPID_PUBLIC_KEY=%s VAPID_PRIVATE_KEY=%s'%(d['publicKey'],d['privateKey']))")"
+          export VAPID_SUBJECT=mailto:ci@example.com NOTIFY_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres
+          nohup npx next start -p 3100 > /tmp/next.log 2>&1 &
+          for i in $(seq 1 40); do curl -fs localhost:3100/api/notify/config && break; sleep 1; done
+      - run: pnpm test:e2e:notify
+        env: { E2E_BASE_URL: "http://127.0.0.1:3100", E2E_OUT: e2e-output }
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: notify-e2e-output, path: apps/web/e2e-output }
