@@ -23,7 +23,7 @@ pnpm install
 pnpm dev:web                       # http://localhost:3000
 cd services/api && python -m venv .venv && . .venv/bin/activate && pip install -e '.[test]'
 APP_ENV=development uvicorn app.main:app --reload      # http://127.0.0.1:8000/docs
-API_PROXY_URL=http://127.0.0.1:8000 pnpm dev:web       # لتمرير /backend/* إلى API محلياً
+BACKEND_URL=http://127.0.0.1:8000 pnpm dev:web          # الواجهة تفحص الـAPI عبر مسار الخادم /api/health (BFF)
 pnpm check                         # typecheck + lint + vitest + build + pytest
 ```
 المتغيرات في [`.env.example`](.env.example). **لا تضع أي سر في متغير يبدأ بـ `NEXT_PUBLIC_`.**
