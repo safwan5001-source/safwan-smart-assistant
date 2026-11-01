@@ -1,7 +1,8 @@
 """Service-to-service authentication for the BFF -> API hop (HMAC-SHA256, replay-protected, fail-closed).
 
-Why: a Vercel Service Binding makes the API *reachable* from the web service but does not
-authenticate the caller (Vercel docs). Every call into /internal/* must therefore prove, per request:
+Why: a private network (Railway `*.railway.internal`) or a Vercel Service Binding only makes the API *reachable* from the web
+service; neither authenticates the caller, and anything else in the same project/network could also reach it.
+Every call into /internal/* must therefore prove, per request:
   * it came from a holder of SERVICE_AUTH_SECRET            -> signature
   * it is fresh                                              -> timestamp within +-60s
   * it was not captured and re-sent                          -> single-use nonce (PostgreSQL, shared by all instances)
@@ -151,6 +152,10 @@ async def require_service_call(
         raise _unavailable("no nonce store (APP_DATABASE_URL missing)", "service_auth_unavailable")
 
     h = request.headers
+    # A repeated service header is ambiguous (this code reads the first value, some proxies the last). Never guess which copy
+    # was signed: refuse. The BFF never sends duplicates, so a duplicate is always either a bug or an injection attempt.
+    if any(len(h.getlist(name)) > 1 for name in (H_TS, H_NONCE, H_SIG, H_ACCT)):
+        raise _deny("duplicate header")
     ts_raw, nonce, sig, acct = h.get(H_TS), h.get(H_NONCE), h.get(H_SIG), h.get(H_ACCT)
     if not ts_raw or not nonce or not sig:
         raise _deny("missing headers")

@@ -154,6 +154,18 @@ def test_malformed_or_nil_account_is_refused(client, bad):
     denied(client.get(PATH, headers=h))
 
 
+@pytest.mark.parametrize("name", ["x-svc-ts", "x-svc-nonce", "x-svc-sig", "x-svc-acct"])
+@pytest.mark.parametrize("copy_first", [True, False], ids=["valid-first", "valid-last"])
+def test_a_duplicated_service_header_is_refused_whichever_copy_is_valid(client, name, copy_first):
+    """First-wins here vs last-wins in some proxies would let an injected copy decide what is verified: refuse both."""
+    h = signed(account=ACCOUNT)
+    other = {"x-svc-ts": str(int(time.time())), "x-svc-nonce": "z" * 22, "x-svc-sig": "0" * 64, "x-svc-acct": "22222222-2222-4222-8222-222222222222"}[name]
+    pairs = list(h.items())
+    pairs = pairs + [(name, other)] if copy_first else [(name, other)] + pairs
+    denied(client.get(PATH, headers=pairs))
+    assert client.get(PATH, headers=h).status_code == 200  # the refusal consumed nothing: the genuine request still works
+
+
 def test_failed_signature_does_not_consume_the_nonce(client):
     h = signed()
     bad = dict(h, **{"x-svc-sig": "0" * 64})

@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { callBackend, readConfig } from "@/server/backend";
-import { buildHealth } from "@/server/health";
+import { DEFAULT_HEALTH_CACHE_MS, buildHealth, cachedHealth, healthCacheMs, resetHealthCache } from "@/server/health";
 
 const SECRET = "s".repeat(48);
 const env = { BACKEND_URL: "https://backend.internal.example", SERVICE_AUTH_SECRET: SECRET };
@@ -102,5 +102,84 @@ describe("buildHealth (public /api/health)", () => {
       expect(text).not.toContain(SECRET);
       expect(text).not.toContain("backend.internal");
     }
+  });
+});
+
+describe("response hardening (bytes, streaming, connection teardown)", () => {
+  const run = (res: () => Promise<Response>) => callBackend({ path: "/internal/v1/ping", env, fetchImpl: res as unknown as typeof fetch });
+
+  it("counts BYTES, not UTF-16 units: a multibyte body over 64 KB is rejected", async () => {
+    const body = JSON.stringify({ ...goodPing, pad: "é".repeat(40_000) }); // ~40k chars, ~80 KB on the wire
+    expect(body.length).toBeLessThan(64 * 1024);
+    expect(await run(async () => new Response(body, { status: 200 }))).toEqual({ kind: "invalid_response" });
+  });
+
+  it("stops reading and cancels an endless stream instead of buffering it", async () => {
+    let pulled = 0, cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { pulled++; c.enqueue(new Uint8Array(16 * 1024)); }, cancel() { cancelled = true; } });
+    expect(await run(async () => new Response(stream, { status: 200 }))).toEqual({ kind: "invalid_response" });
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(10);
+  });
+
+  it("rejects early on a declared Content-Length over the cap", async () => {
+    const res = new Response("{}", { status: 200, headers: { "content-length": String(10 * 1024 * 1024) } });
+    expect(await run(async () => res)).toEqual({ kind: "invalid_response" });
+  });
+
+  it.each([503, 429, 401, 403, 302])("cancels an unread upstream body on HTTP %i", async (code) => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { c.enqueue(new Uint8Array(1024)); }, cancel() { cancelled = true; } });
+    const r = await run(async () => new Response(stream, { status: code }));
+    expect(r.kind === "rejected" || r.kind === "unavailable").toBe(true);
+    expect(cancelled).toBe(true);
+  });
+
+  it("aborts the upstream request once finished", async () => {
+    let signal: AbortSignal | undefined;
+    await callBackend({ path: "/internal/v1/ping", env, fetchImpl: (async (_u: unknown, init?: RequestInit) => { signal = init?.signal ?? undefined; return ok(goodPing); }) as unknown as typeof fetch });
+    expect(signal?.aborted).toBe(true);
+  });
+});
+
+describe("cachedHealth (public route cannot amplify load on the API or PostgreSQL)", () => {
+  const probe = (ok_ = true) => vi.fn(async () => ({ status: (ok_ ? 200 : 503) as 200 | 503, body: { status: ok_ ? "ok" : "degraded", web: "ok", backend: ok_ ? "ok" : "unreachable" } as never }));
+  beforeEach(() => resetHealthCache());
+
+  it("serves repeated requests from one probe within the window", async () => {
+    const p = probe();
+    let t = 1_000;
+    for (let i = 0; i < 50; i++) await cachedHealth(() => t, p);
+    expect(p).toHaveBeenCalledTimes(1);
+    t += DEFAULT_HEALTH_CACHE_MS + 1;
+    await cachedHealth(() => t, p);
+    expect(p).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads the window from HEALTH_CACHE_MS: 0 disables, junk falls back, the maximum is bounded", () => {
+    expect(healthCacheMs({})).toBe(5000);
+    expect(healthCacheMs({ HEALTH_CACHE_MS: "0" })).toBe(0);
+    expect(healthCacheMs({ HEALTH_CACHE_MS: "250" })).toBe(250);
+    expect(healthCacheMs({ HEALTH_CACHE_MS: "99999999" })).toBe(60_000);
+    for (const junk of ["", "  ", "abc", "-1", "NaN", "Infinity"]) expect(healthCacheMs({ HEALTH_CACHE_MS: junk })).toBe(5000);
+  });
+
+  it("shares one in-flight probe between concurrent requests", async () => {
+    const p = probe();
+    await Promise.all(Array.from({ length: 100 }, () => cachedHealth(() => 1, p)));
+    expect(p).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hammer a failing backend either", async () => {
+    const p = probe(false);
+    for (let i = 0; i < 20; i++) expect((await cachedHealth(() => 5, p)).status).toBe(503);
+    expect(p).toHaveBeenCalledTimes(1);
+  });
+
+  it("a probe that throws is not cached and does not wedge later requests", async () => {
+    const bad = vi.fn(async () => { throw new Error("boom"); });
+    await expect(cachedHealth(() => 1, bad as never)).rejects.toThrow();
+    const good = probe();
+    expect((await cachedHealth(() => 2, good)).status).toBe(200);
   });
 });

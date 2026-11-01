@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 
 SERVICE_VERSION = "0.3.0"
 _TRUTHY = {"1", "true", "yes", "on"}
+# Variables Railway injects into every deployed container (absent on a developer machine and in CI).
+RAILWAY_MARKERS = ("RAILWAY_ENVIRONMENT_ID", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID")
 
 
 @dataclass(frozen=True)
@@ -43,7 +45,10 @@ class Settings:
 def get_settings() -> Settings:
     # Fail closed: anything other than an explicit development/test environment is production.
     env = os.environ.get("APP_ENV", "production").strip().lower()
-    if env not in {"development", "test"} or os.environ.get("VERCEL_ENV", "").lower() == "production":
+    # Hosted runtimes can never run in the open development mode, even if APP_ENV=development is set there by mistake:
+    # Vercel production, and ANY Railway environment (production or a PR/preview one) are forced to production.
+    hosted = os.environ.get("VERCEL_ENV", "").lower() == "production" or any(os.environ.get(m) for m in RAILWAY_MARKERS)
+    if env not in {"development", "test"} or hosted:
         env = "production"
     return Settings(
         env=env,

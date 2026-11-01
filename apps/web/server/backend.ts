@@ -30,6 +30,34 @@ export function readConfig(env: Env = process.env): { base: URL; secret: string 
   return { base, secret };
 }
 
+/**
+ * Reads the body incrementally, counting BYTES, and cancels the stream the moment `max` is exceeded, so an oversized or
+ * endless upstream reply is never buffered whole (`res.text()` would) and `text.length` (UTF-16 units) is never trusted.
+ * Returns null when over the cap. (Hardening carried over from the Phase 2 review of the unsigned probe.)
+ */
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) { await discard(res); return null; }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
+}
+
+/** Never leave an unread upstream body (and its connection) behind on an early return. */
+const discard = (res: Response): Promise<void> => (res.body ? res.body.cancel().catch(() => {}) : Promise.resolve());
+
 export type CallOptions = {
   path: string; method?: "GET" | "POST"; body?: unknown; account?: string | null;
   timeoutMs?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number;
@@ -50,15 +78,16 @@ export async function callBackend(opts: CallOptions): Promise<BackendResult> {
   const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 3000);
   try {
     const res = await (opts.fetchImpl ?? fetch)(url, { method, headers, body: body || undefined, redirect: "manual", cache: "no-store", signal: ctl.signal });
-    if (res.status >= 300 && res.status < 400) return { kind: "rejected", status: res.status };
-    if (res.status === 401 || res.status === 403) return { kind: "rejected", status: res.status };
-    if (res.status >= 500 || res.status === 429) return { kind: "unavailable", status: res.status };
-    const text = await res.text();
-    if (text.length > MAX_RESPONSE_BYTES) return { kind: "invalid_response" };
+    if (res.status >= 300 && res.status < 400) { await discard(res); return { kind: "rejected", status: res.status }; }
+    if (res.status === 401 || res.status === 403) { await discard(res); return { kind: "rejected", status: res.status }; }
+    if (res.status >= 500 || res.status === 429) { await discard(res); return { kind: "unavailable", status: res.status }; }
+    const text = await readCapped(res, MAX_RESPONSE_BYTES);
+    if (text === null) return { kind: "invalid_response" };
     try { return { kind: "ok", status: res.status, json: text ? JSON.parse(text) : null }; } catch { return { kind: "invalid_response" }; }
   } catch {
     return { kind: "unreachable" };
   } finally {
     clearTimeout(timer);
+    ctl.abort(); // no-op once the body is fully read; otherwise tears down whatever is still streaming
   }
 }

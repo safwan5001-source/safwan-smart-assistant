@@ -58,13 +58,13 @@ API="http://127.0.0.1:$API_PORT"; WEB="http://127.0.0.1:$WEB_PORT"
 WEB_PID=""
 start_web() {  # $1=BACKEND_URL or "" ; $2=SERVICE_AUTH_SECRET or ""
   [ -n "$WEB_PID" ] && { kill "$WEB_PID" 2>/dev/null || true; wait "$WEB_PID" 2>/dev/null || true; }
-  ( cd apps/web && exec env -u BACKEND_URL -u SERVICE_AUTH_SECRET ${1:+BACKEND_URL="$1"} ${2:+SERVICE_AUTH_SECRET="$2"} \
+  ( cd apps/web && exec env -u BACKEND_URL -u SERVICE_AUTH_SECRET HEALTH_CACHE_MS="${WEB_CACHE_MS:-5000}" ${1:+BACKEND_URL="$1"} ${2:+SERVICE_AUTH_SECRET="$2"} \
     ./node_modules/.bin/next start -p "$WEB_PORT" ) >/tmp/e2e-web.log 2>&1 & WEB_PID=$!; PIDS+=($WEB_PID)
   for i in $(seq 1 40); do curl -s -o /dev/null "$WEB/api/health" && return 0; sleep 1; done
   echo "web did not start"; cat /tmp/e2e-web.log; return 1
 }
 for i in $(seq 1 40); do curl -fsS "$API/health" >/dev/null 2>&1 && break; sleep 1; done
-start_web "$API" "$SECRET"
+WEB_CACHE_MS=0 start_web "$API" "$SECRET"   # cache OFF for the first phase: every request must be a real, freshly-signed probe
 jget() { "$PYTHON" -c "import sys,json; d=json.load(sys.stdin); print(d$1)" ; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 
@@ -74,7 +74,16 @@ check "backend reported ok" "$(echo "$R" | head -1 | jget "['backend']")" "ok"
 check "assistant truthfully off" "$(echo "$R" | head -1 | jget "['features']['assistant']")" "False"
 check "no secret/URL in public response" "$(echo "$R" | head -1 | grep -c -e "$SECRET" -e "127.0.0.1")" "0"
 check "responses are not cacheable" "$(curl -sI "$WEB/api/health" | tr -d '\r' | grep -i '^cache-control' | grep -ci 'no-store')" "1"
-check "10 consecutive calls all succeed (fresh nonce each time)" "$(for i in $(seq 10); do code "$WEB/api/health"; echo; done | sort -u | tr -d '\n')" "200"
+nonces() { "$PYTHON" -c "import psycopg; print(psycopg.connect('$DSN_OWNER').execute('select count(*) from service_nonces').fetchone()[0])"; }
+N0=$(nonces)
+check "10 consecutive calls all succeed (cache off)" "$(for i in $(seq 10); do code "$WEB/api/health"; echo; done | sort -u | tr -d '\n')" "200"
+check "each of the 10 calls claimed a fresh nonce in PostgreSQL" "$(( $(nonces) - N0 ))" "10"
+
+echo "── the PUBLIC route cannot be turned into a database load amplifier (cache on, the default)"
+start_web "$API" "$SECRET"
+N1=$(nonces)
+check "burst of 40 concurrent public requests all succeed" "$(for i in $(seq 40); do printf '%s\n' "$(code "$WEB/api/health")" & done | sort | uniq -c | tr -s ' ' | tr -d '\n')" " 40 200"
+check "...but cost at most ONE backend probe / nonce" "$(( $(nonces) - N1 <= 1 ? 1 : 0 ))" "1"
 
 echo "── the API is closed to everything that is not a valid signed call"
 check "direct unsigned /internal/v1/ping -> 401" "$(code "$API/internal/v1/ping")" "401"

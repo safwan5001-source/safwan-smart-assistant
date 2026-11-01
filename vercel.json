@@ -1,19 +1,37 @@
 {
   "services": {
     "web": {
-      "root": "apps/web",
-      "framework": "nextjs",
-      "bindings": [
-        { "type": "service", "service": "backend", "format": "url", "env": "BACKEND_URL" }
-      ]
+      "root": "apps/web"
     },
     "backend": {
       "root": "services/api",
-      "framework": "fastapi",
-      "entrypoint": "app.main:app"
+      "entrypoint": "app.main:app",
+      "rewrites": [
+        {
+          "source": "/backend/:path(.*)?",
+          "destination": "/:path"
+        }
+      ]
     }
   },
   "rewrites": [
-    { "source": "/(.*)", "destination": { "service": "web" } }
+    {
+      "source": "/backend/health/neon",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/backend/health",
+      "destination": {
+        "service": "backend"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "web"
+      }
+    }
   ]
 }

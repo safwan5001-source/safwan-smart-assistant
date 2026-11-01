@@ -31,10 +31,17 @@ jobs:
       - run: pnpm build:web
 
   api:
+    # Railway's PostgreSQL template runs the major version below (ghcr.io/railwayapp-templates/postgres-ssl:18), while 16 was
+    # the version the schema was first built on. Both are exercised so a version difference cannot reach production unseen.
+    name: api (postgres ${{ matrix.pg }})
+    strategy:
+      fail-fast: false
+      matrix:
+        pg: ["16", "18"]
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:${{ matrix.pg }}
         env:
           POSTGRES_PASSWORD: postgres_ci_only
         ports:
@@ -62,11 +69,11 @@ jobs:
       - run: uv run --frozen --no-sync pytest -q
 
   bff-e2e:
-    # Real processes: Next.js BFF -> signed hop -> FastAPI (production mode, restricted DB role) -> PostgreSQL.
+    # Real processes: Next.js BFF -> signed hop -> FastAPI (production mode, restricted DB role) -> PostgreSQL (same major as Railway).
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_PASSWORD: postgres_ci_only
         ports:
