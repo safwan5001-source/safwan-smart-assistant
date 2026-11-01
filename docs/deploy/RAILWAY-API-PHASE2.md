@@ -17,7 +17,7 @@
 | البند | النتيجة |
 |---|---|
 | نقطة الدخول | `services/api/app/main.py` → `app.main:app` |
-| الاعتماديات | `fastapi>=0.115`, `uvicorn>=0.30`, `pydantic>=2`؛ `requires-python >=3.11`؛ تثبيت نظيف عبر `pip install .` ناجح (Python 3.13)؛ يُثبَّت 3.12 عبر `RAILPACK_PYTHON_VERSION` ليطابق CI |
+| الاعتماديات | `fastapi>=0.115`, `uvicorn>=0.30`, `pydantic>=2`؛ `requires-python >=3.11`؛ **تُثبَّت على Railway من `services/api/uv.lock` فقط** (انظر «حادثة أول نشر»)؛ Python 3.12 عبر `RAILPACK_PYTHON_VERSION` ليطابق CI |
 | أمر التشغيل | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` — جُرّب محليًا في وضع الإنتاج (بدون `APP_ENV`) |
 | `/health` | 200 عام: `{"status":"ok","version":"0.2.0","features":{"assistant":false,"connected_integrations":0,"task_execution":false}}` |
 | باقي المسارات (`/tools` `/capabilities` `/audit`…) | **503** في الإنتاج (المصادقة غير منفَّذة → fail-closed). لا مصادقة وهمية |
@@ -78,3 +78,11 @@
 2. في Railway: Staged Changes → Deploy. يُنشئ `safwan-api` ويعيد نشر الويب بـ`BACKEND_URL`.
 3. التحقق: سجل `safwan-api` يُظهر `Uvicorn running on 0.0.0.0:8000` وHealthcheck ناجح؛ ثم `GET https://safwanai.up.railway.app/api/health` ⇒ 200 و`"backend":"ok"`.
 4. فشل ⇒ `redeploy` للويب أو حذف خدمة `safwan-api` المعلّقة؛ الواجهة تعمل بدون الـAPI.
+
+## حادثة أول نشر للـAPI (2026-11-01) — السبب الجذري والإصلاح
+**العَرَض:** Deployment `377baf6b` فشل: البناء «نجح» ثم `/bin/bash: line 1: uvicorn: command not found` وفشل Healthcheck (`1/1 replicas never became healthy`).
+**السبب الجذري:** Railpack كشف المشروع Python لكنه **لم ينفّذ أي خطوة تثبيت** (سجل البناء يُظهر تثبيت Python فقط). Railpack يثبّت الاعتماديات من `requirements.txt`، أو من `pyproject.toml` **مع ملف قفل** (`uv.lock` أو `poetry.lock` أو `pdm.lock`). كان لدينا `pyproject.toml` بلا قفل، فلم يوجد `uvicorn` في الصورة. خطئي: تحققت من `pip install .` محليًا ولم أتحقق من سلوك Railpack نفسه.
+**الإصلاح:** إضافة `services/api/uv.lock` (24 حزمة بتجزئات). المشروع من نوع `virtual` فيُثبَّت الاعتماديات فقط ولا شيء من `[test]`. أمر التشغيل لم يتغير.
+**التحقق المحلي:** `uv sync --locked --python 3.12` ثم تشغيل `uvicorn app.main:app --host 0.0.0.0 --port $PORT` بـ`APP_ENV=production` ⇒ `/health` = 200، و`/tools` = 503. وبدون البيئة المقفلة يظهر الخطأ نفسه `uvicorn: command not found`.
+**الحارس:** `services/api/tests/test_runtime_deps.py` يفشل إذا غاب `uv.lock`، أو غاب `uvicorn`/`fastapi`/`pydantic` من الاعتماديات الأساسية (لا من `[test]` فقط)، أو لم تُقفل اعتمادية، أو صار القفل قديمًا عن `pyproject.toml`. تحديث القفل: `cd services/api && uv lock`.
+**أثر PR #26:** يضيف `psycopg` و`uv.lock` خاصًا به؛ عند تحديث فرعه يُعاد توليد `uv.lock` (`uv lock`) ويحل الحارس أي انحراف.
