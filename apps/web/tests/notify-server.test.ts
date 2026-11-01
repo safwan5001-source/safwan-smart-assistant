@@ -3,7 +3,6 @@ import { readNotifyConfig } from "@/server/notify/config";
 import { isAllowedEndpoint, parseSubscription, parseSyncBody } from "@/server/notify/validate";
 import { dispatchTick, MAX_ATTEMPTS } from "@/server/notify/dispatch";
 import { handleNotify, createLimiter } from "@/server/notify/api";
-import { createMemoryStore } from "@/server/notify/memory-store";
 import { buildRuntime } from "@/server/notify/runtime";
 import { GENERIC_BODY, GENERIC_TITLE, type PushPayload } from "@/server/notify/push";
 import { hashToken, safeEqualHex } from "@/server/notify/auth";

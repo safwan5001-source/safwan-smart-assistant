@@ -237,7 +237,7 @@ describe("foreground reminder engine", () => {
     expect(await runDueReminders(r.dueAt + 1000, { audio, emit: () => {} })).toBe(1);
     expect(await runDueReminders(r.dueAt + 2000, { audio, emit: () => {} })).toBe(0);
     expect(noticesStore.getSnapshot()).toHaveLength(1);
-    expect(noticesStore.getSnapshot()[0]).toMatchObject({ type: "reminder", href: "/reminders", reminderId: "r1" });
+    expect(noticesStore.getSnapshot()[0]).toMatchObject({ type: "reminder", href: "/reminders?focus=r1", reminderId: "r1" });
     expect(remindersStore.getSnapshot()[0].status).toBe("fired");
     // simulate a second tab that still holds the OLD state: key-level idempotency prevents a 2nd alert
     remindersStore.set([r]);

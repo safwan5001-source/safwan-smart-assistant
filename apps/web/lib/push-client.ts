@@ -114,6 +114,7 @@ export async function enablePush(): Promise<PushState> {
   const blocked = pushUnavailableReason(caps);
   if (blocked) return blocked;
   // permission first: iOS only shows the prompt while the tap's user-activation is still valid
+  if (caps.permission === "denied") return "denied"; // blocked in Settings: the browser will not prompt again
   const perm = caps.permission === "granted" ? "granted" : await Notification.requestPermission();
   if (perm === "denied") return "denied";
   if (perm !== "granted") return "off";
@@ -180,22 +181,25 @@ export async function sendTestPush(): Promise<TestResult> {
   return "failed";
 }
 
-let syncing = false;
+let inflight: Promise<boolean> | null = null;
+/** Serialised: a call made while another sync is running waits for it, then runs with the freshest data. */
 export async function syncReminders(): Promise<boolean> {
+  while (inflight) await inflight;
+  inflight = doSync().finally(() => { inflight = null; });
+  return inflight;
+}
+async function doSync(): Promise<boolean> {
   const device = pushDeviceStore.getSnapshot();
-  if (!device?.subscribed || syncing) return false;
-  syncing = true;
-  try {
-    const sentTombs = tombstonesStore.getSnapshot();
-    const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs }, device);
-    if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)
-    if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
-    if (!r.ok || !r.json) return false;
-    const remote = parseReminders(r.json.reminders);
-    remindersStore.set((local) => mergeReminders(local, remote, tombstonesStore.getSnapshot()));
-    tombstonesStore.set((t) => t.filter((id) => !sentTombs.includes(id)));
-    return true;
-  } finally { syncing = false; }
+  if (!device?.subscribed) return false;
+  const sentTombs = tombstonesStore.getSnapshot();
+  const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs }, device);
+  if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)
+  if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
+  if (!r.ok || !r.json) return false;
+  const remote = parseReminders(r.json.reminders);
+  remindersStore.set((local) => mergeReminders(local, remote, tombstonesStore.getSnapshot()));
+  tombstonesStore.set((t) => t.filter((id) => !sentTombs.includes(id)));
+  return true;
 }
 
 let syncTimer: ReturnType<typeof setTimeout> | undefined;

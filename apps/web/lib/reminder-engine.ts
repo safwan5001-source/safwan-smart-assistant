@@ -13,7 +13,7 @@ export function alertFor(f: Fired): AlertInput {
   const when = `${formatInZone(f.dueAt, f.tz)} · ${TZ_LABEL(f.tz)}`;
   const missed = f.missed > 0 ? ` (فاتتك ${f.missed} ${f.missed === 1 ? "مرة سابقة" : "مرات سابقة"})` : "";
   return {
-    key: f.key, type: "reminder", priority: f.priority, reminderId: f.reminderId, href: "/reminders",
+    key: f.key, type: "reminder", priority: f.priority, reminderId: f.reminderId, href: `/reminders?focus=${encodeURIComponent(f.reminderId)}`,
     title: (f.kind === "snooze" ? "تذكير مؤجَّل: " : "تذكير: ") + f.title,
     body: (f.minutesBefore > 0 ? `${leadAfter(f.minutesBefore)} · ` : "حان الموعد · ") + when + missed,
     category: f.priority === "critical" ? "critical" : "reminder",

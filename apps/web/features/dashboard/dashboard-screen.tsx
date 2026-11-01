@@ -6,7 +6,8 @@ import { Badge, Empty, LogoTile, Notice, Skeleton } from "@/components/ui";
 import { aiReady, useAssistant } from "@/components/assistant-context";
 import { OPEN_SEARCH_EVENT } from "@/components/app-shell";
 import { useHydrated, useStore } from "@/lib/hooks";
-import { activityStore, tasksStore, threadsStore } from "@/lib/stores";
+import { activityStore, remindersStore, tasksStore, threadsStore } from "@/lib/stores";
+import { alertAt, describeSchedule, type Reminder } from "@/lib/reminders";
 import { listFiles } from "@/lib/files-db";
 import { commandTitle } from "@/lib/commands";
 import { dueState, formatDay, formatTime, formatToday, localDateKey } from "@/lib/format";
@@ -15,6 +16,7 @@ const greeting = (h: number) => (h < 12 ? "صباح الخير" : "مساء ال
 const SHORTCUTS: { href: string; icon: IconName; title: string; sub: string }[] = [
   { href: "/chat", icon: "chat", title: "محادثة جديدة", sub: "اكتب ملاحظة أو أمراً سريعاً" },
   { href: "/tasks", icon: "tasks", title: "إضافة مهمة", sub: "رتّب أولوياتك" },
+  { href: "/reminders", icon: "clock", title: "ضبط تذكير", sub: "بجملة عربية أو من النموذج" },
   { href: "/files", icon: "files", title: "ملفاتي", sub: "افتح مستنداتك المحفوظة" },
   { href: "/integrations", icon: "integrations", title: "التكاملات", sub: "حالة الخدمات وصلاحياتها" },
 ];
@@ -22,7 +24,7 @@ const STATUS_LABEL: Record<string, string> = { executed: "نُفّذ", denied: "
 
 export default function DashboardScreen() {
   const hydrated = useHydrated();
-  const tasks = useStore(tasksStore), threads = useStore(threadsStore), activity = useStore(activityStore);
+  const reminders = useStore(remindersStore), tasks = useStore(tasksStore), threads = useStore(threadsStore), activity = useStore(activityStore);
   const { status, refresh } = useAssistant();
   const [fileCount, setFileCount] = useState<number | null>(null);
   useEffect(() => { let live = true; listFiles().then((f) => live && setFileCount(f.length)).catch(() => live && setFileCount(null)); return () => { live = false; }; }, []);
@@ -33,6 +35,8 @@ export default function DashboardScreen() {
   const overdue = pending.filter((t) => dueState(t.due, today) === "overdue").length;
   const dueToday = pending.filter((t) => dueState(t.due, today) === "today").length;
   const next = [...pending].sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || b.created - a.created).slice(0, 4);
+  const upcoming = reminders.filter((r: Reminder) => r.status === "active" || r.status === "fired")
+    .sort((a, b) => (a.status === "fired" ? -1 : 0) - (b.status === "fired" ? -1 : 0) || (alertAt(a) ?? a.dueAt) - (alertAt(b) ?? b.dueAt)).slice(0, 3);
   const ai = aiReady(status);
 
   return (
@@ -88,6 +92,20 @@ export default function DashboardScreen() {
         </section>
       </div>
 
+      <section className="card card-pad" aria-labelledby="rem-h">
+        <div className="section-head"><h2 id="rem-h">تذكيرات قادمة</h2><Link href="/reminders" className="btn btn-ghost btn-sm" style={{ color: "var(--accent)" }}>كل التذكيرات<Icon name="forward" size={16} /></Link></div>
+        {!hydrated ? <div style={{ marginBlockStart: 12 }}><Skeleton h={44} /></div> : upcoming.length ? (
+          <ul className="list">
+            {upcoming.map((r) => (
+              <li key={r.id}>
+                <Icon name="clock" size={20} style={{ color: "var(--accent)" }} />
+                <span className="grow"><span className="title">{r.title}</span><small className="muted num">{describeSchedule(r)}</small></span>
+                {r.status === "fired" && <Badge tone="warn">بانتظار إجراء</Badge>}
+              </li>
+            ))}
+          </ul>
+        ) : <p className="muted" style={{ marginBlockStart: 8 }}>لا تذكيرات قادمة. قل «ذكرني بكرة الساعة 9 …» في المحادثات أو من صفحة التذكيرات.</p>}
+      </section>
       <section aria-labelledby="quick-h" className="stack">
         <div className="section-head"><h2 id="quick-h">وصول سريع</h2></div>
         <div className="grid grid-md-2 grid-lg-3">

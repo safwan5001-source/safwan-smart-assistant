@@ -5,6 +5,7 @@ import AppShell from "@/components/app-shell";
 import PreferencesEffects from "@/components/preferences-effects";
 import { DialogsProvider } from "@/components/dialogs";
 import { AssistantProvider } from "@/components/assistant-context";
+import NotificationRuntime from "@/components/notification-runtime";
 
 export const metadata: Metadata = {
   title: { default: "مساعد صفوان الذكي", template: "%s · مساعد صفوان" },
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       <body>
         <DialogsProvider>
           <PreferencesEffects />
+          <NotificationRuntime />
           <AssistantProvider><AppShell>{children}</AppShell></AssistantProvider>
         </DialogsProvider>
       </body>
