@@ -79,6 +79,20 @@ describe("buildHealth (Next.js → FastAPI)", () => {
     expect(pulled).toBeLessThan(10); // ~64 KB cap / 16 KB chunks, plus the queue's lookahead
   });
 
+  it.each([503, 429, 401, 302, 404])("cancels an unread upstream body on HTTP %i", async (code) => {
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({ pull(c) { c.enqueue(new Uint8Array(1024)); }, cancel() { cancelled = true; } });
+    const r = await buildHealth({ env, fetchImpl: (async () => new Response(stream, { status: code })) as unknown as typeof fetch });
+    expect(r.status).toBe(503);
+    expect(cancelled).toBe(true);
+  });
+
+  it("aborts the upstream request once finished", async () => {
+    let signal: AbortSignal | undefined;
+    await buildHealth({ env, fetchImpl: (async (_u: string, init: RequestInit) => { signal = init.signal ?? undefined; return reply(OK); }) as unknown as typeof fetch });
+    expect(signal?.aborted).toBe(true);
+  });
+
   it("rejects early on a declared Content-Length over the cap", async () => {
     const res = new Response("{}", { status: 200, headers: { "content-length": String(10 * 1024 * 1024) } });
     expect((await buildHealth({ env, fetchImpl: (async () => res) as unknown as typeof fetch })).body.backend).toBe("invalid_response");

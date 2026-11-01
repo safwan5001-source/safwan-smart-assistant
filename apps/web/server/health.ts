@@ -83,10 +83,15 @@ export async function buildHealth(opts: HealthOptions = {}): Promise<{ status: 2
     const res = await (opts.fetchImpl ?? fetch)(url, {
       method: "GET", headers: { accept: "application/json" }, redirect: "manual", cache: "no-store", signal: ctl.signal,
     });
-    if (res.status >= 300 && res.status < 400) return degraded("rejected");
-    if (res.status === 401 || res.status === 403) return degraded("rejected");
-    if (res.status >= 500 || res.status === 429) return degraded("unavailable");
-    if (res.status !== 200) return degraded("invalid_response");
+    const early: Exclude<BackendState, "ok" | "unconfigured" | "unreachable"> | null =
+      res.status >= 300 && res.status < 400 ? "rejected"
+        : res.status === 401 || res.status === 403 ? "rejected"
+          : res.status >= 500 || res.status === 429 ? "unavailable"
+            : res.status !== 200 ? "invalid_response" : null;
+    if (early) {
+      await res.body?.cancel().catch(() => {}); // never leave an unread upstream body (and its connection) behind
+      return degraded(early);
+    }
     const text = await readCapped(res, MAX_RESPONSE_BYTES);
     if (text === null) return degraded("invalid_response");
     let json: { status?: unknown; version?: unknown; features?: unknown } | null;
@@ -100,5 +105,6 @@ export async function buildHealth(opts: HealthOptions = {}): Promise<{ status: 2
     return degraded("unreachable");
   } finally {
     clearTimeout(timer);
+    ctl.abort(); // no-op once the body is fully read; otherwise tears down whatever is still streaming
   }
 }
