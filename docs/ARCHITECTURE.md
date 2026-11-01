@@ -37,7 +37,7 @@
 ```
 UI (Next.js, features/*)  ──►  lib/commands (بوابة الأوامر + سياسة الصلاحيات + سجل نشاط)  ──►  stores (localStorage / IndexedDB)
         │                                   ▲
-        └──►  lib/assistant (حدّ المساعد: يقرأ /backend/health فقط ويرفض الرد ما لم يُبلَّغ بتفعيل المساعد)
+        └──►  lib/assistant (حدّ المساعد: يقرأ /api/health فقط (مسار BFF في خادم Next.js يفحص <BACKEND_URL>/health) ويرفض الرد ما لم يُبلَّغ بتفعيل المساعد)
 
 API (FastAPI)
   security.require_auth ─ production: مقفل (503)؛ dev-token تجريبي لا يعمل في الإنتاج
