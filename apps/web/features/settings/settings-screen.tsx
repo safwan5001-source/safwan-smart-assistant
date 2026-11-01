@@ -62,7 +62,7 @@ export default function SettingsScreen() {
       <section className="card card-pad" aria-labelledby="sys-h">
         <div className="section-head"><h2 id="sys-h">حالة النظام</h2><button className="btn btn-sm" onClick={refresh}>إعادة الفحص</button></div>
         <div style={{ marginBlockStart: 6 }}>
-          <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : status.server === "checking" ? "جارٍ الفحص…" : "لا استجابة من /backend/health"}</small></span>
+          <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : status.server === "checking" ? "جارٍ الفحص…" : "لا استجابة من /api/health"}</small></span>
             <Badge tone={status.server === "online" ? "ok" : status.server === "offline" ? "warn" : undefined}>{status.server === "online" ? "متصل" : status.server === "offline" ? "غير متصل" : "…"}</Badge></div>
           <div className="status-line"><span><strong>المساعد الذكي</strong><small>يتطلب مزوّد نماذج ومفاتيح على الخادم</small></span><Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "مفعّل" : "غير مفعّل"}</Badge></div>
           <div className="status-line"><span><strong>الحساب والمصادقة</strong><small>لا حساب ولا مزامنة بعد</small></span><Badge>غير مهيأ</Badge></div>

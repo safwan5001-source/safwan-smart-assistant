@@ -79,7 +79,7 @@ export default function DashboardScreen() {
         <section className="card card-pad" aria-labelledby="status-h">
           <div className="section-head"><h2 id="status-h">حالة النظام</h2><button className="btn btn-ghost btn-sm" onClick={refresh} aria-label="إعادة فحص الخادم">إعادة الفحص</button></div>
           <div style={{ marginBlockStart: 6 }}>
-            <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : "فحص /backend/health"}</small></span>
+            <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : "فحص /api/health"}</small></span>
               {status.server === "checking" ? <Badge>جارٍ الفحص</Badge> : status.server === "online" ? <Badge tone="ok">متصل</Badge> : <Badge tone="warn">غير متصل</Badge>}</div>
             <div className="status-line"><span><strong>المساعد الذكي</strong><small>{ai ? "مُهيّأ على الخادم" : "لا يوجد مزوّد نماذج مفعّل"}</small></span>{ai ? <Badge tone="ok">مفعّل</Badge> : <Badge>غير مفعّل</Badge>}</div>
             <div className="status-line"><span><strong>التكاملات</strong><small>لا خدمة متصلة بعد</small></span><Badge>0 متصلة</Badge></div>

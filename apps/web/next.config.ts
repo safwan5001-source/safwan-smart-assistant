@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
-// Local development only: `API_PROXY_URL=http://127.0.0.1:8000 pnpm dev:web` proxies /backend/* to the API.
+// Legacy, local development only: `API_PROXY_URL=http://127.0.0.1:8000 pnpm dev:web` proxies /backend/* to the API.
+// The UI no longer uses it: it talks to the API through the server-side BFF `/api/health` (needs BACKEND_URL).
 // Unset in production, where routing is handled by the platform configuration.
 const proxy = process.env.API_PROXY_URL;
 
