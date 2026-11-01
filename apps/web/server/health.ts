@@ -45,6 +45,30 @@ const isFeatures = (v: unknown): v is NonNullable<HealthBody["features"]> => {
     typeof f.connected_integrations === "number" && Number.isInteger(f.connected_integrations);
 };
 
+/**
+ * Reads the body incrementally, counting BYTES, and cancels the stream as soon as `max` is exceeded,
+ * so an oversized or endless upstream reply can never be buffered whole. Returns null when over the cap.
+ */
+async function readCapped(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => {}); return null; }
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); return null; }
+    chunks.push(value);
+  }
+  const buf = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+  return new TextDecoder().decode(buf);
+}
+
 const degraded = (backend: Exclude<BackendState, "ok">): { status: 503; body: HealthBody } =>
   ({ status: 503, body: { status: "degraded", web: "ok", backend } });
 
@@ -63,8 +87,8 @@ export async function buildHealth(opts: HealthOptions = {}): Promise<{ status: 2
     if (res.status === 401 || res.status === 403) return degraded("rejected");
     if (res.status >= 500 || res.status === 429) return degraded("unavailable");
     if (res.status !== 200) return degraded("invalid_response");
-    const text = await res.text();
-    if (text.length > MAX_RESPONSE_BYTES) return degraded("invalid_response");
+    const text = await readCapped(res, MAX_RESPONSE_BYTES);
+    if (text === null) return degraded("invalid_response");
     let json: { status?: unknown; version?: unknown; features?: unknown } | null;
     try { json = JSON.parse(text); } catch { return degraded("invalid_response"); }
     if (json?.status !== "ok" || !isFeatures(json.features)) return degraded("invalid_response");

@@ -60,6 +60,30 @@ describe("buildHealth (Next.js → FastAPI)", () => {
     }
   });
 
+  it("counts bytes, not UTF-16 units: a multibyte body over 64 KB is rejected", async () => {
+    const body = JSON.stringify({ ...OK, pad: "é".repeat(40_000) }); // ~40k chars but ~80 KB on the wire
+    expect(body.length).toBeLessThan(64 * 1024);
+    const r = await buildHealth({ env, fetchImpl: (async () => reply(body)) as unknown as typeof fetch });
+    expect(r.body.backend).toBe("invalid_response");
+  });
+
+  it("stops reading and cancels an endless stream instead of buffering it", async () => {
+    let pulled = 0, cancelled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) { pulled++; c.enqueue(new Uint8Array(16 * 1024)); },
+      cancel() { cancelled = true; },
+    });
+    const r = await buildHealth({ env, fetchImpl: (async () => new Response(stream, { status: 200 })) as unknown as typeof fetch });
+    expect(r.body.backend).toBe("invalid_response");
+    expect(cancelled).toBe(true);
+    expect(pulled).toBeLessThan(10); // ~64 KB cap / 16 KB chunks, plus the queue's lookahead
+  });
+
+  it("rejects early on a declared Content-Length over the cap", async () => {
+    const res = new Response("{}", { status: 200, headers: { "content-length": String(10 * 1024 * 1024) } });
+    expect((await buildHealth({ env, fetchImpl: (async () => res) as unknown as typeof fetch })).body.backend).toBe("invalid_response");
+  });
+
   it("never leaks the API address, status codes or error text", async () => {
     const r = await buildHealth({ env, fetchImpl: (async () => { throw new Error("connect ECONNREFUSED safwan-api.railway.internal:8000"); }) as unknown as typeof fetch });
     expect(JSON.stringify(r)).not.toMatch(/railway|internal|8000|ECONN/);
