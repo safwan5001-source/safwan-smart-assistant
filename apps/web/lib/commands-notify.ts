@@ -7,7 +7,7 @@ import {
   type Reminder, type ReminderInput,
 } from "./reminders";
 import { Invalid, invalid, uid, type Def } from "./command-core";
-import { noticesStore, remindersStore } from "./stores";
+import { noticesStore, remindersStore, tombstonesStore } from "./stores";
 
 const guard = <T,>(fn: () => T): T => {
   try { return fn(); } catch (e) { if (e instanceof ReminderError) throw new Invalid(e.message); throw e; }
@@ -52,6 +52,7 @@ export const reminderCommands = {
   "reminders.remove": { id: "reminders.remove", title: "حذف تذكير", risk: "write", run: (p: { id: string }) => {
     mustReminder(p.id);
     remindersStore.set((old) => old.filter((r) => r.id !== p.id));
+    tombstonesStore.set((old) => [p.id, ...old.filter((x) => x !== p.id)].slice(0, 500)); // so the push server forgets it too
   } } satisfies Def<{ id: string }, void>,
 };
 

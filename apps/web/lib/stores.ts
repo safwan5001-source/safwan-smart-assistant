@@ -18,6 +18,7 @@ export const KEYS = {
   notifyPrefs: "safwan-notify-prefs-v1",
   fired: "safwan-fired-v1",
   pushDevice: "safwan-push-device-v1",
+  tombstones: "safwan-reminder-tombstones-v1",
 } as const;
 
 export const tasksStore = createStore<Task[]>({ key: KEYS.tasks, fallback: [], ...jsonCodec(parseTasks, [] as Task[]) });
@@ -43,6 +44,12 @@ export function parsePushDevice(v: unknown): PushDevice {
   return { deviceId: o.deviceId, token: o.token, subscribed: o.subscribed === true, registeredAt: o.registeredAt };
 }
 export const pushDeviceStore = createStore<PushDevice>({ key: KEYS.pushDevice, fallback: null, ...jsonCodec(parsePushDevice, null as PushDevice) });
+
+/** Ids of reminders deleted on this device that the push server may still hold; sent with the next sync, then cleared. */
+export const tombstonesStore = createStore<string[]>({
+  key: KEYS.tombstones, fallback: [],
+  ...jsonCodec((v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, 500) : []), [] as string[]),
+});
 
 export type Theme = "system" | "light" | "dark";
 export const themeStore = createStore<Theme>({

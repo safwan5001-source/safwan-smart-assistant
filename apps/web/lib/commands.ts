@@ -10,7 +10,7 @@
  */
 import { evaluate, type PermissionMode, type Risk } from "./permissions";
 import { LIMITS, type Priority, type Task, type Thread, type Message, type Attachment, type Role } from "./domain";
-import { activityStore, firedStore, noticesStore, prefsStore, remindersStore, tasksStore, threadsStore } from "./stores";
+import { activityStore, firedStore, noticesStore, prefsStore, remindersStore, tasksStore, threadsStore, tombstonesStore, pushDeviceStore } from "./stores";
 import { clearFiles } from "./files-db";
 import { parseSlash } from "./slash";
 import { Invalid, invalid, uid, type Def } from "./command-core";
@@ -18,6 +18,7 @@ import { notificationCommands, reminderCommands } from "./commands-notify";
 import { isReminderIntent, parseReminderText, type Clarification } from "./reminder-parser";
 import type { Reminder, ReminderInput } from "./reminders";
 import { deliverAlert } from "./alerts";
+import { eraseRemoteDevice } from "./push-client";
 
 export type Ctx = { origin?: "user" | "assistant"; mode?: PermissionMode; approved?: boolean };
 export type CommandResult<T = unknown> =
@@ -136,13 +137,15 @@ const chatCommands = {
 
 // ── data ────────────────────────────────────────────────────────────────
 const dataCommands = {
-  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: async (_: object): Promise<{ filesCleared: boolean }> => {
+  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: async (_: object): Promise<{ filesCleared: boolean; serverErased: boolean }> => {
+    // push server first (needs the device credentials we are about to wipe); an unreachable server is reported, never hidden
+    const serverErased = await eraseRemoteDevice().catch(() => false);
     tasksStore.reset(); threadsStore.reset(); activityStore.reset();
-    remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset();
+    remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset(); pushDeviceStore.reset();
     // Report (don't hide) a failure to clear files so the UI never claims a complete wipe it didn't do.
     const filesCleared = await clearFiles().then(() => true, () => false);
-    return { filesCleared };
-  } } satisfies Def<object, Promise<{ filesCleared: boolean }>>,
+    return { filesCleared, serverErased };
+  } } satisfies Def<object, Promise<{ filesCleared: boolean; serverErased: boolean }>>,
 };
 
 const COMMANDS = { ...taskCommands, ...chatCommands, ...dataCommands, ...reminderCommands, ...notificationCommands } as const;
