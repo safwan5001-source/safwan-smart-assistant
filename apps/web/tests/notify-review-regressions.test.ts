@@ -6,7 +6,9 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStore } from "@/server/notify/memory-store";
 import { createPgStore } from "@/server/notify/pg-store";
 import { parseServerPrefs } from "@/lib/notify-prefs";
-import { fire, updateReminder } from "@/lib/reminders";
+import { createReminder, fire, updateReminder } from "@/lib/reminders";
+import { parseReminderText } from "@/lib/reminder-parser";
+import { runQuickCommand } from "@/lib/commands";
 import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { handleNotify } from "@/server/notify/api";
@@ -243,5 +245,38 @@ describe("P2: the sync endpoint accepts the full supported collection", () => {
     expect(huge.status).toBe(400);
     const tooMany = await put(rt, dev.auth, { reminders: [...many, mkReminder({}, NOW, "one-more")], deleted: [] });
     expect(tooMany.status).toBe(400);
+  });
+});
+
+describe("P2: monthly «يوم 31» keeps the requested day in the anchor", () => {
+  it("parsed on Feb 2 → first alert Feb 28, then Mar 31 (not Mar 28), then Apr 30", () => {
+    const now = riyadh(2026, 2, 2, 9, 0);
+    const out = parseReminderText("ذكرني كل شهر يوم 31 الساعة 10 صباحا بدفع الإيجار", now);
+    expect(out.kind).toBe("ready");
+    if (out.kind !== "ready") return;
+    expect(out.draft.date).toBe("2026-01-31");                                   // anchor carries day 31 (past anchors are valid for series)
+    let r = createReminder(out.draft, now, "m31");
+    expect(r.dueAt).toBe(riyadh(2026, 2, 28, 10, 0));                            // this month, clamped
+    r = fire(r, r.dueAt + 1000).reminder; expect(r.dueAt).toBe(riyadh(2026, 3, 31, 10, 0));
+    r = fire(r, r.dueAt + 1000).reminder; expect(r.dueAt).toBe(riyadh(2026, 4, 30, 10, 0));
+    r = fire(r, r.dueAt + 1000).reminder; expect(r.dueAt).toBe(riyadh(2026, 5, 31, 10, 0));
+  });
+  it("months that have the day are unchanged; a one-off «يوم 31» is still just clamped", () => {
+    const now = riyadh(2026, 3, 2, 9, 0);
+    const m = parseReminderText("ذكرني كل شهر يوم 31 الساعة 10 صباحا بدفع الإيجار", now);
+    expect(m.kind === "ready" && m.draft.date).toBe("2026-03-31");
+    const once = parseReminderText("ذكرني يوم 31 الساعة 10 صباحا بدفع الإيجار", riyadh(2026, 2, 2, 9, 0));
+    expect(once.kind === "ready" && once.draft.date).toBe("2026-02-28");
+  });
+});
+
+describe("P2: chat reminders use the configured time zone", () => {
+  beforeEach(() => { installBrowser(); prefsStore.reset(); remindersStore.reset(); });
+  it("«ذكرني بكرة الساعة 9 صباحا …» is saved in the user's zone, not hard-wired to Riyadh", async () => {
+    prefsStore.set((p) => ({ ...p, tz: "America/New_York" }));
+    const q = await runQuickCommand("ذكرني بكرة الساعة 9 صباحا بالاجتماع");
+    expect(q.handled).toBe(true);
+    expect(q.reminderCreated?.tz).toBe("America/New_York");
+    expect(remindersStore.getSnapshot()[0].tz).toBe("America/New_York");
   });
 });

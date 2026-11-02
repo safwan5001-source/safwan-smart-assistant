@@ -390,8 +390,17 @@ export function parseReminderText(text: string, now: number, tz: string = DEFAUL
     day = cand;
   }
 
+  // «كل شهر يوم 31»: the recurrence day lives in the ANCHOR date, so a clamped first date (Feb 28) must not become the anchor —
+  // anchor on the requested day in the latest earlier month that has it (a past anchor is fine for a series; the scheduler
+  // still clamps each month and yields Feb 28 → Mar 31 → Apr 30 …)
+  const keyOf = (d: { y: number; m: number; d: number }): string => {
+    if (repeat !== "monthly" || monthDay === null || d.d >= monthDay) return dateKey(d);
+    let yy = d.y, mm = d.m;
+    do { mm -= 1; if (mm < 1) { mm = 12; yy -= 1; } } while (daysInMonth(yy, mm) < monthDay);
+    return dateKey({ y: yy, m: mm, d: monthDay });
+  };
   if (!time) {
-    const d = day ? dateKey(day) : undefined;
+    const d = day ? keyOf(day) : undefined;
     return { kind: "clarify", draft: { ...base, ...(d ? { date: d } : {}) }, notes,
       clarification: { reason: "time", question: day || repeat !== "none" ? "في أي ساعة تريد التذكير؟" : "متى تريد أن أذكّرك؟ حدّد اليوم والساعة.", options: [] } };
   }
@@ -410,7 +419,7 @@ export function parseReminderText(text: string, now: number, tz: string = DEFAUL
     const dayFor = (h: number) => resolveFor({ h, mi: time!.mi }, day);
     const ahead = options.filter((o) => zonedToUtc({ ...dayFor(o.h), h: o.h, mi: time!.mi }, tz) > now);
     if (!(day && day.d === todayDate.d && day.m === todayDate.m && ahead.length === 1) || timeExplicitPeriod) {
-      return ambiguousPeriod(base, day ? dateKey(day) : undefined, time, tz, notes, day, resolveFor);
+      return ambiguousPeriod(base, day ? keyOf(day) : undefined, time, tz, notes, day, resolveFor);
     }
     time = { h: ahead[0].h, mi: time.mi, ambiguous: false, certain24: false };
     notes.push(`فُسّر الوقت ${pad2(time.h)}:${pad2(time.mi)} لأن الآخر مضى.`);
@@ -423,7 +432,7 @@ export function parseReminderText(text: string, now: number, tz: string = DEFAUL
   }
   const at = zonedToUtc({ ...finalDay, h: time.h, mi: time.mi }, tz);
   const timeStr = `${pad2(time.h)}:${pad2(time.mi)}`;
-  const draft: ReminderInput = { ...(base as ReminderInput), title, date: dateKey(finalDay), time: timeStr };
+  const draft: ReminderInput = { ...(base as ReminderInput), title, date: keyOf(finalDay), time: timeStr };
   if (!title) return { kind: "clarify", draft, notes, clarification: askTitle };
   if (at <= now && repeat === "none") {
     const tomorrow = dateKey(addDays(finalDay, 1));

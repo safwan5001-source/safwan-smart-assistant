@@ -189,7 +189,7 @@ export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: R
 export async function runQuickCommand(text: string): Promise<QuickReply> {
   // «ذكرني بكرة الساعة 9 …» — typed or dictated. Ambiguity is asked about BEFORE anything is saved.
   if (isReminderIntent(text)) {
-    const out = parseReminderText(text, Date.now());
+    const out = parseReminderText(text, Date.now(), prefsStore.getSnapshot().tz); // the user's configured zone, like the reminders screen
     if (out.kind === "ready") {
       const res = await runCommand("reminders.add", out.draft);
       if (res.status === "executed") return { handled: true, reminderCreated: res.data, reply: `تم ضبط التذكير: «${res.data.title}».` };
