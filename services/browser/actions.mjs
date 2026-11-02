@@ -113,6 +113,19 @@ export const looksLikeCardNumber = (text) => {
   return false;
 };
 
+const ROLE_EQUIV = { textbox: ["textbox", "searchbox"], searchbox: ["searchbox", "textbox"], switch: ["switch", "checkbox"], checkbox: ["checkbox"], radio: ["radio"], button: ["button"], link: ["link"], combobox: ["combobox"], tab: ["tab"] };
+/** The element the browser says is there must be the one the caller NAMED (an overlay/decoy sitting on the named element is refused, not typed into). */
+export function matchesLocator(target, facts) {
+  const has = (hay, needle) => norm(hay).includes(norm(needle));
+  const names = [facts.axName, facts.ariaLabel, facts.labelText, facts.title].join(" ");
+  switch (target.by) {
+    case "role": return (ROLE_EQUIV[target.role] ?? [target.role]).includes(String(facts.axRole || facts.role).toLowerCase()) && (target.exact ? norm(facts.axName) === norm(target.value) : has(facts.axName, target.value));
+    case "label": return has(names, target.value);
+    case "placeholder": return has(facts.placeholder, target.value);
+    default: return has(`${facts.text} ${names}`, target.value);
+  }
+}
+
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
   facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler, facts.axName, facts.axRole, facts.pageUrl, facts.formEnctype, JSON.stringify(facts.formEntries ?? []),
@@ -128,6 +141,7 @@ export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify
 export function classify(action, facts, { allowUrl }) {
   const names = [facts.axName, facts.name, facts.text, facts.value, facts.id, facts.fieldName, facts.placeholder, facts.ariaLabel, facts.title, facts.labelText, facts.href, facts.autocomplete,
     action.target?.value];
+  if (facts.overlong) return { decision: "deny", code: "unsupported_target" }; // a name/label/attribute longer than the cap could hide a sensitive word beyond it
   if (["iframe", "frame", "embed", "object"].includes(facts.tag)) return { decision: "deny", code: "unsupported_target" }; // another document: nothing here was read from it
   if (facts.type === "file") return { decision: "deny", code: "file_upload_blocked" };
   if (facts.type === "password" || sensitiveAutocomplete(facts.autocomplete)) return { decision: "deny", code: "sensitive_field" };

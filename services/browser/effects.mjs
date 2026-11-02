@@ -20,6 +20,12 @@ const nl = (v) => String(v).replace(/\r\n?/g, "\n");
 const sameEntries = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((e, i) => e[0] === b[i][0] && nl(e[1]) === nl(b[i][1]));
 const parts = (raw) => { try { const u = new URL(raw); return { origin: u.origin, path: u.pathname, search: u.search }; } catch { return null; } };
 
+/** Response headers that make the BROWSER itself contact other hosts (hints, rules files, reporting) or keep a document restorable without a request: dropped from every document of an interactive session. */
+const DROPPED_HEADERS = /^(content-length|content-encoding|transfer-encoding|link|speculation-rules|reporting-endpoints|report-to|nel|refresh|cache-control|pragma|expires)$/i;
+export function sanitizeDocumentHeaders(headers) {
+  return [...(headers ?? []).filter((h) => !DROPPED_HEADERS.test(h.name)), { name: "Cache-Control", value: "no-store" }]; // no-store: no back/forward-cache replay that skips every hook
+}
+
 export function createEffectGate({ onViolation = () => {} } = {}) {
   let windowOpen = true;                 // a session starts inside its first navigation
   let auth = [];                         // [{ method, url, query: boolean, uses }]
@@ -69,6 +75,12 @@ export function createEffectGate({ onViolation = () => {} } = {}) {
     responseVerdict({ method, type, status, headers = {}, url = "" }) {
       const m = String(method).toUpperCase();
       if (status >= 300 && status < 400 && !SAFE.has(m)) { note("redirected_effect"); return { allow: false, reason: "redirected_effect" }; } // 307/308 would replay the POST elsewhere
+      // a document redirect inside an action window may only land on the URL that action authorised (path + the approved data), or on a query-free page of the same origin
+      if (status >= 300 && status < 400 && String(type) === "document" && SAFE.has(m) && headers.location) {
+        const next = (() => { try { return new URL(headers.location, url); } catch { return null; } })();
+        const ok = !!next && windowOpen && (auth.some((a) => a.method === "GET" && matches(a, "GET", next.href)) || (!next.search && next.origin === new URL(url, "https://x").origin));
+        if (!ok) { note("unexpected_redirect"); return { allow: false, reason: "unexpected_redirect" }; }
+      }
       // redirect hops never pass through the request judge: a query-free static URL must not bounce to one WITH a query (the shape of a GET "API call")
       if (status >= 300 && status < 400 && STATIC_TYPES.has(String(type)) && headers.location) {
         const next = (() => { try { return new URL(headers.location, url); } catch { return null; } })();
@@ -76,7 +88,8 @@ export function createEffectGate({ onViolation = () => {} } = {}) {
       }
       const disposition = String(headers["content-disposition"] ?? "").toLowerCase();
       if (/^\s*attachment/.test(disposition)) { note("download_blocked"); return { allow: false, reason: "download_blocked" }; }
-      if (type === "document" && status < 300 && status >= 200 && !RENDERABLE.test(String(headers["content-type"] ?? "text/html"))) { note("download_blocked"); return { allow: false, reason: "download_blocked" }; }
+      // a document with NO Content-Type is not "renderable by default": the browser would sniff it (and may download it)
+      if (type === "document" && status < 300 && status >= 200 && status !== 204 && status !== 205 && !RENDERABLE.test(String(headers["content-type"] ?? ""))) { note("download_blocked"); return { allow: false, reason: "download_blocked" }; }
       return { allow: true };
     },
   };

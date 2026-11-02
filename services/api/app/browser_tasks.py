@@ -86,7 +86,7 @@ ACTION_STATUSES = {"queued", "running", "awaiting_approval", "done", "failed", "
 ACTION_ERRORS = {
     "element_not_found", "element_ambiguous", "element_hidden", "element_disabled", "not_in_lab", "sensitive_field", "sensitive_action",
     "sensitive_value", "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected",
-    "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target", "unsupported_enctype", "payload_too_large",
+    "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target", "unsupported_enctype", "payload_too_large", "element_mismatch",
 }
 END_REASONS = {"finished", "idle", "limit"}
 # Errors the worker may answer an action call with -> what the caller learns (all other worker answers are a generic failure).

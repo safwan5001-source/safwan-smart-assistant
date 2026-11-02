@@ -54,6 +54,10 @@ const PAGES = {
     <form action="/browser-lab/submit" method="post"><input type="hidden" name="long" value="${"x".repeat(61)}"><button type="submit">Send long</button></form>`),
   "/browser-lab/shadow.html": PAGE(`<my-box id="b"></my-box><script>const r = document.getElementById("b").attachShadow({ mode: "open" }); r.innerHTML = '<input aria-label="Inner field"><button type="button">Inner go</button>';</script>`),
   "/browser-lab/pixel-page.html": PAGE(`<img src="/browser-lab/pixel" alt="" width="1" height="1">`),
+  "/browser-lab/redir-get.html": PAGE(`<form action="/browser-lab/search-redir" method="get"><input type="hidden" name="record" value="A"><button type="submit">Search again</button></form>`),
+  "/browser-lab/focus-trick.html": PAGE(`<input id="real" type="password" aria-label="Code"><input id="decoy" aria-label="Backup note"><script>let n = 0; document.getElementById("real").addEventListener("focus", () => { if (n++ < 2) document.getElementById("decoy").focus(); });</script>`),
+  "/browser-lab/overlay.html": PAGE(`<div style="position:relative;width:200px;height:40px"><input id="real" type="password" aria-label="Code" style="position:absolute;inset:0;width:200px;height:40px"><input id="decoy" aria-label="Other" style="position:absolute;inset:0;width:200px;height:40px;z-index:5"></div>`),
+  "/browser-lab/long-attrs.html": PAGE(`<input placeholder="Reference box" autocomplete="section-${"a".repeat(60)} billing cc-number"><input placeholder="Notes box" aria-label="${"x".repeat(3000)} note">`),
   "/browser-lab/page2.html": PAGE(`<h1>Second page</h1>`),
   "/browser-lab/submit": PAGE(`<h1>Submitted</h1>`),
 };
@@ -69,6 +73,7 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     if (req.method !== "GET" && req.method !== "HEAD") { req.resume(); }
     if (req.url === "/browser-lab/redir" && req.method === "POST") { res.writeHead(307, { location: "/browser-lab/api/transfer-after-redirect" }); return res.end(); }
     if (req.url === "/browser-lab/go-evil") { res.writeHead(302, { location: "https://evil.test/stolen" }); return res.end(); }
+    if (req.url.startsWith("/browser-lab/search-redir")) { res.writeHead(302, { location: "/browser-lab/search?record=B" }); return res.end(); }
     if (req.url === "/browser-lab/pixel") { res.writeHead(302, { location: "/browser-lab/api/event?id=1" }); return res.end(); }
     if (req.url === "/browser-lab/file.bin") { res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="x.bin"' }); return res.end("BINARY"); }
     if (req.url === "/browser-lab/file.txt") { res.writeHead(200, { "content-type": "text/plain", "content-disposition": "attachment; filename=x.txt" }); return res.end("text"); }
@@ -185,14 +190,49 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     await stop(v.id);
   });
 
-  await t.test("a redirect from the lab to a foreign host: nothing reaches it, and the session fails closed and is released", async () => {
+  await t.test("a redirect from the lab to a foreign host: nothing reaches it (refused by the gate), the action is reported, the session survives on its previous page", async () => {
     hits = [];
     const v = await start("offscope.html");
-    await api("POST", `/v1/jobs/${v.id}/actions`, { tool: "click", target: role("link", "Leave the lab") });
-    const f = await until(v.id, ended, "ended");
-    assert.deepEqual([f.status, f.error, f.sessionReleased], ["failed", "disallowed_final_url", true]);
+    const r = await doApproved(v.id, { tool: "click", target: role("link", "Leave the lab") });
     assert.equal(hits.some((h) => h.host === "evil.test"), false, JSON.stringify(hits));
-    assert.equal(manager.isBusy(), false);
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "effect_blocked"]);
+    assert.match(r.result.url, /\/browser-lab\/offscope\.html$/, "returned to the page it came from");
+    await stop(v.id);
+  });
+
+  await t.test("an in-scope redirect from the approved GET to a URL with DIFFERENT data is not followed", async () => {
+    hits = [];
+    const v = await start("redir-get.html");
+    const r = await doApproved(v.id, { tool: "click", target: role("button", "Search again") });
+    await tick(400);
+    assert.equal(hits.some((h) => h.path.includes("record=B")), false, JSON.stringify(hits));
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "effect_blocked"]);
+    await stop(v.id);
+  });
+
+  await t.test("a focus-redirect trick (password field bounces focus to a decoy) cannot make the typed text land in a field that was not classified", async () => {
+    const v = await start("focus-trick.html");
+    const r = await doApproved(v.id, { tool: "type", target: { by: "label", value: "Code" }, text: "hunter2" });
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "sensitive_field"]);
+    assert.doesNotMatch(r.result.excerpt, /hunter2/);
+    await stop(v.id);
+  });
+
+  await t.test("a decoy laid over the named field is refused, not typed into", async () => {
+    const v = await start("overlay.html");
+    const r = await doApproved(v.id, { tool: "type", target: { by: "label", value: "Code" }, text: "abc" });
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "element_mismatch"]);
+    assert.doesNotMatch(r.result.excerpt, /abc/);
+    await stop(v.id);
+  });
+
+  await t.test("sensitive words hidden beyond any display cut (long labels, long autocomplete) are still seen", async () => {
+    const v = await start("long-attrs.html");
+    let r = await doApproved(v.id, { tool: "type", target: { by: "placeholder", value: "Reference box" }, text: "123" });
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "sensitive_field"], "section-<long> billing cc-number");
+    r = await doApproved(v.id, { tool: "type", target: { by: "placeholder", value: "Notes box" }, text: "123" });
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "unsupported_target"], "a 3000-character label is refused, never silently shortened");
+    await stop(v.id);
   });
 
   await t.test("the owner sees WHAT a form will send (hidden fields included, passwords masked); changing it after approval refuses the step", async () => {

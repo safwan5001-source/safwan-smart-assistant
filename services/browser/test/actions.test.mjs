@@ -1,7 +1,7 @@
 // Pure rules: action validation, the lab-scope policy, and the deny / approve / allow classification. No browser needed.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ActionError, classify, fingerprint, isSensitiveWord, looksLikeCardNumber, norm, parseAction, describe } from "../actions.mjs";
+import { ActionError, classify, fingerprint, isSensitiveWord, looksLikeCardNumber, matchesLocator, norm, parseAction, describe } from "../actions.mjs";
 import { createPolicy, parseScopes } from "../policy.mjs";
 
 const policy = createPolicy(["example.com"], ["lab.example.org/browser-lab/"]);
@@ -146,4 +146,24 @@ test("fingerprint changes when the element's identity or destination changes", (
   for (const patch of [{ text: "Save all" }, { formAction: "https://lab.example.org/browser-lab/other" }, { formMethod: "get" }, { formTarget: "https://lab.example.org/browser-lab/save?record=B" }, { id: "x" }, { type: "submit" }, { href: "https://lab.example.org/browser-lab/x" }]) {
     assert.notEqual(fingerprint({ ...a, ...patch }), fingerprint(a), JSON.stringify(patch));
   }
+});
+
+test("matchesLocator: the element at the position must be the one the caller named (decoys / overlays are refused)", () => {
+  const f = (o) => facts({ axRole: "textbox", axName: "Full name", labelText: "Full name", placeholder: "name", text: "", ...o });
+  assert.equal(matchesLocator({ by: "role", role: "textbox", value: "full" }, f()), true);
+  assert.equal(matchesLocator({ by: "role", role: "textbox", value: "full", exact: true }, f()), false, "exact needs equality");
+  assert.equal(matchesLocator({ by: "role", role: "button", value: "Full name" }, f()), false, "wrong role");
+  assert.equal(matchesLocator({ by: "role", role: "textbox", value: "Code" }, f({ axName: "Other", labelText: "Other" })), false, "a decoy with another name");
+  assert.equal(matchesLocator({ by: "role", role: "searchbox", value: "Full" }, f()), true, "searchbox ~ textbox");
+  assert.equal(matchesLocator({ by: "label", value: "Full name" }, f()), true); assert.equal(matchesLocator({ by: "label", value: "Code" }, f()), false);
+  assert.equal(matchesLocator({ by: "placeholder", value: "NAME" }, f()), true); assert.equal(matchesLocator({ by: "placeholder", value: "zip" }, f()), false);
+  assert.equal(matchesLocator({ by: "text", value: "agree" }, f({ axRole: "checkbox", axName: "I agree", labelText: "I agree" })), true, "a label's text reaches its control");
+});
+
+test("review: values longer than the cap are refused, and the autocomplete token list is read in full", () => {
+  const c = (action, o) => classify(action, facts(o), { allowUrl });
+  assert.deepEqual(c(typing("123"), { tag: "input", type: "text", overlong: true }), { decision: "deny", code: "unsupported_target" });
+  assert.deepEqual(c(typing("123"), { tag: "input", type: "text", autocomplete: "section-" + "a".repeat(300) + " billing cc-number" }), { decision: "deny", code: "sensitive_field" });
+  assert.deepEqual(c(typing(), { tag: "input", type: "text", ariaLabel: "x".repeat(300) + " Pay" }), { decision: "deny", code: "sensitive_action" }, "a sensitive word far beyond the old 80-character cut");
+  assert.deepEqual(c(click("Go"), { text: "y".repeat(500) + " Delete account" }), { decision: "deny", code: "sensitive_action" });
 });

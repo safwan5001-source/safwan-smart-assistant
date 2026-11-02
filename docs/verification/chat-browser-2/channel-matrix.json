@@ -1,5 +1,5 @@
 {
-  "at": "2026-11-02T13:28:18.413Z",
+  "at": "2026-11-02T13:55:12.021Z",
   "chrome": "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome",
   "browserHousekeepingHostsRefusedByProxy": [
     "clients2.google.com",
@@ -189,7 +189,7 @@
       "observable": "http",
       "sessionStatus": "running",
       "action": "-",
-      "blockedRequests": 1
+      "blockedRequests": 0
     },
     {
       "id": "link-header",
@@ -252,6 +252,42 @@
       "blockedRequests": 0
     },
     {
+      "id": "dns-exfil-nav",
+      "title": "script navigates to a hostname that CARRIES data (hex label): DNS/TLS even when the navigation is blocked",
+      "mode": "playwright",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "tls",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
+      "id": "doc-hop-query",
+      "title": "link whose server answers 302 to an in-scope URL WITH a query (document hop)",
+      "mode": "playwright",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
+      "blockedRequests": 1
+    },
+    {
+      "id": "a-download-script",
+      "title": "script-created same-origin <a download> with a query, clicked",
+      "mode": "playwright",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
       "id": "redirect-offscope",
       "title": "link whose server answers 302 to a foreign host",
       "mode": "playwright",
@@ -259,8 +295,8 @@
       "evidence": [],
       "deniedAtProxy": [],
       "observable": "http",
-      "sessionStatus": "failed/disallowed_final_url",
-      "action": "failed",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
       "blockedRequests": 1
     },
     {
@@ -396,7 +432,7 @@
       "evidence": [],
       "deniedAtProxy": [],
       "observable": "http",
-      "sessionStatus": "failed/navigation_failed",
+      "sessionStatus": "running",
       "action": "-",
       "blockedRequests": 0
     },
@@ -502,24 +538,20 @@
       "id": "refresh-header",
       "title": "Refresh: response header to a foreign host",
       "mode": "stock",
-      "leaked": true,
-      "evidence": [
-        "TLS servername=evil.test"
-      ],
+      "leaked": false,
+      "evidence": [],
       "deniedAtProxy": [],
       "observable": "http",
       "sessionStatus": "running",
       "action": "-",
-      "blockedRequests": 1
+      "blockedRequests": 0
     },
     {
       "id": "link-header",
       "title": "Link: response header (preconnect + prefetch)",
       "mode": "stock",
-      "leaked": true,
-      "evidence": [
-        "TLS servername=link-header.evil.test"
-      ],
+      "leaked": false,
+      "evidence": [],
       "deniedAtProxy": [],
       "observable": "tls",
       "sessionStatus": "running",
@@ -575,6 +607,42 @@
       "blockedRequests": 0
     },
     {
+      "id": "dns-exfil-nav",
+      "title": "script navigates to a hostname that CARRIES data (hex label): DNS/TLS even when the navigation is blocked",
+      "mode": "stock",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "tls",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
+      "id": "doc-hop-query",
+      "title": "link whose server answers 302 to an in-scope URL WITH a query (document hop)",
+      "mode": "stock",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
+      "blockedRequests": 1
+    },
+    {
+      "id": "a-download-script",
+      "title": "script-created same-origin <a download> with a query, clicked",
+      "mode": "stock",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
       "id": "redirect-offscope",
       "title": "link whose server answers 302 to a foreign host",
       "mode": "stock",
@@ -582,8 +650,8 @@
       "evidence": [],
       "deniedAtProxy": [],
       "observable": "http",
-      "sessionStatus": "failed/disallowed_final_url",
-      "action": "failed",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
       "blockedRequests": 1
     },
     {
@@ -828,13 +896,11 @@
       "mode": "stock+proxy",
       "leaked": false,
       "evidence": [],
-      "deniedAtProxy": [
-        "CONNECT evil.test:443"
-      ],
+      "deniedAtProxy": [],
       "observable": "http",
       "sessionStatus": "running",
       "action": "-",
-      "blockedRequests": 1
+      "blockedRequests": 0
     },
     {
       "id": "link-header",
@@ -842,9 +908,7 @@
       "mode": "stock+proxy",
       "leaked": false,
       "evidence": [],
-      "deniedAtProxy": [
-        "CONNECT link-header.evil.test:443"
-      ],
+      "deniedAtProxy": [],
       "observable": "tls",
       "sessionStatus": "running",
       "action": "-",
@@ -899,6 +963,42 @@
       "blockedRequests": 0
     },
     {
+      "id": "dns-exfil-nav",
+      "title": "script navigates to a hostname that CARRIES data (hex label): DNS/TLS even when the navigation is blocked",
+      "mode": "stock+proxy",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "tls",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
+      "id": "doc-hop-query",
+      "title": "link whose server answers 302 to an in-scope URL WITH a query (document hop)",
+      "mode": "stock+proxy",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
+      "blockedRequests": 1
+    },
+    {
+      "id": "a-download-script",
+      "title": "script-created same-origin <a download> with a query, clicked",
+      "mode": "stock+proxy",
+      "leaked": false,
+      "evidence": [],
+      "deniedAtProxy": [],
+      "observable": "http",
+      "sessionStatus": "running",
+      "action": "-",
+      "blockedRequests": 1
+    },
+    {
       "id": "redirect-offscope",
       "title": "link whose server answers 302 to a foreign host",
       "mode": "stock+proxy",
@@ -906,8 +1006,8 @@
       "evidence": [],
       "deniedAtProxy": [],
       "observable": "http",
-      "sessionStatus": "failed/disallowed_final_url",
-      "action": "failed",
+      "sessionStatus": "running",
+      "action": "denied/effect_blocked",
       "blockedRequests": 1
     },
     {

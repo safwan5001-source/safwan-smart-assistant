@@ -12,7 +12,11 @@ const CONTROL = "a[href],button,input,select,textarea,summary,label,[role],[tabi
 // Runs with `this` = the element, inside the isolated world. Returns plain values only; never the value of a text field.
 function FACTS() {
   const el = this;
-  const cut = (v, n = 160) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
+  // Anything the deny-rules look at is read in FULL (up to a generous cap) so that a sensitive word cannot hide behind a display-length cut; a value longer than
+  // the cap is not silently shortened but flagged (`overlong`), and the target is refused. Only display-only values are cut short.
+  let overlong = false;
+  const cap = (v, n = 2000) => { const t = String(v ?? "").replace(/\s+/g, " ").trim(); if (t.length > n) overlong = true; return t.slice(0, n); };
+  const cut = (v, n = 160) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);   // display only
   const str = (v) => (typeof v === "string" ? v : "");
   const tag = el.localName;
   const form = el.form instanceof HTMLFormElement ? el.form : el.closest("form");
@@ -41,21 +45,29 @@ function FACTS() {
   }
   let href = "";
   if (tag === "a") { try { href = new URL(str(el.getAttribute("href")), document.baseURI).href.slice(0, 2048); } catch { href = "?"; } }
-  const byId = (ids) => String(ids ?? "").split(/\s+/).filter(Boolean).slice(0, 5).map((i) => { const n = document.getElementById(i); return n ? cut(n.textContent, 80) : ""; }).join(" ");
-  const alts = [...el.querySelectorAll("img[alt],svg title,[aria-label]")].slice(0, 5).map((n) => cut(n.getAttribute("alt") || n.getAttribute("aria-label") || n.textContent, 60)).join(" ");
+  const byId = (ids) => String(ids ?? "").split(/\s+/).filter(Boolean).slice(0, 5).map((i) => { const n = document.getElementById(i); return n ? cap(n.textContent) : ""; }).join(" ");
+  const alts = [...el.querySelectorAll("img[alt],svg title,[aria-label]")].slice(0, 5).map((n) => cap(n.getAttribute("alt") || n.getAttribute("aria-label") || n.textContent)).join(" ");
   return {
-    tag, type, role: cut(el.getAttribute("role"), 30).toLowerCase(), name: cut(el.getAttribute("name"), 80), id: cut(el.id, 80),
-    text: cut(el.textContent, 120), value: buttonLike && tag === "input" ? cut(el.value, 80) : "",
-    placeholder: cut(el.getAttribute("placeholder"), 80), ariaLabel: cut(el.getAttribute("aria-label"), 80), title: cut(el.getAttribute("title"), 80),
-    labelText: [el.labels ? [...el.labels].map((l) => cut(l.textContent, 80)).join(" ") : "", byId(el.getAttribute("aria-labelledby")), alts].join(" "),
-    autocomplete: cut(el.getAttribute("autocomplete"), 40), fieldName: cut(el.getAttribute("name"), 80),
+    tag, type, role: cap(el.getAttribute("role"), 60).toLowerCase(), name: cap(el.getAttribute("name")), id: cap(el.id),
+    text: cap(el.textContent), value: buttonLike && tag === "input" ? cap(el.value) : "",
+    placeholder: cap(el.getAttribute("placeholder")), ariaLabel: cap(el.getAttribute("aria-label")), title: cap(el.getAttribute("title")),
+    labelText: [el.labels ? [...el.labels].map((l) => cap(l.textContent)).join(" ") : "", byId(el.getAttribute("aria-labelledby")), alts].join(" "),
+    autocomplete: cap(el.getAttribute("autocomplete")), fieldName: cap(el.getAttribute("name")),
     href, hasDownload: el.hasAttribute("download"), target: cut(el.getAttribute("target"), 20),
     readOnly: el.readOnly === true, contentEditable: el.isContentEditable === true,
     inForm: !!form, formAction: cut(formAction, 160), formTarget, formMethod, isSubmit, formEnctype, formBodyTooLarge, formEntries: formBodyTooLarge ? [] : entries, formFields: fields,
     hasHandler: [...el.attributes].some((a) => /^on/i.test(a.name)),
     hasDisclosureAttr: el.hasAttribute("aria-expanded") || el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-controls"),
-    pageUrl: location.origin + location.pathname,
+    pageUrl: location.origin + location.pathname, overlong,
   };
+}
+
+// Sets the value of the classified <input>/<textarea> with the NATIVE setter of the isolated world and fires input/change on that very node.
+function FILL(text) {
+  const proto = this.localName === "textarea" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, "value").set.call(this, text);
+  this.dispatchEvent(new Event("input", { bubbles: true })); this.dispatchEvent(new Event("change", { bubbles: true }));
+  return true;
 }
 
 // Picks the control the user's pointer / focus really lands on (a <label> stands for the control it activates).
@@ -75,7 +87,7 @@ export function createTrustedReader(context, page) {
   let counter = 0;
   const session = async () => (cdp ??= await context.newCDPSession(page));
 
-  async function read(pick, args) {
+  async function read(pick, args, { keep = false } = {}) {
     const s = await session();
     const { frameTree } = await s.send("Page.getFrameTree");
     // a fresh world per read: execution contexts die with each document, and nothing the page did earlier can have touched this one
@@ -83,22 +95,33 @@ export function createTrustedReader(context, page) {
     const found = await s.send("Runtime.evaluate", { expression: `${pick}(${args.map((a) => JSON.stringify(a)).join(",")})`, contextId: executionContextId, returnByValue: false, timeout: 3000 });
     if (found.exceptionDetails || !found.result?.objectId) return null;
     const objectId = found.result.objectId;
+    let released = true;
     try {
       const facts = (await s.send("Runtime.callFunctionOn", { objectId, functionDeclaration: FACTS.toString(), returnByValue: true, silent: true })).result.value;
       let axName = "", axRole = "";
       try {
         const { backendNodeId } = (await s.send("DOM.describeNode", { objectId })).node;
         const ax = (await s.send("Accessibility.getPartialAXTree", { backendNodeId, fetchRelatives: false })).nodes?.[0];
-        axName = String(ax?.name?.value ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
+        const rawAx = String(ax?.name?.value ?? "").replace(/\s+/g, " ").trim();
+        if (rawAx.length > 2000) facts.overlong = true;
+        axName = rawAx.slice(0, 2000);
         axRole = String(ax?.role?.value ?? "").toLowerCase();
       } catch { /* no AX data: the DOM-derived names still apply */ }
-      return { ...facts, axName, axRole };
-    } finally { s.send("Runtime.releaseObject", { objectId }).catch(() => {}); }
+      const out = { ...facts, axName, axRole };
+      if (keep) { // the exact DOM node that was classified, for acting on it directly (no re-resolution, no dependence on focus)
+        released = false;
+        Object.defineProperty(out, "handle", { enumerable: false, value: {
+          fill: (text) => s.send("Runtime.callFunctionOn", { objectId, functionDeclaration: FILL.toString(), arguments: [{ value: String(text) }], returnByValue: true, silent: true }).then((r) => r.result?.value === true),
+          release: () => s.send("Runtime.releaseObject", { objectId }).catch(() => {}),
+        } });
+      }
+      return out;
+    } finally { if (released) s.send("Runtime.releaseObject", { objectId }).catch(() => {}); }
   }
 
   return {
-    /** The control under viewport point (x, y): exactly what a click there reaches. */
-    atPoint: (x, y) => read(PICK_POINT, [x, y]),
+    /** The control under viewport point (x, y): exactly what a click there reaches. `keep` returns a handle to act on that very node. */
+    atPoint: (x, y, opts) => read(PICK_POINT, [x, y], opts),
     /** The element that currently has keyboard focus: exactly what typed text goes into. */
     focused: () => read(PICK_FOCUS, []),
   };

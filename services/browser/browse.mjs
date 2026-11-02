@@ -4,7 +4,7 @@ import { chromium } from "playwright-core";
 import { abortError } from "./jobs.mjs";
 import { cleanText } from "./policy.mjs";
 import { runInteractive } from "./interactive.mjs";
-import { createEffectGate } from "./effects.mjs";
+import { createEffectGate, sanitizeDocumentHeaders } from "./effects.mjs";
 
 export const MAX_SCREENSHOT_BYTES = 250_000;
 const code = (c) => Object.assign(new Error(c), { code: c });
@@ -84,9 +84,8 @@ export async function installNetworkGuard(context, page, policy, { onBlock = () 
       if (gate && csp && String(ev.resourceType) === "Document" && !(ev.responseStatusCode >= 300 && ev.responseStatusCode < 400) && ![204, 205, 304].includes(ev.responseStatusCode)) { // error pages (404/500…) render scripts too
         const body = await cdp.send("Fetch.getResponseBody", { requestId: ev.requestId });
         if (body.body.length > 8_000_000) return await cdp.send("Fetch.failRequest", { requestId: ev.requestId, errorReason: "BlockedByClient" });
-        const kept = (ev.responseHeaders ?? []).filter((h) => !/^(content-length|content-encoding|transfer-encoding)$/i.test(h.name));
         return await cdp.send("Fetch.fulfillRequest", {
-          requestId: ev.requestId, responseCode: ev.responseStatusCode, responseHeaders: [...kept, { name: "Content-Security-Policy", value: csp }],
+          requestId: ev.requestId, responseCode: ev.responseStatusCode, responseHeaders: [...sanitizeDocumentHeaders(ev.responseHeaders), { name: "Content-Security-Policy", value: csp }],
           body: body.base64Encoded ? body.body : Buffer.from(body.body, "utf8").toString("base64"),
         });
       }
