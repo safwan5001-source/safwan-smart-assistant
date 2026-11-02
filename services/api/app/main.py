@@ -80,6 +80,48 @@ def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Head
     return {"ok": data.get("ok") is True, "title": str(data.get("title", ""))[:200]}
 
 
+@app.post("/internal/browser/read")
+def browser_read(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    """Private read-only proof of concept. Never expose its service token to browsers."""
+    expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
+    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if payload.url not in ("https://example.com", "https://example.com/"):
+        raise HTTPException(status_code=400, detail="Only example.com may be tested")
+    host = os.environ.get("BROWSER_SERVICE_URL", "").rstrip("/")
+    if host != "http://safwan-browser.railway.internal:8080":
+        raise HTTPException(status_code=503, detail="Browser worker is not configured")
+    req = urllib_request.Request(
+        host + "/v1/navigate",
+        json.dumps({"url": payload.url}).encode("utf-8"),
+        {"Authorization": "Bearer " + expected, "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(req, timeout=40) as response:
+            raw = response.read(400_001)
+            if len(raw) > 400_000:
+                raise ValueError("Oversized browser response")
+            data = json.loads(raw)
+        shot = data.get("screenshot")
+        if not isinstance(shot, dict) or shot.get("mimeType") != "image/jpeg":
+            raise ValueError("Missing JPEG")
+        base64_value = shot.get("base64")
+        if not isinstance(base64_value, str) or len(base64_value) > 335_000:
+            raise ValueError("Invalid JPEG payload")
+        if data.get("ok") is not True:
+            raise ValueError("Browse failed")
+        return {
+            "ok": True,
+            "title": str(data.get("title", ""))[:200],
+            "url": str(data.get("url", ""))[:500],
+            "excerpt": str(data.get("excerpt", ""))[:4000],
+            "screenshot": {"mimeType": "image/jpeg", "base64": base64_value},
+        }
+    except (HTTPError, URLError, TimeoutError, ValueError, TypeError):
+        raise HTTPException(status_code=502, detail="Browser read failed") from None
+
+
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Public, minimal and truthful: what is actually running right now."""
