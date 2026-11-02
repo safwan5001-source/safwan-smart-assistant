@@ -16,13 +16,51 @@ export class AssistantUnavailableError extends Error {
 export type ChatTurn = { role: "user" | "assistant" | "system"; content: string };
 type Fetch = typeof fetch;
 
-export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/api", timeoutMs = 60000) {
-  const call = async (path: string, init?: RequestInit) => {
+/** User-facing Arabic text for every failure code the BFF/API can produce. Unknown codes fall back to a generic message (never upstream text). */
+export const AI_ERROR_TEXT: Record<string, string> = {
+  unauthorized: "يلزم فتح جلسة Claude من جديد.", disabled: "Claude غير مفعّل على الخادم.", forbidden: "غير مصرّح بهذا الطلب.",
+  rate_limited: "عدد الطلبات كبير؛ انتظر قليلاً ثم أعد المحاولة.",
+  budget_daily: "بلغت حد التكلفة اليومي لـClaude. سيتجدد غدًا أو يمكن رفع الحد من إعدادات الخادم.",
+  budget_monthly: "بلغت حد التكلفة الشهري لـClaude. يمكن رفع الحد من إعدادات الخادم.",
+  conversation_full: "هذه المحادثة وصلت حدّها الأقصى. ابدأ محادثة جديدة.", not_found: "المحادثة غير موجودة.", bad_request: "طلب غير صالح.",
+  provider_auth: "تعذّر قبول مفتاح Anthropic على الخادم. راجع إعداد المفتاح.", model_unavailable: "النموذج المختار غير متاح لدى Anthropic.",
+  provider_busy: "Claude مشغول حاليًا؛ أعد المحاولة بعد لحظات.", provider_timeout: "انتهت مهلة الاستجابة من Claude.",
+  provider_request_failed: "تعذر الاتصال بـClaude.", response_too_large: "الرد أطول من الحد المسموح.", assistant_unavailable: "Claude غير متاح حاليًا على الخادم.",
+  unavailable: "Claude غير متاح حاليًا على الخادم.", network: "انقطع الاتصال بالخادم.",
+};
+export const aiErrorText = (code: string) => AI_ERROR_TEXT[code] ?? "تعذر الحصول على رد من المساعد.";
+
+export class AssistantRequestError extends Error {
+  constructor(public code: string, public status = 0) { super(aiErrorText(code)); this.name = "AssistantRequestError"; }
+}
+
+export type ClaudeState = {
+  provider: "anthropic"; models: { id: string; label: string }[]; default_model: string | null;
+  limits: { daily_usd: number; monthly_usd: number; per_minute: number };
+  usage: { day: { spent_usd: number; requests: number }; month: { spent_usd: number; requests: number } };
+};
+export type StoredMessage = { id: string; role: "user" | "assistant"; content: string; partial: boolean; created: string };
+export type StoredConversation = { id: string; title: string; model: string; updated: string; messages: StoredMessage[] };
+export type ConversationSummary = { id: string; title: string; count: number; model: string; updated: string };
+export type StreamDone = { text: string; stopped: boolean; usage?: { input_tokens: number; output_tokens: number; cost_usd: number } };
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/api", timeoutMs = 20000) {
+  const call = async (path: string, init?: RequestInit, ms = timeoutMs) => {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), timeoutMs);
-    try { return await fetchImpl(base + path, { ...init, signal: ctl.signal, cache: "no-store" }); }
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try { return await fetchImpl(base + path, { ...init, signal: init?.signal ?? ctl.signal, cache: "no-store" }); }
     finally { clearTimeout(timer); }
   };
+  const failure = async (res: Response) => { let code = "unavailable"; try { const b: unknown = await res.json(); if (isObj(b) && typeof b.error === "string") code = b.error; } catch { /* generic */ } return new AssistantRequestError(code, res.status); };
+  const jsonCall = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    let res: Response;
+    try { res = await call(path, init); } catch { throw new AssistantRequestError("network"); }
+    if (!res.ok) throw await failure(res);
+    return (await res.json()) as T;
+  };
+  const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return {
     async status(): Promise<AssistantStatus> {
       try {
@@ -35,25 +73,64 @@ export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a),
       } catch { return { server: "offline" }; }
     },
     async sessionStatus(): Promise<{ enabled: boolean; authenticated: boolean }> {
-      const res = await call("/assistant/status");
-      if (!res.ok) return { enabled: false, authenticated: false };
-      const data = await res.json() as {enabled?:unknown; authenticated?:unknown};
-      return { enabled: data.enabled === true, authenticated: data.authenticated === true };
+      try {
+        const res = await call("/assistant/status");
+        if (!res.ok) return { enabled: false, authenticated: false };
+        const data = await res.json() as { enabled?: unknown; authenticated?: unknown };
+        return { enabled: data.enabled === true, authenticated: data.authenticated === true };
+      } catch { return { enabled: false, authenticated: false }; }
     },
     async unlock(code: string): Promise<boolean> {
-      const res = await call("/assistant/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({code}) });
-      return res.ok;
+      try { return (await call("/assistant/session", post({ code }))).ok; } catch { return false; }
     },
-    async respond(turns: ChatTurn[], status: AssistantStatus): Promise<string> {
-      if (status.server !== "online" || !status.assistant) throw new AssistantUnavailableError();
-      const res = await call("/assistant/respond", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ messages: turns.slice(-50) }),
-      });
-      if (!res.ok) throw new AssistantUnavailableError(res.status === 401 ? "يلزم فتح جلسة Claude من جديد." : res.status === 429 ? "تم بلوغ حد طلبات الذكاء الاصطناعي." : res.status === 503 ? "Claude غير متاح حاليًا على الخادم." : "تعذر الحصول على رد من المساعد.");
-      const data = (await res.json()) as { content?: unknown };
-      if (typeof data.content !== "string" || !data.content) throw new AssistantUnavailableError("رد غير صالح من الخادم.");
-      return data.content;
+    async lock(): Promise<void> { try { await call("/assistant/session", { method: "DELETE" }); } catch { /* cookie expires by itself */ } },
+    state: () => jsonCall<ClaudeState>("/assistant/state"),
+    probe: () => jsonCall<{ model: string; reachable: boolean; cached: boolean }>("/assistant/probe", post({})),
+    setDefaultModel: (model: string) => jsonCall<{ default_model: string }>("/assistant/settings", post({ model })),
+    async conversations(): Promise<ConversationSummary[]> { return (await jsonCall<{ conversations: ConversationSummary[] }>("/assistant/conversations")).conversations; },
+    conversation: (id: string) => jsonCall<StoredConversation>(`/assistant/conversations/${encodeURIComponent(id)}`),
+    removeConversation: (id: string) => jsonCall<{ deleted: boolean }>(`/assistant/conversations/${encodeURIComponent(id)}`, { method: "DELETE" }),
+
+    /**
+     * Streams one answer. `onDelta` fires for every chunk as it arrives. Aborting `signal` (the Stop button) cancels the request on
+     * the server too; the partial text received so far is returned with `stopped: true`. Server-side failures throw AssistantRequestError
+     * carrying the text received so far in `.partial`.
+     */
+    async chat(conversationId: string, message: string, opts: { signal?: AbortSignal; onDelta?: (text: string, all: string) => void } = {}): Promise<StreamDone> {
+      let res: Response;
+      try { res = await call("/assistant/chat", { ...post({ conversationId, message }), signal: opts.signal }, 140000); }
+      catch { if (opts.signal?.aborted) return { text: "", stopped: true }; throw new AssistantRequestError("network"); }
+      if (!res.ok || !res.body) throw await failure(res);
+      const reader = res.body.getReader(), dec = new TextDecoder();
+      let buf = "", all = "";
+      const fail = (code: string): never => { const e = new AssistantRequestError(code) as AssistantRequestError & { partial: string }; e.partial = all; throw e; };
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+            if (!line) continue;
+            let ev: unknown;
+            try { ev = JSON.parse(line); } catch { continue; }
+            if (!isObj(ev)) continue;
+            if (ev.type === "delta" && typeof ev.text === "string") { all += ev.text; opts.onDelta?.(ev.text, all); }
+            else if (ev.type === "error") fail(typeof ev.code === "string" ? ev.code : "unavailable");
+            else if (ev.type === "done") {
+              const u = isObj(ev.usage) ? ev.usage : undefined;
+              return { text: all, stopped: false, usage: u ? { input_tokens: Number(u.input_tokens) || 0, output_tokens: Number(u.output_tokens) || 0, cost_usd: Number(u.cost_usd) || 0 } : undefined };
+            }
+          }
+        }
+      } catch (e) {
+        if (e instanceof AssistantRequestError) throw e;
+        if (opts.signal?.aborted) return { text: all, stopped: true };
+        fail("network");
+      }
+      if (opts.signal?.aborted) return { text: all, stopped: true };
+      return fail("network"); // the stream ended without a "done" event: never present it as a complete answer
     },
   };
 }

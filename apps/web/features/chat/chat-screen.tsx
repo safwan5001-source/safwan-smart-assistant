@@ -11,9 +11,9 @@ import { threadsStore } from "@/lib/stores";
 import { runCommand, runQuickCommand, type QuickReply, type ReminderOffer } from "@/lib/commands";
 import ReminderDialog from "@/components/reminder-dialog";
 import BrowserCard from "./browser-card";
-import { isBrowserCommandLine } from "@/lib/browser-task";
 import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-card";
-import { assistantService } from "@/lib/assistant";
+import { AssistantRequestError, assistantService } from "@/lib/assistant";
+import { ensureClaudeSession } from "@/lib/claude-session";
 import { useDictation } from "@/lib/speech";
 import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/files-db";
 import { formatTime } from "@/lib/format";
@@ -40,6 +40,8 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
+  const [streaming, setStreaming] = useState<{ threadId: string; text: string } | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const picker = useRef<HTMLInputElement>(null);
@@ -58,7 +60,8 @@ export default function ChatScreen() {
   // A new ?t= target (e.g. from global search while already on /chat) wins over local selection.
   useEffect(() => { if (fromUrl) { dictation.abort(); setSelected(null); setDraft(""); setAttachments([]); setNotice(""); setSheet(false); } }, [fromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
   const syncUrl = (id: string | null) => { if ((params.get("t") ?? null) !== id) router.replace(id ? `/chat?t=${id}` : "/chat", { scroll: false }); };
-  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [current?.messages.length, activeId]);
+  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [current?.messages.length, activeId, streaming?.text]);
+  useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
   const resetComposer = () => { dictation.abort(); setDraft(""); setAttachments([]); setNotice(""); };
@@ -92,23 +95,21 @@ export default function ChatScreen() {
       // a handled quick command (incl. the browser card) is final: it is never forwarded to the AI provider (review F4)
       if (quick.handled) { if (quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" }); }
       else if (ready && text) {
-        const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
-          // Browser commands (they carry typed values) and the browser cards never become AI context, now or in later turns.
-          .filter((m) => m.text && !m.browser && !isBrowserCommandLine(m.text)).map((m) => ({ role: m.role ?? "user", content: m.text }));
+        // Streaming (CHAT-AI-1): the server owns the Claude context (keyed by this thread's id), so only the new message travels.
+        // Browser commands/cards are handled above and never reach Claude.
+        const ctl = new AbortController();
+        abortRef.current = ctl;
+        const keep = async (reply: string) => { if (reply.trim()) await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" }); };
         try {
-          const session = await assistantService.sessionStatus();
-          if (!session.enabled) throw new Error("بوابة Claude غير مفعلة على خادم صفوان.");
-          if (!session.authenticated) {
-            const code = await prompt({ title: "فتح دردشة Claude", label: "رمز وصول المالك", multiline: false });
-            if (!code) throw new Error("لم يتم فتح جلسة Claude.");
-            const unlocked = await assistantService.unlock(code);
-            if (!unlocked) throw new Error("رمز الوصول غير صحيح أو انتهت محاولة الدخول.");
-          }
-          const reply = await assistantService.respond(turns, status);
-          await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" });
+          await ensureClaudeSession(prompt);
+          setStreaming({ threadId: id, text: "" });
+          const out = await assistantService.chat(id, text, { signal: ctl.signal, onDelta: (_d, all) => setStreaming({ threadId: id, text: all }) });
+          await keep(out.text);
+          if (out.stopped) await runCommand("chat.send", { threadId: id, text: "أُوقف الرد بناءً على طلبك.", role: "system" });
         } catch (e) {
-          await runCommand("chat.send", { threadId: id, text: e instanceof Error ? e.message : "تعذر الحصول على رد.", role: "system" });
-        }
+          await keep((e as { partial?: string }).partial ?? "");
+          await runCommand("chat.send", { threadId: id, text: e instanceof AssistantRequestError ? e.message : e instanceof Error ? e.message : "تعذر الحصول على رد.", role: "system" });
+        } finally { setStreaming(null); abortRef.current = null; }
       }
     } finally { setBusy(false); }
   };
@@ -141,7 +142,10 @@ export default function ChatScreen() {
   };
   const onDelete = async (t: Thread) => {
     if (!(await confirm({ title: "حذف المحادثة؟", message: `سيتم حذف «${t.title}» ورسائلها نهائياً من هذا الجهاز. لن تُحذف المرفقات من مكتبة الملفات.`, confirmLabel: "حذف", tone: "danger" }))) return;
-    await runCommand("chat.remove", { id: t.id }); if (activeId === t.id) setSelected(null); toast("حُذفت المحادثة");
+    await runCommand("chat.remove", { id: t.id }); if (activeId === t.id) setSelected(null);
+    // the Claude copy of this conversation lives on the server: remove it too (best effort; a 404 just means it never reached Claude)
+    const gone = await assistantService.removeConversation(t.id).then(() => true, (e: unknown) => e instanceof AssistantRequestError && (e.code === "not_found" || e.code === "unauthorized" || e.code === "disabled"));
+    toast(gone ? "حُذفت المحادثة" : "حُذفت محليًا، لكن تعذر حذف نسختها على الخادم. أعد المحاولة لاحقًا.", gone ? "ok" : "error");
   };
   const copy = async (m: Message) => {
     try { await navigator.clipboard.writeText(m.text); toast("تم النسخ"); } catch { toast("تعذر النسخ. حدّد النص وانسخه يدوياً.", "error"); }
@@ -227,6 +231,12 @@ export default function ChatScreen() {
                 </div>
               </article>
             ))}
+            {streaming && streaming.threadId === activeId && (
+              <article className="bubble assistant streaming" aria-busy="true">
+                <span className="who">المساعد</span>
+                {streaming.text || <span className="muted"><i className="spinner" aria-hidden="true" /> Claude يكتب…</span>}
+              </article>
+            )}
           </div>
 
           <div className="composer">
@@ -247,11 +257,13 @@ export default function ChatScreen() {
               <button className={"icon-btn bordered " + (dictation.listening ? "recording" : "")} disabled={!dictation.supported} aria-pressed={dictation.listening}
                 aria-label={dictation.listening ? "إيقاف الإملاء الصوتي" : "بدء الإملاء الصوتي"} title={dictation.supported ? "إملاء عربي" : "التعرف الصوتي غير مدعوم في هذا المتصفح"}
                 onClick={() => (dictation.listening ? dictation.stop() : dictation.start(draft, setDraft))}><Icon name={dictation.listening ? "stop" : "mic"} size={20} /></button>
-              <button className="icon-btn send-btn" onClick={() => void send()} disabled={busy || (!draft.trim() && !attachments.length)} aria-label="إرسال"><Icon name="send" size={20} style={{ transform: "scaleX(-1)" }} /></button>
+              {streaming
+                ? <button className="icon-btn send-btn stop-btn" onClick={() => abortRef.current?.abort()} aria-label="إيقاف الرد" title="إيقاف الرد"><Icon name="stop" size={20} /></button>
+                : <button className="icon-btn send-btn" onClick={() => void send()} disabled={busy || (!draft.trim() && !attachments.length)} aria-label="إرسال"><Icon name="send" size={20} style={{ transform: "scaleX(-1)" }} /></button>}
             </div>
             {dictation.listening && <small role="status" style={{ color: "var(--accent)" }}>يستمع الآن… تحدّث بالعربية ثم راجع النص قبل الإرسال.</small>}
             {(notice || dictation.error) && <small role="alert" style={{ color: "var(--danger)" }}>{notice || dictation.error}</small>}
-            <small className="muted">{ready ? "المساعد الذكي مفعّل." : "وضع الملاحظات — المساعد الذكي غير مفعّل."} تُحفظ الرسائل والمرفقات على هذا الجهاز فقط؛ لا تكتب بيانات حساسة.</small>
+            <small className="muted">{ready ? "Claude مفعّل: تُحفظ محادثاته على خادم صفوان لتتابعها بعد إعادة فتح التطبيق." : "وضع الملاحظات — المساعد الذكي غير مفعّل."} المرفقات تبقى على هذا الجهاز فقط ولا تُرسل إلى Claude؛ لا تكتب بيانات حساسة.</small>
           </div>
         </section>
       </div>

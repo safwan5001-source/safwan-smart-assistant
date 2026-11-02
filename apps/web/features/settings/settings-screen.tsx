@@ -12,6 +12,7 @@ import { runCommand } from "@/lib/commands";
 import { listFiles } from "@/lib/files-db";
 import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
+import ClaudeSettings from "./claude-settings";
 
 const THEMES: { id: Theme; label: string; icon: IconName }[] = [{ id: "system", label: "تلقائي", icon: "auto" }, { id: "light", label: "فاتح", icon: "sun" }, { id: "dark", label: "داكن", icon: "moon" }];
 
@@ -61,18 +62,7 @@ export default function SettingsScreen() {
         <Link href="/integrations#policy-h" className="btn btn-sm" style={{ justifySelf: "start" }}>عرض مصفوفة الصلاحيات<Icon name="forward" size={16} /></Link>
       </section>
 
-      <section className="card card-pad stack" aria-labelledby="ai-provider-h">
-        <div className="section-head">
-          <h2 id="ai-provider-h">مزود الذكاء الاصطناعي</h2>
-          <Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "متصل" : "غير مفعّل"}</Badge>
-        </div>
-        <div className="status-line">
-          <span><strong>Anthropic Claude</strong><small>المزود الأساسي المعتمد لمساعد صفوان الذكي</small></span>
-          <Badge>{aiReady(status) ? "المزود مهيأ" : "ينتظر تهيئة الخادم"}</Badge>
-        </div>
-        <p className="muted" style={{ fontSize: 14 }}>يُدار مفتاح API والنموذج من إعدادات الخادم فقط. لا يُحفظ أي مفتاح على الآيفون. تعكس الحالة تهيئة المزود على الخادم فقط، ولا تثبت نجاح اتصال فعلي بـClaude أو اكتمال ربط الدردشة وأدوات المتصفح.</p>
-        <button className="btn btn-sm" onClick={refresh} style={{ justifySelf: "start" }}>تحديث حالة الاتصال</button>
-      </section>
+      <ClaudeSettings />
 
       <section className="card card-pad" aria-labelledby="sys-h">
         <div className="section-head"><h2 id="sys-h">حالة النظام</h2><button className="btn btn-sm" onClick={refresh}>إعادة الفحص</button></div>

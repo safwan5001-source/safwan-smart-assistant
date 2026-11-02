@@ -40,6 +40,14 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/browser/tasks/{task_id}/actions/{seq}/approve"),
     ("POST", "/internal/v1/browser/tasks/{task_id}/actions/{seq}/reject"),
     ("POST", "/internal/v1/browser/tasks/{task_id}/finish"),
+    # CHAT-AI-1 Claude chat (tests/test_assistant_chat.py): same signature + acting-account allow-list + durable budget
+    ("GET", "/internal/v1/assistant/state"),
+    ("POST", "/internal/v1/assistant/settings"),
+    ("POST", "/internal/v1/assistant/probe"),
+    ("GET", "/internal/v1/assistant/conversations"),
+    ("GET", "/internal/v1/assistant/conversations/{conversation_id}"),
+    ("POST", "/internal/v1/assistant/conversations/{conversation_id}/delete"),
+    ("POST", "/internal/v1/assistant/chat"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
 

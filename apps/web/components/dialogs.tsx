@@ -4,7 +4,7 @@ import Modal from "./modal";
 import Icon from "./icon";
 
 type ConfirmOpts = { title: string; message?: string; confirmLabel?: string; tone?: "default" | "danger"; requireText?: string };
-type PromptOpts = { title: string; label: string; initial?: string; confirmLabel?: string; multiline?: boolean; maxLength?: number };
+type PromptOpts = { title: string; label: string; initial?: string; confirmLabel?: string; multiline?: boolean; maxLength?: number; secret?: boolean };
 type Toast = { id: number; text: string; kind: "ok" | "error" };
 type Api = {
   confirm: (o: ConfirmOpts) => Promise<boolean>;
@@ -96,7 +96,7 @@ function PromptDialog({ opts, onDone }: { opts: PromptOpts; onDone: (v: string |
           <label htmlFor={id}>{opts.label}</label>
           {opts.multiline
             ? <textarea id={id} className="textarea" rows={4} autoFocus value={value} maxLength={opts.maxLength} onChange={(e) => setValue(e.target.value)} />
-            : <input id={id} className="input" autoFocus value={value} maxLength={opts.maxLength} onChange={(e) => setValue(e.target.value)} />}
+            : <input id={id} className="input" autoFocus value={value} maxLength={opts.maxLength} onChange={(e) => setValue(e.target.value)} {...(opts.secret ? { type: "password", autoComplete: "off", autoCapitalize: "off", autoCorrect: "off", spellCheck: false, dir: "ltr" } : {})} />}
         </div>
         <div className="dialog-actions">
           <button type="submit" className="btn btn-primary" disabled={!value.trim()}>{opts.confirmLabel ?? "حفظ"}</button>

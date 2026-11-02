@@ -420,3 +420,15 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width: 380px) { .bt-fields { grid-template-columns: 1fr; } }
 @media (forced-colors: active) { .bt-approval, .bt-tools { border: 1px solid CanvasText; } .bt-tool.on { border: 2px solid Highlight; } }
 @media (prefers-reduced-motion: reduce) { .bt-card .spinner { animation: none; } }
+
+/* CHAT-AI-1: streaming bubble, stop button, Claude settings (RTL via logical properties; 44px touch targets; 16px inputs avoid iOS zoom) */
+.bubble.streaming { opacity: .98; }
+.bubble.streaming .spinner { display: inline-block; vertical-align: middle; margin-inline-end: 6px; }
+.send-btn.stop-btn { background: var(--danger); color: #fff; }
+.select-lg { min-height: 44px; font-size: 16px; inline-size: 100%; }
+.meter-row { display: grid; gap: 6px; }
+.meter-head { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; }
+.meter { block-size: 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); overflow: hidden; }
+.meter > i { display: block; block-size: 100%; border-radius: 999px; background: var(--accent); transition: inline-size .25s; }
+.meter > i[data-level="mid"] { background: var(--warn, #b7791f); }
+.meter > i[data-level="high"] { background: var(--danger); }

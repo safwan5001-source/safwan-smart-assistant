@@ -9,7 +9,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from . import browser_token
-from .assistant import AssistantUnavailable, get_provider, provider_status
+from .assistant import provider_status
 from .audit import audit_log
 from .browser_tasks import router as browser_tasks_router
 from .body_limit import BodyLimitMiddleware
@@ -47,15 +47,6 @@ class ToolExecuteRequest(BaseModel):
     tool: str = Field(min_length=1, max_length=100)
     arguments: dict[str, Any] = Field(default_factory=dict, max_length=20)
     permission_mode: PermissionMode
-
-
-class ChatMessage(BaseModel):
-    role: str = Field(pattern="^(user|assistant|system)$")
-    content: str = Field(min_length=1, max_length=8000)
-
-
-class AssistantRequest(BaseModel):
-    messages: list[ChatMessage] = Field(min_length=1, max_length=50)
 
 
 class BrowserSmokeRequest(BaseModel):
@@ -175,24 +166,6 @@ def get_one_integration(integration_id: str, _: str = Depends(require_auth)) -> 
     if spec is None:
         raise HTTPException(status_code=404, detail={"code": "unknown_integration", "message": "Unknown integration."})
     return spec.public(os.environ)
-
-
-@app.post("/assistant/respond")
-def assistant_respond(
-    request: AssistantRequest, settings: Settings = Depends(get_settings), _: str = Depends(require_auth)
-) -> dict[str, str]:
-    try:
-        provider = get_provider(settings)
-    except AssistantUnavailable:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "assistant_not_configured", "message": "No AI provider is configured; no reply was generated."},
-        ) from None
-    try:
-        answer = provider.respond([m.model_dump() for m in request.messages])
-    except AssistantUnavailable:
-        raise HTTPException(status_code=502, detail={"code": "assistant_provider_unavailable", "message": "AI provider could not complete the request."}) from None
-    return {"provider": provider.name, "content": answer}
 
 
 @app.get("/audit")

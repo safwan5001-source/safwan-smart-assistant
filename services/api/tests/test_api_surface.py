@@ -43,16 +43,15 @@ def test_integrations_all_planned_and_no_secrets(client):
     assert client.get("/capabilities").json()["integrations"]["connected"] == 0
 
 
-def test_assistant_reports_unavailable_instead_of_inventing_a_reply(client):
-    r = client.post("/assistant/respond", json={"messages": [{"role": "user", "content": "مرحبا"}]})
-    assert r.status_code == 503 and r.json()["detail"]["code"] == "assistant_not_configured"
+def test_there_is_no_public_assistant_endpoint(client):
+    """Spending on Anthropic happens only through the signed, budgeted /internal/v1/assistant/* routes."""
+    assert client.post("/assistant/respond", json={"messages": [{"role": "user", "content": "مرحبا"}]}).status_code == 404
     assert client.get("/capabilities").json()["assistant"]["configured"] is False
 
 
-def test_assistant_unknown_provider_is_still_unavailable(client, monkeypatch):
+def test_assistant_unknown_provider_is_not_configured(client, monkeypatch):
     monkeypatch.setenv("ASSISTANT_PROVIDER", "openai")
-    r = client.post("/assistant/respond", json={"messages": [{"role": "user", "content": "hi"}]})
-    assert r.status_code == 503
+    assert client.get("/capabilities").json()["assistant"]["configured"] is False
 
 
 def test_policy_endpoint(client):
