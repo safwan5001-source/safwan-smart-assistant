@@ -24,4 +24,6 @@
 9. (B1) **آليتا مصادقة منفصلتان تحت `/internal/*` بقرار معماري معتمد**: `/internal/v1/*` (BFF→API) بتوقيع HMAC وفق `SERVICE_AUTH_SECRET` مع نونس أحادي الاستعمال؛ و`/internal/browser/*` (تشخيص/قراءة المتصفح) بـ`Authorization: Bearer <BROWSER_SERVICE_TOKEN>` (≥ 32 حرفًا). لا يفتح أي اعتماد منهما الآخر، ولا يوجد إعفاء عام لأي بادئة. `tests/test_internal_auth_boundary.py` يفشل إن أُضيف مسار تحت `/internal` دون إدراجه صراحةً أو دون حارس. المسارَان `smoke`/`read` ما زالا ظاهرَين في `/openapi.json` (الافتراضي، كما على `main`)؛ الـAPI بلا نطاق عام. توحيد الآليتين وإخفاؤهما من المخطط **مهمة مستقلة**.
 10. (B1) **Independent Security Review** (ليست Codex): `docs/INDEPENDENT-SECURITY-REVIEW.md` — النتائج وما أُصلح وما بقي. المتبقي الأهم: نطاق الحساب GUC قابل للضبط ممن ينفّذ SQL بدور التشغيل (IR-B1)، وثغرتا توافر في الإشعارات من `main` (IR-W2/W3)، وترقية Next.js (IR-W4).
 
+11. (CHAT-BROWSER-1) **مسار ثالث موقَّع** `/internal/v1/browser/tasks*` (BFF→API بنفس HMAC) لمهمة المتصفح من المحادثة، مطفأ افتراضيًا (`BROWSER_CHAT_ENABLED`) وببوابة مالك مؤقتة على الويب (`BROWSER_CHAT_ACCESS_CODE`) إلى حين وصول الحسابات (B2). تفاصيل SSRF وحارس التحويلات وما لم يُثبَت على Browserbase الحقيقي: `docs/CHAT-BROWSER.md`.
+
 راجع `docs/B1-SECURITY-REVIEW.md` لضوابط الجلسات وRLS وتوقيع الخدمات.

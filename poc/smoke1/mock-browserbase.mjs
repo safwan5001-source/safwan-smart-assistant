@@ -4,10 +4,12 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { chromium } = (() => { for (const n of ["playwright-core", "playwright"]) { try { return require(n); } catch {} } throw new Error("playwright missing"); })();
+// Resolved lazily (only when a session is actually launched) so importing this file never fails where playwright is not reachable
+// from poc/smoke1 (e.g. CI installs it under services/browser or apps/web). Callers may pass their own `chromium` to startMock.
+const defaultChromium = () => { for (const n of ["playwright-core", "playwright"]) { try { return require(n).chromium; } catch {} } throw new Error("playwright missing"); };
 
 export const MOCK_KEY = "mock-key-0000";
-export async function startMock({ bearer = true, badConnect = false, liveBroken = false, liveStatus = 0, releaseKeepsLive = false, ttlMs = undefined } = {}) {
+export async function startMock({ bearer = true, badConnect = false, liveBroken = false, liveStatus = 0, releaseKeepsLive = false, ttlMs = undefined, launchOptions = {}, chromium = undefined } = {}) {
   const sessions = new Map(); // id -> { browser, status, live: { token, exp } }
   const log = [];
   const sockets = new Set(); // upgraded sockets are not tracked by closeAllConnections()
@@ -34,7 +36,7 @@ export async function startMock({ bearer = true, badConnect = false, liveBroken 
         return json(201, { id, status: "RUNNING", expiresAt: new Date(Date.now() + body.timeout * 1000).toISOString(), connectUrl: "ws://127.0.0.1:1/devtools/browser/abc?signingKey=SECRET-TOKEN-XYZ-0123456789", seleniumRemoteUrl: "http://x", signingKey: "SECRET-SIGNING-KEY-ABCDEFG", projectId: "p", region: "us-west-2", keepAlive: false });
       }
       const port = 9300 + Math.floor(Math.random() * 500);
-      const browser = await chromium.launch({ args: [`--remote-debugging-port=${port}`] });
+      const browser = await (chromium ?? defaultChromium()).launch({ ...launchOptions, args: [`--remote-debugging-port=${port}`, ...(launchOptions.args ?? [])] }); // launchOptions: tests that need e.g. a host-resolver rule
       const ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
       sessions.set(id, { browser, status: "RUNNING" });
       return json(201, { id, status: "RUNNING", expiresAt: new Date(Date.now() + body.timeout * 1000).toISOString(), connectUrl: ver.webSocketDebuggerUrl, seleniumRemoteUrl: "http://x", signingKey: "mock-signing-key", projectId: "p", region: "us-west-2", keepAlive: false });

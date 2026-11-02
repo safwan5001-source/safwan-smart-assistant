@@ -10,6 +10,7 @@ import { useHydrated, useMediaQuery, useStore, useStoreError } from "@/lib/hooks
 import { threadsStore } from "@/lib/stores";
 import { runCommand, runQuickCommand, type QuickReply, type ReminderOffer } from "@/lib/commands";
 import ReminderDialog from "@/components/reminder-dialog";
+import BrowserCard from "./browser-card";
 import { assistantService } from "@/lib/assistant";
 import { useDictation } from "@/lib/speech";
 import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/files-db";
@@ -73,7 +74,10 @@ export default function ChatScreen() {
       setSelected(id); syncUrl(id); setDraft(""); setAttachments([]); setNotice("");
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
       if (quick.reminderOffer) setOffer(quick.reminderOffer);
-      if (quick.handled && quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" });
+      // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
+      if (quick.browserOffer) await runCommand("chat.send", { threadId: id, text: "طلب تصفح تجريبي (قراءة فقط): " + quick.browserOffer.url, role: "system", browser: { url: quick.browserOffer.url, state: "offer" } });
+      // a handled quick command (incl. the browser card) is final: it is never forwarded to the AI provider (review F4)
+      if (quick.handled) { if (quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" }); }
       else if (ready && text) {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
           .filter((m) => m.text).map((m) => ({ role: m.role ?? "user", content: m.text }));
@@ -176,12 +180,15 @@ export default function ChatScreen() {
               <Empty icon="spark" title="كيف أستطيع مساعدتك؟">
                 {ready ? "اكتب رسالتك للمساعد." : "أنت في وضع الملاحظات: المساعد الذكي غير مفعّل بعد، وتُحفظ رسائلك على هذا الجهاز فقط."}
                 <span style={{ display: "block", marginBlockStart: 8 }}>جرّب الأمر السريع: <span className="kbd">/مهمة مراجعة الفواتير</span></span>
+                <span style={{ display: "block", marginBlockStart: 4 }}>تجربة المتصفح (قراءة فقط، موقع اختبار): <span className="kbd">/متصفح</span></span>
               </Empty>
             )}
             {current?.messages.map((m) => (
               <article key={m.id} className={"bubble " + (m.role ?? "user")}>
                 {m.role && m.role !== "user" && <span className="who">{m.role === "system" ? "النظام" : "المساعد"}</span>}
-                {m.text}
+                {m.browser && current
+                  ? <BrowserCard browser={m.browser} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />
+                  : m.text}
                 {m.attachments?.map((a) => (
                   <div key={a.id} style={{ marginBlockStart: 6 }}>
                     <button className="attach-chip" onClick={() => void openAttachment(a)} aria-label={"فتح المرفق " + a.name}><Icon name="clip" size={16} /><span>{a.name}</span></button>
