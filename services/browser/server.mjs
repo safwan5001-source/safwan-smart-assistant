@@ -39,9 +39,20 @@ async function browse(url) {
     browser = await chromium.connectOverCDP(session.connectUrl, { timeout: 20000 });
     const context = browser.contexts()[0] ?? await browser.newContext();
     const page = context.pages()[0] ?? await context.newPage();
+    // Intercept BEFORE the network request. This blocks disallowed redirects,
+    // subresources, scripts, and navigation attempts, not just the final URL.
+    await context.route("**/*", async route => {
+      try {
+        const requestUrl = new URL(route.request().url());
+        if (requestUrl.protocol === "https:" && !requestUrl.port &&
+            allowHosts.includes(requestUrl.hostname.toLowerCase())) {
+          return await route.continue();
+        }
+      } catch {}
+      return await route.abort("blockedbyclient");
+    });
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
-    // Do not follow navigation to unapproved hosts.
-    if (!allowHosts.includes(new URL(page.url()).hostname.toLowerCase())) throw new Error("Redirect to disallowed host");
+    if (!allowHosts.includes(new URL(page.url()).hostname.toLowerCase())) throw new Error("Disallowed final URL");
     return { title: (await page.title()).slice(0, 200), url: page.url() };
   } finally {
     try { await browser?.close(); } catch {}
@@ -70,5 +81,5 @@ const server = http.createServer(async (req, res) => {
     finally { running = false; }
   } catch { return respond(res, 400, { error: "invalid_request" }); }
 });
-server.requestTimeout = 40_000;
+server.requestTimeout = 60_000;
 server.listen(port, "0.0.0.0", () => console.log("safwan-browser listening"));
