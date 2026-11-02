@@ -82,6 +82,14 @@ export default function ChatScreen() {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
           .filter((m) => m.text).map((m) => ({ role: m.role ?? "user", content: m.text }));
         try {
+          const session = await assistantService.sessionStatus();
+          if (!session.enabled) throw new Error("بوابة Claude غير مفعلة على خادم صفوان.");
+          if (!session.authenticated) {
+            const code = await prompt({ title: "فتح دردشة Claude", label: "رمز وصول المالك", multiline: false });
+            if (!code) throw new Error("لم يتم فتح جلسة Claude.");
+            const unlocked = await assistantService.unlock(code);
+            if (!unlocked) throw new Error("رمز الوصول غير صحيح أو انتهت محاولة الدخول.");
+          }
           const reply = await assistantService.respond(turns, status);
           await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" });
         } catch (e) {
