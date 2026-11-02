@@ -376,7 +376,7 @@ def test_invalid_job_view_is_told_apart_and_logs_no_content(client, worker, capl
 
 def test_oversized_and_bad_screenshot_are_classified(client, worker, caplog):
     with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
-        worker.reply = Resp(b'{"job":' + b" " * 20_000 + b"}", 200)
+        worker.reply = Resp(b'{"job":' + b" " * (bt.MAX_JOB_JSON + 1_000) + b"}", 200)
         call(client, "GET", f"{BASE}/{TASK}")
         worker.reply = Resp(b"<html>", 200)
         call(client, "GET", f"{BASE}/{TASK}/screenshot")

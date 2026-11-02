@@ -1,0 +1,297 @@
+{
+  "at": "2026-11-02T12:37:11.720Z",
+  "total": 58,
+  "failed": 0,
+  "results": [
+    {
+      "name": "BFF → API signed hop is healthy (real HMAC, nonce, freshness)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "anonymous /status shows the feature exists but not where the lab is",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "starting a session without the owner cookie → 401",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "starting a session without explicit approval → 400",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a start page outside the lab scope → 400, no cloud session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "actions/approvals/finish without the cookie → 401",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cross-site action / approval attempts → 403",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "malformed / out-of-scope action refused at the BFF: {\"tool\":\"eval\",\"code\":\"1\"}",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "malformed / out-of-scope action refused at the BFF: {\"tool\":\"click\",\"target\":{\"by\":\"css\",\"value\":\"#a\"}}",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "malformed / out-of-scope action refused at the BFF: {\"tool\":\"navigate\",\"url\":\"https://evil.test/\"}",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "malformed / out-of-scope action refused at the BFF: {\"tool\":\"type\",\"target\":{\"by\":\"label\",\"value\":\"x\"},\"text\":\"a",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approval step numbers are bounded (0, 21 → 404)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "page is RTL Arabic",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the card states the rules and is NOT presented as an AI reply",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "nothing has run before the explicit start click",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the live session shows the lab page as a decoded screenshot + its title",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "one real cloud browser session is open",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: live session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "typing into a plain field works and the page received the text",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the typed text is not kept in the composer after sending",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a chat command «/اكتب …» is routed to the active session and runs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the action log shows what was done but NOT the typed text",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a checkbox click ran without any approval prompt",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a button waits for approval and says what it will do",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "while waiting the page is untouched (counter still 0)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approve and reject are full-size touch targets (≥44px)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the composer is locked while a step waits for the owner",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after the owner's approval the click ran (counter 1)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the screenshot URL changed (new observation, cache-busted)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a form submit says it sends a form and where",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "rejecting leaves the form unsent",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "approving sends the form (handled locally by the lab page)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a payment request is denied outright with a clear reason and no approval path",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "navigating outside the lab is refused before it reaches the browser",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "a link inside the lab is followed without approval",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "on a look-only page a click is refused (it is for reading)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "nothing but GET page loads reached the fixture internet; no off-lab host, no POST",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "localStorage holds the small reference only: no page text, no screenshot, no code, no cookie",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the card reference is {url:'',mode,state,taskId}",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the chat history keeps the command lines the owner typed (their own device) but nothing from the page",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the stop button is a full-size touch target (≥44px) and visible while a step waits",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "stop finished in seconds, the cloud session is released, the card says so",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no approval is left pending after stop, and the worker slot is free",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the step that was waiting for approval is marked cancelled (it never ran)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: stopped session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "limits are visible: steps counter and remaining time",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "finishing ends the session gracefully and releases it",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "every session opened by this run was released (no paid browser left running)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after reload no page text, image or typed text is re-created from device storage",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "every button on the cards is ≥44px tall",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: dark approval",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "dark theme paints the page dark (background luminance)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the paid browser session of the dark-theme run was released too",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no secret appears in the HTML or any of the 15 JS bundles",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "BROWSER_INTERACTIVE_SCOPES is server-only (not exposed to the client bundle)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "none of the three secrets appears in the API or web process logs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the typed text appears in neither the API nor the web process logs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors in the browser console (light or dark)",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

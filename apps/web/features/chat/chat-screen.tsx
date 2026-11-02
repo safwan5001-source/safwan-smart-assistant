@@ -11,6 +11,8 @@ import { threadsStore } from "@/lib/stores";
 import { runCommand, runQuickCommand, type QuickReply, type ReminderOffer } from "@/lib/commands";
 import ReminderDialog from "@/components/reminder-dialog";
 import BrowserCard from "./browser-card";
+import { isBrowserCommandLine } from "@/lib/browser-task";
+import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-card";
 import { assistantService } from "@/lib/assistant";
 import { useDictation } from "@/lib/speech";
 import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/files-db";
@@ -75,12 +77,24 @@ export default function ChatScreen() {
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
       if (quick.reminderOffer) setOffer(quick.reminderOffer);
       // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
-      if (quick.browserOffer) await runCommand("chat.send", { threadId: id, text: "طلب تصفح تجريبي (قراءة فقط): " + quick.browserOffer.url, role: "system", browser: { url: quick.browserOffer.url, state: "offer" } });
+      if (quick.browserOffer) {
+        const interactive = quick.browserOffer.mode === "interactive";
+        await runCommand("chat.send", interactive
+          ? { threadId: id, text: "طلب جلسة متصفح تفاعلية (اختبار)", role: "system", browser: { url: "", mode: "interactive", state: "offer" } }
+          : { threadId: id, text: "طلب تصفح تجريبي (قراءة فقط): " + quick.browserOffer.url, role: "system", browser: { url: quick.browserOffer.url, state: "offer" } });
+      }
+      // «/انقر …» «/اكتب …» «/افتح …» «/اقرأ»: handed to the newest ACTIVE session card of this thread, which submits it like its own form does.
+      if (quick.browserAction) {
+        const card = [...(threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])].reverse().find((m) => m.browser?.mode === "interactive" && m.browser.state === "started");
+        if (card) dispatchSessionAction({ messageId: card.id, action: quick.browserAction });
+        else await runCommand("chat.send", { threadId: id, text: "لا توجد جلسة متصفح تفاعلية نشطة. ابدأ واحدة بالأمر: /متصفح تفاعلي", role: "system" });
+      }
       // a handled quick command (incl. the browser card) is final: it is never forwarded to the AI provider (review F4)
       if (quick.handled) { if (quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" }); }
       else if (ready && text) {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
-          .filter((m) => m.text).map((m) => ({ role: m.role ?? "user", content: m.text }));
+          // Browser commands (they carry typed values) and the browser cards never become AI context, now or in later turns.
+          .filter((m) => m.text && !m.browser && !isBrowserCommandLine(m.text)).map((m) => ({ role: m.role ?? "user", content: m.text }));
         try {
           const reply = await assistantService.respond(turns, status);
           await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" });
@@ -181,13 +195,16 @@ export default function ChatScreen() {
                 {ready ? "اكتب رسالتك للمساعد." : "أنت في وضع الملاحظات: المساعد الذكي غير مفعّل بعد، وتُحفظ رسائلك على هذا الجهاز فقط."}
                 <span style={{ display: "block", marginBlockStart: 8 }}>جرّب الأمر السريع: <span className="kbd">/مهمة مراجعة الفواتير</span></span>
                 <span style={{ display: "block", marginBlockStart: 4 }}>تجربة المتصفح (قراءة فقط، موقع اختبار): <span className="kbd">/متصفح</span></span>
+                <span style={{ display: "block", marginBlockStart: 4 }}>جلسة تفاعلية على صفحة المختبر (تنقل ونقر وكتابة بموافقتك): <span className="kbd">/متصفح تفاعلي</span></span>
               </Empty>
             )}
             {current?.messages.map((m) => (
               <article key={m.id} className={"bubble " + (m.role ?? "user")}>
                 {m.role && m.role !== "user" && <span className="who">{m.role === "system" ? "النظام" : "المساعد"}</span>}
                 {m.browser && current
-                  ? <BrowserCard browser={m.browser} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />
+                  ? (m.browser.mode === "interactive"
+                    ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />
+                    : <BrowserCard browser={m.browser} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />)
                   : m.text}
                 {m.attachments?.map((a) => (
                   <div key={a.id} style={{ marginBlockStart: 6 }}>

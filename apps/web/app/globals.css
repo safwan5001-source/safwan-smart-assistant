@@ -396,4 +396,27 @@ tr:last-child td { border-bottom: 0; }
 .bt-excerpt { max-block-size: 160px; overflow: auto; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
 .bt-shot { display: block; inline-size: 100%; max-inline-size: 560px; block-size: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); }
 .bubble.system:has(.bt-card), .bubble:has(.bt-card) { max-width: min(96%, 640px); align-self: stretch; }
+
+/* ── interactive session card (CHAT-BROWSER-2): same card, logical properties only (RTL/LTR safe), 44px targets, 16px fields ── */
+.bt-rules { margin: 0; padding-inline-start: 20px; display: grid; gap: 4px; font-size: 14px; line-height: 1.6; }
+.bt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bt-controls .btn { min-height: 44px; }
+.bt-more summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 650; }
+.bt-approval { position: sticky; inset-block-end: 6px; z-index: 2; display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--radius); border: 2px solid var(--warn); background: var(--warn-soft); }
+.bt-approval:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.bt-approval .btn { min-height: 44px; min-inline-size: 110px; }
+.bt-fields-list ul { margin: 4px 0 0; padding-inline-start: 18px; display: grid; gap: 2px; font-size: 13.5px; overflow-wrap: anywhere; }
+.bt-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-block-size: 220px; overflow: auto; }
+.bt-log li { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; line-height: 1.55; }
+.bt-log .badge { flex-shrink: 0; }
+.bt-log-text { min-width: 0; overflow-wrap: anywhere; }
+.bt-log-err { color: var(--danger); }
+.bt-composer { display: grid; gap: 8px; padding-block-start: 10px; border-block-start: 1px solid var(--border); }
+.bt-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 4px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.bt-tool { min-height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; }
+.bt-tool.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
+.bt-tool:focus-visible { outline: 3px solid var(--focus); outline-offset: 1px; }
+.bt-fields { display: grid; grid-template-columns: minmax(110px, 38%) 1fr; gap: 8px; }
+@media (max-width: 380px) { .bt-fields { grid-template-columns: 1fr; } }
+@media (forced-colors: active) { .bt-approval, .bt-tools { border: 1px solid CanvasText; } .bt-tool.on { border: 2px solid Highlight; } }
 @media (prefers-reduced-motion: reduce) { .bt-card .spinner { animation: none; } }

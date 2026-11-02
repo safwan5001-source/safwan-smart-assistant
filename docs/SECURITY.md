@@ -25,5 +25,6 @@
 10. (B1) **Independent Security Review** (ليست Codex): `docs/INDEPENDENT-SECURITY-REVIEW.md` — النتائج وما أُصلح وما بقي. المتبقي الأهم: نطاق الحساب GUC قابل للضبط ممن ينفّذ SQL بدور التشغيل (IR-B1)، وثغرتا توافر في الإشعارات من `main` (IR-W2/W3)، وترقية Next.js (IR-W4).
 
 11. (CHAT-BROWSER-1) **مسار ثالث موقَّع** `/internal/v1/browser/tasks*` (BFF→API بنفس HMAC) لمهمة المتصفح من المحادثة، مطفأ افتراضيًا (`BROWSER_CHAT_ENABLED`) وببوابة مالك مؤقتة على الويب (`BROWSER_CHAT_ACCESS_CODE`) إلى حين وصول الحسابات (B2). تفاصيل SSRF وحارس التحويلات وما لم يُثبَت على Browserbase الحقيقي: `docs/CHAT-BROWSER.md`.
+12. (CHAT-BROWSER-2) **تحكم تفاعلي** (`/internal/v1/browser/tasks/{id}/actions|finish`) داخل «نطاق مختبر» `BROWSER_INTERACTIVE_SCOPES` (مضيف + بادئة مسار، فارغ افتراضيًا = مطفأ)؛ محدِّدات منظَّمة بلا selectors خام، موافقة صريحة مربوطة ببصمة العنصر لكل خطوة تغيّر بيانات، حظر نهائي للدفع/الحذف/الدخول/الحسابات/كلمات المرور/رفع الملفات، والنص المكتوب لا يُسجَّل. التفاصيل والمخاطر المعروفة: `docs/CHAT-BROWSER-2.md`.
 
 راجع `docs/B1-SECURITY-REVIEW.md` لضوابط الجلسات وRLS وتوقيع الخدمات.

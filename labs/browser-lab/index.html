@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<!-- This page may not talk to any network: scripted requests, images, frames and form posts are all blocked by the policy below. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta name="color-scheme" content="light dark">
+<title>مختبر المتصفح</title>
+<style>
+  :root { --bg: #f4f6fa; --fg: #0e1a2b; --card: #fff; --line: #cfd8e3; --accent: #1b6fd1; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #080f19; --fg: #e8eef7; --card: #101a28; --line: #2a3b55; --accent: #8ab8ff; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; display: grid; gap: 14px; }
+  .banner { padding: 10px 14px; border: 1px dashed var(--accent); border-radius: 12px; font-size: 14px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; display: grid; gap: 10px; }
+  h1, h2 { margin: 0; font-size: 1.15rem; }
+  label { display: grid; gap: 4px; font-weight: 600; }
+  input[type=text], textarea { font: inherit; padding: 10px 12px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  button { font: inherit; min-height: 44px; padding: 8px 16px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); font-weight: 700; }
+  a { color: var(--accent); }
+  output { font-weight: 700; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<main>
+  <h1>مختبر المتصفح</h1>
+  <p class="banner">صفحة اختبار ثابتة لتجربة التنقل والنقر والكتابة. لا تُرسل شيئاً إلى أي خادم، ولا تُدخل هنا بيانات حقيقية.</p>
+
+  <section aria-labelledby="s1">
+    <h2 id="s1">التنقل</h2>
+    <p><a href="/browser-lab/page2.html">الصفحة الثانية</a></p>
+  </section>
+
+  <section aria-labelledby="s2">
+    <h2 id="s2">الكتابة</h2>
+    <label for="fullname">الاسم الكامل</label>
+    <input id="fullname" type="text" autocomplete="off" placeholder="اكتب اسماً تجريبياً">
+    <label for="notes">ملاحظات</label>
+    <textarea id="notes" rows="3"></textarea>
+    <p>المكتوب: <output id="echo"></output></p>
+  </section>
+
+  <section aria-labelledby="s3">
+    <h2 id="s3">النقر</h2>
+    <label class="row"><input type="checkbox" id="agree"> أوافق على شروط الاختبار</label>
+    <div class="row"><button type="button" id="inc">زيادة العداد</button> <span>العداد: <output id="count">0</output></span></div>
+  </section>
+
+  <section aria-labelledby="s4">
+    <h2 id="s4">نموذج (يتطلب موافقتك)</h2>
+    <form id="demo-form">
+      <label for="term">عبارة تجريبية</label>
+      <input id="term" name="term" type="text" autocomplete="off">
+      <p><button type="submit">إرسال النموذج</button></p>
+    </form>
+    <p>النتيجة: <output id="result">لم يُرسَل شيء</output></p>
+  </section>
+</main>
+<script src="/browser-lab/lab.js"></script>
+</body>
+</html>

@@ -11,9 +11,9 @@ const URL1 = "https://example.com/";
 function fakes({ guardFails = false, createDelay = 0, createFails = false, connectFails = false, gotoHang = false, releaseFails = false, shot = Buffer.alloc(2000) } = {}) {
   const calls = { release: [], closed: 0, created: 0 };
   const page = {
-    goto: () => (gotoHang ? new Promise(() => {}) : Promise.resolve()),
+    on() {}, goto: () => (gotoHang ? new Promise(() => {}) : Promise.resolve()),
     url: () => URL1, title: async () => "Example Domain",
-    locator: () => ({ innerText: async () => "Example Domain  text" }),
+    evaluate: async () => "Example Domain  text",
     screenshot: async () => shot,
   };
   const context = { pages: () => [page], newPage: async () => page, route: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {}, on() {}, newCDPSession: async () => { if (guardFails) throw new Error("cdp unavailable"); return { on() {}, send: async () => ({}) }; } };

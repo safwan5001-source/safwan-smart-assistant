@@ -10,12 +10,16 @@ import "server-only";
  */
 import { callBackend as realCallBackend, type BackendResult } from "../backend";
 import { createLimiter } from "../notify/api";
-import { isAllowedBrowserUrl, isTaskId, parseTaskView } from "@/lib/browser-task";
+import { isAllowedBrowserUrl, isTaskId, parseActionRequest, parseTaskView } from "@/lib/browser-task";
+import { isolateScopes, readScopes, sessionResultOk, sessionStartUrl, sessionTargetOk, type Scope } from "./scopes";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./gate";
 
 const BASE = "/internal/v1/browser/tasks";
 const MAX_BODY = 2048;
+const CONFLICTS = new Set(["action_in_progress", "limit_reached", "not_ready", "session_ended", "not_interactive", "no_pending_approval", "busy"]);
 const MAX_JPEG = 260_000;
+/** A bounded interactive view (4000-char excerpt + 20 actions, multibyte, JSON-escaped by the API) can exceed backend.ts's 64 KB default. */
+const VIEW_MAX = 160_000;
 
 export type Deps = { env: Env; callBackend: typeof realCallBackend; now: () => number };
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
@@ -43,6 +47,7 @@ export function createFailureLimiter(max: number, windowMs: number, cap = 10_000
 const limiters = {
   unlockFail: createFailureLimiter(5, 60_000),
   create: createLimiter(6, 60_000), poll: createLimiter(240, 60_000), cancel: createLimiter(20, 60_000),
+  act: createLimiter(40, 60_000), decide: createLimiter(30, 60_000),
 };
 const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
@@ -80,21 +85,26 @@ function upstreamError(r: BackendResult): Response | null {
   return err("unavailable", 502);                                                    // incl. "rejected": a signature problem is OUR misconfiguration
 }
 
-function taskReply(r: BackendResult, okStatus: number): Response {
+function taskReply(r: BackendResult, okStatus: number, scopes: Scope[] = []): Response {
   const bad = upstreamError(r);
   if (bad) return bad;
   const ok = r as Extract<BackendResult, { kind: "ok" }>;
   if (ok.status === okStatus || ok.status === 200) {
-    const task = parseTaskView((ok.json as { task?: unknown } | null)?.task);
+    // an interactive view is accepted only when WE also have a scope configured, and only for URLs inside it
+    const task = parseTaskView((ok.json as { task?: unknown } | null)?.task, { sessionUrlOk: (u) => scopes.length > 0 && sessionResultOk(u, scopes) });
     return task ? json({ task }, okStatus === 202 ? 202 : 200) : err("unavailable", 502);
   }
+  const detail = (ok.json as { detail?: { code?: unknown } } | null)?.detail?.code;
   switch (ok.status) {
     case 404: return err("not_found", 404);
-    case 409: return err("busy", 409);
-    case 400: return err("url_not_allowed", 400);
+    case 409: return err(typeof detail === "string" && CONFLICTS.has(detail) ? detail : "conflict", 409);
+    case 400: return err(detail === "url_not_allowed" ? "url_not_allowed" : "bad_request", 400);
     default: return err("unavailable", 502);
   }
 }
+
+/** The pending step is decided by the user's click on THIS card only: no body, a bounded step number, the same Origin/cookie checks as every other write. */
+const stepNumber = (v: string | undefined) => (v !== undefined && /^[1-9][0-9]?$/.test(v) && Number(v) <= 20 ? Number(v) : null);
 
 export async function handleBrowserChat(req: Request, path: string[], deps: Deps = defaultDeps()): Promise<Response> {
   const method = req.method.toUpperCase();
@@ -103,8 +113,17 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
   const gate = readGate(deps.env);
   const secure = deps.env.NODE_ENV === "production";
   try {
+    // The lab must be a different SITE from this app and from the API: refused (and reported) otherwise.
+    const appHost = (req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host") || "").split(":")[0];
+    let apiHost: string | null = null;
+    try { apiHost = deps.env.BACKEND_URL ? new URL(deps.env.BACKEND_URL).hostname : null; } catch { /* unconfigured */ }
+    const configured = readScopes(deps.env);
+    const iso = isolateScopes(configured, [appHost, apiHost]);
+    const scopes = iso.scopes;
     if (route === "GET /status") {
-      return json({ enabled: !!gate, authenticated: !!gate && verifyCookieValue(gate, readCookie(req), now) });
+      const authenticated = !!gate && verifyCookieValue(gate, readCookie(req), now);
+      // the lab address is shown only to the signed-in owner
+      return json({ enabled: !!gate, authenticated, interactive: { enabled: !!gate && scopes.length > 0, ...(iso.refused ? { reason: "same_site" } : {}), ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
     }
     if (!gate) return err("disabled", 503);                               // feature off: nothing below is reachable
 
@@ -134,23 +153,56 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     if (route === "POST /tasks") {
       if (!sameOrigin(req)) return err("forbidden", 403);
       if (!limiters.create("owner", now)) return err("rate_limited", 429);
-      const body = (await readJson(req)) as { url?: unknown; approved?: unknown } | undefined;
+      const body = (await readJson(req)) as { url?: unknown; approved?: unknown; mode?: unknown } | undefined;
       if (!body || typeof body !== "object") return err("bad_request", 400);
       // Explicit, per-run approval: the UI sets this only after the user presses «تشغيل» on a card that shows the exact address.
       if (body.approved !== true) return err("approval_required", 400);
+      if (body.mode === "interactive") {
+        if (!scopes.length) return err("interactive_disabled", 503);       // no lab scope here: interactive control is OFF
+        const url = body.url === undefined ? sessionStartUrl(scopes) : body.url;
+        if (!sessionTargetOk(url, scopes)) return err("url_not_allowed", 400);
+        return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url, mode: "interactive" }, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202, scopes);
+      }
+      if (body.mode !== undefined) return err("bad_request", 400);
       if (!isAllowedBrowserUrl(body.url)) return err("url_not_allowed", 400);
-      return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url: body.url }, timeoutMs: 12_000, env: deps.env }), 202);
+      return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url: body.url }, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202);
     }
     if (path[0] === "tasks" && id !== undefined) {
       if (!isTaskId(id)) return err("not_found", 404);
       if (route === `GET /tasks/${id}`) {
         if (!limiters.poll("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}`, timeoutMs: 6_000, env: deps.env }), 200);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}`, timeoutMs: 6_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
+      }
+      // ── interactive control: every route below needs the owner cookie, a same-origin write, a rate limit and a configured scope ──
+      if (route === `POST /tasks/${id}/actions`) {
+        if (!sameOrigin(req)) return err("forbidden", 403);
+        if (!scopes.length) return err("interactive_disabled", 503);
+        if (!limiters.act("owner", now)) return err("rate_limited", 429);
+        const raw = await readJson(req);
+        const action = parseActionRequest(raw, (u) => sessionTargetOk(u, scopes));
+        if (!action) return err((raw as { tool?: unknown } | undefined)?.tool === "navigate" ? "url_not_allowed" : "bad_request", 400);
+        // Rebuilt from validated fields; the typed text goes on to the worker and is never logged or echoed by this tier.
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions`, method: "POST", body: action, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202, scopes);
+      }
+      const decision = /^(approve|reject)$/.exec(path[4] ?? "");
+      if (path[2] === "actions" && decision && path.length === 5 && method === "POST") {
+        if (!sameOrigin(req)) return err("forbidden", 403);
+        if (!scopes.length) return err("interactive_disabled", 503);
+        const seq = stepNumber(path[3]);
+        if (seq === null) return err("not_found", 404);
+        if (!limiters.decide("owner", now)) return err("rate_limited", 429);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions/${seq}/${decision[1]}`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
+      }
+      if (route === `POST /tasks/${id}/finish`) {
+        if (!sameOrigin(req)) return err("forbidden", 403);
+        if (!scopes.length) return err("interactive_disabled", 503);
+        if (!limiters.cancel("owner", now)) return err("rate_limited", 429);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/finish`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       if (route === `POST /tasks/${id}/cancel`) {
         if (!sameOrigin(req)) return err("forbidden", 403);
         if (!limiters.cancel("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/cancel`, method: "POST", body: {}, timeoutMs: 12_000, env: deps.env }), 200);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/cancel`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       if (route === `GET /tasks/${id}/screenshot`) {
         if (!limiters.poll("owner", now)) return err("rate_limited", 429);
@@ -179,4 +231,5 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
 export function resetBrowserChatLimits() {
   limiters.unlockFail = createFailureLimiter(5, 60_000);
   limiters.create = createLimiter(6, 60_000); limiters.poll = createLimiter(240, 60_000); limiters.cancel = createLimiter(20, 60_000);
+  limiters.act = createLimiter(40, 60_000); limiters.decide = createLimiter(30, 60_000);
 }

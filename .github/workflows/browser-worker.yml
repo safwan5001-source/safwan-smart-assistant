@@ -5,12 +5,14 @@ on:
       - "services/browser/**"
       - "poc/smoke1/browserbase.mjs"
       - "poc/smoke1/mock-browserbase.mjs"
+      - "labs/browser-lab/**"
       - ".github/workflows/browser-worker.yml"
   push:
     paths:
       - "services/browser/**"
       - "poc/smoke1/browserbase.mjs"
       - "poc/smoke1/mock-browserbase.mjs"
+      - "labs/browser-lab/**"
       - ".github/workflows/browser-worker.yml"
 jobs:
   browser-worker:

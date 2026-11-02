@@ -10,7 +10,7 @@ export type Task = {
 export type Attachment = { id: string; name: string };
 export type Role = "user" | "system" | "assistant";
 /** A browser-task card inside the conversation. Only the reference is stored locally: never the page text, the screenshot or any session data. */
-export type BrowserRef = { url: string; state: "offer" | "started" | "done" | "dismissed"; taskId?: string; outcome?: "succeeded" | "failed" | "cancelled" };
+export type BrowserRef = { url: string; mode?: "interactive"; state: "offer" | "started" | "done" | "dismissed"; taskId?: string; outcome?: "succeeded" | "failed" | "cancelled" };
 export type Message = { id: string; text: string; created: number; role?: Role; attachments?: Attachment[]; edited?: boolean; browser?: BrowserRef };
 export type Thread = { id: string; title: string; created: number; messages: Message[]; archived?: boolean; updated?: number };
 
@@ -40,8 +40,12 @@ export function parseTasks(value: unknown): Task[] {
 const BROWSER_STATES = new Set(["offer", "started", "done", "dismissed"]);
 const OUTCOMES = new Set(["succeeded", "failed", "cancelled"]);
 export function parseBrowserRef(v: unknown): BrowserRef | null {
-  if (!isObj(v) || !isStr(v.url) || !isAllowedBrowserUrl(v.url) || !isStr(v.state) || !BROWSER_STATES.has(v.state)) return null;
-  const ref: BrowserRef = { url: v.url, state: v.state as BrowserRef["state"] };
+  if (!isObj(v) || !isStr(v.url) || !isStr(v.state) || !BROWSER_STATES.has(v.state)) return null;
+  // an interactive card stores NO address (the page comes from the server's configuration); a read-only card keeps the one fixed test address
+  const interactive = v.mode === "interactive";
+  if (v.mode !== undefined && !interactive) return null;
+  if (interactive ? v.url !== "" : !isAllowedBrowserUrl(v.url)) return null;
+  const ref: BrowserRef = interactive ? { url: "", mode: "interactive", state: v.state as BrowserRef["state"] } : { url: v.url, state: v.state as BrowserRef["state"] };
   if (isStr(v.taskId) && isTaskId(v.taskId)) ref.taskId = v.taskId;
   if (isStr(v.outcome) && OUTCOMES.has(v.outcome)) ref.outcome = v.outcome as BrowserRef["outcome"];
   if (ref.state === "started" && !ref.taskId) ref.state = "dismissed"; // a "started" card with no task id can never be resumed

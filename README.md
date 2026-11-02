@@ -17,6 +17,7 @@
 | التكاملات | كتالوج وحالات صادقة (كلها «قيد التخطيط») — لا اتصال فعلي |
 | API | `/health` عام؛ باقي المسارات مقفلة في الإنتاج (انظر الأمان) |
 | مهمة متصفح من المحادثة | تجريبي، **مطفأ افتراضيًا**، قراءة فقط على موقع اختبار (`/متصفح`) مع إيقاف فعلي — [CHAT-BROWSER](docs/CHAT-BROWSER.md) |
+| تحكم تفاعلي بالمتصفح (تنقل/نقر/كتابة) | تجريبي، **مطفأ افتراضيًا**، على صفحة مختبر يحدّدها المالك فقط، موافقة صريحة لكل خطوة تغيّر بيانات، حظر الدفع/الحذف/الحسابات، إيقاف فعلي — [CHAT-BROWSER-2](docs/CHAT-BROWSER-2.md) |
 
 ## التشغيل المحلي
 ```bash
@@ -39,7 +40,7 @@ bash scripts/backup-restore-rehearsal.sh                 # تمرين نسخ/ا�
 ## الوثائق
 - [المعمارية](docs/ARCHITECTURE.md) · [خطة التنفيذ والقبول](docs/IMPLEMENTATION.md)
 - [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [مراجعة B1 الأمنية](docs/B1-SECURITY-REVIEW.md) · [قائمة إثبات Preview](docs/B1-PREVIEW-CHECKLIST.md) · [سجل القرارات](docs/DECISIONS.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
-- [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md) · [مهمة المتصفح من المحادثة](docs/CHAT-BROWSER.md)
+- [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md) · [مهمة المتصفح من المحادثة](docs/CHAT-BROWSER.md) · [التحكم التفاعلي](docs/CHAT-BROWSER-2.md)
 - [النشر على Railway — المرحلة 2: API](docs/deploy/RAILWAY-API-PHASE2.md) · [المرحلة 3: PostgreSQL والمصادقة](docs/deploy/RAILWAY-PHASE3-DB-AUTH.md)
 
 ## مبادئ معتمدة
