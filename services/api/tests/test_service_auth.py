@@ -345,22 +345,22 @@ def test_chunked_oversize_body_is_cut_off_early_without_content_length():
 
 
 def test_body_up_to_the_limit_is_accepted_and_still_readable_downstream(client):
-    from fastapi import APIRouter, Request
+    from fastapi import APIRouter, Depends, FastAPI, Request
 
     router = APIRouter(prefix="/internal/v1")
 
     @router.post("/echo-len")
-    async def echo(request: Request, call: sa.ServiceCall = __import__("fastapi").Depends(sa.require_service_call)):
+    async def echo(request: Request, call: sa.ServiceCall = Depends(sa.require_service_call)):
         return {"len": len(await request.body())}  # the dependency must not have swallowed the stream
 
-    app.include_router(router)
-    try:
-        payload = b"y" * 1000
-        h = signed(method="POST", target="/internal/v1/echo-len", body=payload)
-        r = client.post("/internal/v1/echo-len", headers=h, content=payload)
-        assert r.status_code == 200 and r.json() == {"len": 1000}
-    finally:
-        app.router.routes[:] = [rt for rt in app.router.routes if getattr(rt, "path", "") != "/internal/v1/echo-len"]
+    # A private app: registering this route on the global `app` leaked into other tests (include_router routes cannot be removed
+    # from app.router.routes in FastAPI >= 0.16x), making the route-inventory tests order-dependent (independent review IR-A5).
+    local = FastAPI()
+    local.include_router(router)
+    payload = b"y" * 1000
+    h = signed(method="POST", target="/internal/v1/echo-len", body=payload)
+    r = TestClient(local).post("/internal/v1/echo-len", headers=h, content=payload)
+    assert r.status_code == 200 and r.json() == {"len": 1000}
 
 
 # ── freshness must also hold at the moment the nonce is claimed (after a slow body) ──

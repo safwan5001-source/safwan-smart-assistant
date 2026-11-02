@@ -117,8 +117,11 @@ def test_every_signed_route_depends_on_the_service_signature():
 
 
 def test_there_is_no_global_exemption_or_guard_hiding_behind_middleware():
-    # A middleware that special-cased a prefix would be an app-wide exemption. None may exist.
-    assert app.user_middleware == []
+    # A middleware that special-cased a prefix would be an app-wide exemption. The ONLY one allowed is the reject-only body ceiling
+    # (it can answer 413, never let anything through); it authenticates nothing and exempts nothing.
+    from app.body_limit import BodyLimitMiddleware
+
+    assert [m.cls for m in app.user_middleware] == [BodyLimitMiddleware]
     assert app.router.dependencies == []
 
 
@@ -164,8 +167,13 @@ def test_the_service_secret_is_not_accepted_as_a_browser_token(client, worker_ca
         {"Authorization": BROWSER_TOKEN},
         {"Authorization": "Bearer " + BROWSER_TOKEN + "x"},
         {"Authorization": "Bearer " + BROWSER_TOKEN[:-1]},
+        {"Authorization": "Bearer " + "z" * len(BROWSER_TOKEN)},                         # same length, nothing in common
+        {"Authorization": "Bearer " + BROWSER_TOKEN[:-1] + "x"},                        # one character off at the end
+        {"Authorization": "Bearer " + "x" + BROWSER_TOKEN[1:]},                         # one character off at the start
+        {"Authorization": "Bearer " + BROWSER_TOKEN[:20] + "x" * (len(BROWSER_TOKEN) - 20)},  # long shared prefix
     ],
-    ids=["none", "empty", "empty-bearer", "wrong", "lowercase-scheme", "basic", "no-scheme", "longer", "shorter"],
+    ids=["none", "empty", "empty-bearer", "wrong", "lowercase-scheme", "basic", "no-scheme", "longer", "shorter",
+         "same-length", "last-char-off", "first-char-off", "shared-prefix"],
 )
 def test_browser_routes_reject_every_bad_credential_without_touching_the_worker(client, worker_calls, path, headers):
     r = client.post(path, json={}, headers=headers)

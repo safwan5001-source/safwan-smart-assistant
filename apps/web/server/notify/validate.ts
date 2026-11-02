@@ -9,10 +9,20 @@ const PUSH_HOST_SUFFIXES = [".push.apple.com", ".push.services.mozilla.com", ".n
 const PUSH_HOSTS = new Set(["fcm.googleapis.com", "web.push.apple.com", "updates.push.services.mozilla.com", "android.googleapis.com"]);
 
 export type EndpointPolicy = { extraHosts: string[]; production: boolean };
+// The authority (what sits between "//" and the first "/", "?" or "#") may hold only a plain ASCII host and an optional port.
+// Why: this check parses with WHATWG `URL`, while `web-push` connects using the legacy `url.parse(endpoint).hostname`. They disagree
+// about ";", "%" escapes, tabs/newlines, U+3002 and friends, so "https://localhost;.push.apple.com/x" passed the allow-list as a push
+// host while the library opened TLS to another host (independent review IR-W1). Restricting the authority to [A-Za-z0-9.:-] makes the
+// two parsers agree by construction; the fuzz test in tests/notify-endpoint-ssrf.test.ts proves it.
+const PLAIN_AUTHORITY = /^[A-Za-z0-9.:-]+$/;
 export function isAllowedEndpoint(raw: string, policy: EndpointPolicy): boolean {
   if (raw.length > 1000) return false;
+  if (raw.includes("\\")) return false; // WHATWG treats "\" as "/" for special schemes; never ambiguous
+  const authority = /^https?:\/\/([^/?#]*)/i.exec(raw)?.[1];
+  if (authority === undefined || !PLAIN_AUTHORITY.test(authority)) return false;
   let u: URL;
   try { u = new URL(raw); } catch { return false; }
+  if (u.hostname.toLowerCase() !== authority.toLowerCase().replace(/:\d*$/, "")) return false;
   if (u.username || u.password || u.hash) return false;
   const host = u.hostname.toLowerCase();
   if (u.protocol === "https:" && u.port === "" || (u.protocol === "https:" && u.port === "443")) {

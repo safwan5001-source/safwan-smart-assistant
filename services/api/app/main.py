@@ -1,5 +1,4 @@
 import os
-import hmac
 import json
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
@@ -9,8 +8,10 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from . import browser_token
 from .assistant import AssistantUnavailable, get_provider, provider_status
 from .audit import audit_log
+from .body_limit import BodyLimitMiddleware
 from .config import SERVICE_VERSION, Settings, get_settings
 from .integrations import CATALOG, get_integration, resolve_status
 from .internal import router as internal_router
@@ -23,6 +24,9 @@ from .tools.builtin import register_builtin
 app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION)
 register_builtin(registry)
 app.include_router(internal_router)
+# Ceilings applied BEFORE any body is buffered (independent review IR-A1). The browser routes take a ~100-byte JSON; the signed
+# prefix matches service_auth.MAX_BODY_BYTES. This layer only rejects; each route keeps its own authentication.
+app.add_middleware(BodyLimitMiddleware, limits=[("/internal/browser/", 4096), ("/internal/", 1_048_576)])
 
 
 class TaskRequest(BaseModel):
@@ -60,7 +64,7 @@ class BrowserSmokeRequest(BaseModel):
 def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Owner-controlled diagnostic. Does not change normal production authentication."""
     expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
-    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+    if not browser_token.authorized(authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if payload.url != "https://example.com":
         raise HTTPException(status_code=400, detail="Only example.com may be tested")
@@ -83,7 +87,7 @@ def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Head
 def browser_read(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Private read-only proof of concept. Never expose its service token to browsers."""
     expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
-    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+    if not browser_token.authorized(authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if payload.url not in ("https://example.com", "https://example.com/"):
         raise HTTPException(status_code=400, detail="Only example.com may be tested")

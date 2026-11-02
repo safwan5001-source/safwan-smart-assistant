@@ -24,12 +24,19 @@ def connect(url: str | None, *, application_name: str = "safwan-api", timeout: i
 
 _PRIVILEGE_CHECK = """
 SELECT r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication
-       -- owner of (or inheriting from the owner of) any application relation: owners bypass RLS unless FORCEd,
-       -- and can alter tables/policies. This is the usual managed-Postgres default role.
+       -- owner of (or member of the owner of) any application relation. MEMBER, not USAGE: a membership granted WITH INHERIT FALSE,
+       -- SET TRUE has no USAGE yet lets the login `SET ROLE` to the owner (independent review IR-B2).
        OR EXISTS (SELECT 1 FROM pg_class c
                    WHERE c.relnamespace = 'public'::regnamespace
                      AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f')
-                     AND pg_has_role(current_user, c.relowner, 'USAGE'))
+                     AND pg_has_role(current_user, c.relowner, 'MEMBER'))
+       -- the ONLY role the login may belong to is the restricted application role. Any other membership - above all the predefined
+       -- pg_execute_server_program / pg_read_server_files / pg_write_server_files / pg_write_all_data / pg_signal_backend - escalates.
+       OR EXISTS (SELECT 1 FROM pg_roles g
+                   WHERE g.oid <> r.oid AND g.rolname <> 'safwan_app' AND pg_has_role(current_user, g.oid, 'MEMBER'))
+       -- the login must not be able to create objects (a place to plant functions/tables) in the database or in `public`
+       OR has_database_privilege(current_user, current_database(), 'CREATE')
+       OR has_schema_privilege(current_user, 'public', 'CREATE')
   FROM pg_roles r WHERE r.rolname = current_user
 """
 
@@ -40,7 +47,11 @@ def connect_runtime(url: str | None, *, production: bool, application_name: str 
     inheritance): RLS would silently not apply, which is the failure this whole design exists to prevent."""
     conn = connect(url, application_name=application_name, timeout=timeout)
     if production:
-        row = conn.execute(_PRIVILEGE_CHECK).fetchone()
+        try:
+            row = conn.execute(_PRIVILEGE_CHECK).fetchone()
+        except psycopg.Error:
+            conn.close()
+            raise DatabaseUnavailable("database role check failed") from None
         if row is None or row[0] is not False:
             conn.close()
             raise OverPrivilegedRole("runtime database role is over-privileged")

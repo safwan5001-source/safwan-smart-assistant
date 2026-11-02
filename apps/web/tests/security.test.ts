@@ -36,12 +36,25 @@ describe("browser bundle hygiene", () => {
     expect(serverFiles.length).toBeGreaterThan(2);
     for (const f of serverFiles) expect(readFileSync(f, "utf8"), f).toMatch(/^import "server-only";/m);
   });
-  it("API route handlers expose only GET and never accept a backend target from the request", () => {
+  it("every API route exports exactly the HTTP methods it is allowed to, and never accepts a backend target from the request", () => {
+    // Independent review IR-W5: the previous check only matched `export function POST|PUT|...`, so
+    // `export { handler as POST }` (what the notify route uses) went unnoticed and the test passed vacuously.
+    const METHOD = "GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS";
+    const exportedMethods = (src: string): string[] => {
+      const found = new Set<string>();
+      for (const m of src.matchAll(new RegExp(`export\\s+(?:async\\s+)?(?:function|const|let|var)\\s+(${METHOD})\\b`, "g"))) found.add(m[1]);
+      for (const block of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+        for (const m of block[1].matchAll(new RegExp(`\\bas\\s+(${METHOD})\\b|(?:^|,)\\s*(${METHOD})\\s*(?:,|$)`, "g"))) found.add(m[1] ?? m[2]);
+      }
+      return [...found].sort();
+    };
+    // The notification API is the only route with writes (bearer-token devices, see docs/NOTIFICATIONS.md); everything else is GET only.
+    const allowed = (f: string): string[] => (/[\\/]api[\\/]notify[\\/]/.test(f) ? ["DELETE", "GET", "POST", "PUT"] : ["GET"]);
     const routes = walk(join(root, "app", "api")).filter((f) => /route\.ts$/.test(f));
     expect(routes.length).toBeGreaterThan(0);
     for (const f of routes) {
       const s = readFileSync(f, "utf8");
-      expect(s, f).not.toMatch(/export\s+(async\s+)?function\s+(POST|PUT|PATCH|DELETE)/);
+      expect(exportedMethods(s), f).toEqual(allowed(f));
       expect(s, f).not.toMatch(/searchParams|request\.url|req\.url|\.json\(\)/);
     }
   });

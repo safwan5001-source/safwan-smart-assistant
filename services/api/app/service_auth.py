@@ -27,6 +27,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from .browser_token import collides_with_service_secret
 from .config import Settings, get_settings
 from .db.connection import DatabaseUnavailable, connect_runtime
 
@@ -41,6 +42,7 @@ CONTEXT = "safwan-svc-v1"
 H_TS, H_NONCE, H_SIG, H_ACCT = "x-svc-ts", "x-svc-nonce", "x-svc-sig", "x-svc-acct"
 _NONCE_RE = re.compile(r"[A-Za-z0-9_-]{22,64}")  # used with fullmatch: `$` would also accept a trailing newline
 _SIG_RE = re.compile(r"[0-9a-f]{64}")
+_CL_RE = re.compile(r"[0-9]{1,12}")  # Content-Length: ASCII digits only ('²'.isdigit() is True and int() would then raise)
 _TS_RE = re.compile(r"[0-9]{1,12}")  # ASCII only: str.isdigit() is True for e.g. '²', and int() then raises
 
 
@@ -148,6 +150,10 @@ async def require_service_call(
     keys = _secrets(settings)
     if not keys or not settings.service_auth_secret or len(settings.service_auth_secret.encode()) < MIN_SECRET_BYTES:
         raise _unavailable("no valid SERVICE_AUTH_SECRET", "service_auth_unconfigured")
+    # The browser worker holds BROWSER_SERVICE_TOKEN and renders untrusted content: if it equalled a signing secret it could forge
+    # BFF calls (independent review IR-A3). Fail closed instead of letting the two mechanisms become interchangeable.
+    if collides_with_service_secret():
+        raise _unavailable("SERVICE_AUTH_SECRET equals BROWSER_SERVICE_TOKEN", "service_auth_unconfigured")
     if store is None:
         raise _unavailable("no nonce store (APP_DATABASE_URL missing)", "service_auth_unavailable")
 
@@ -174,7 +180,7 @@ async def require_service_call(
             raise _deny("malformed account")
 
     declared = request.headers.get("content-length")
-    if declared and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+    if declared and _CL_RE.fullmatch(declared) and int(declared) > MAX_BODY_BYTES:
         raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
     try:
         async with asyncio.timeout(BODY_READ_DEADLINE_SECONDS):

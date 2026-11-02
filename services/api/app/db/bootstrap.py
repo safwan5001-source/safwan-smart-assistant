@@ -134,6 +134,11 @@ def bootstrap_runtime(owner_conn: psycopg.Connection, *, runtime: str, runtime_p
                            .format(sql.Identifier(runtime), sql.Literal(scram_verifier(runtime_password)), sql.Literal(RUNTIME_CONNECTION_LIMIT)))
         done.append(f"rotated password of {runtime}")
     db = owner_conn.execute("SELECT current_database()").fetchone()[0]
+    # A login may `ALTER ROLE itself SET ...` (e.g. statement_timeout = '1ms'). Those defaults outlive a password rotation, so a
+    # compromised login could leave a persistent denial of service behind. Every (re-)run puts the role back to a clean slate
+    # (independent review IR-B5).
+    owner_conn.execute(sql.SQL("ALTER ROLE {} RESET ALL").format(sql.Identifier(runtime)))
+    owner_conn.execute(sql.SQL("ALTER ROLE {} IN DATABASE {} RESET ALL").format(sql.Identifier(runtime), sql.Identifier(db)))
     owner_conn.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO safwan_app").format(sql.Identifier(db)))
     done.append("runtime may connect")
     return done
