@@ -1,5 +1,4 @@
 import os
-import hmac
 import json
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
@@ -9,17 +8,25 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from . import browser_token
 from .assistant import AssistantUnavailable, get_provider, provider_status
 from .audit import audit_log
+from .body_limit import BodyLimitMiddleware
 from .config import SERVICE_VERSION, Settings, get_settings
 from .integrations import CATALOG, get_integration, resolve_status
+from .internal import router as internal_router
 from .permissions import PermissionMode, Risk, policy_matrix
 from .security import require_auth
+from .status import health_payload, integration_summary
 from .tools import execute_tool, registry
 from .tools.builtin import register_builtin
 
 app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION)
 register_builtin(registry)
+app.include_router(internal_router)
+# Ceilings applied BEFORE any body is buffered (independent review IR-A1). The browser routes take a ~100-byte JSON; the signed
+# prefix matches service_auth.MAX_BODY_BYTES. This layer only rejects; each route keeps its own authentication.
+app.add_middleware(BodyLimitMiddleware, limits=[("/internal/browser/", 4096), ("/internal/", 1_048_576)])
 
 
 class TaskRequest(BaseModel):
@@ -49,10 +56,6 @@ class AssistantRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=50)
 
 
-def _integration_summary() -> dict[str, int]:
-    statuses = [resolve_status(spec, os.environ).value for spec in CATALOG]
-    return {"total": len(statuses), "connected": statuses.count("connected")}
-
 class BrowserSmokeRequest(BaseModel):
     url: str = Field(default="https://example.com", max_length=200)
 
@@ -61,7 +64,7 @@ class BrowserSmokeRequest(BaseModel):
 def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Owner-controlled diagnostic. Does not change normal production authentication."""
     expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
-    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+    if not browser_token.authorized(authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if payload.url != "https://example.com":
         raise HTTPException(status_code=400, detail="Only example.com may be tested")
@@ -84,7 +87,7 @@ def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Head
 def browser_read(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Private read-only proof of concept. Never expose its service token to browsers."""
     expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
-    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+    if not browser_token.authorized(authorization):
         raise HTTPException(status_code=401, detail="Unauthorized")
     if payload.url not in ("https://example.com", "https://example.com/"):
         raise HTTPException(status_code=400, detail="Only example.com may be tested")
@@ -125,16 +128,7 @@ def browser_read(payload: BrowserSmokeRequest, authorization: str | None = Heade
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Public, minimal and truthful: what is actually running right now."""
-    return {
-        "status": "ok",
-        "service": "orchestrator-foundation",
-        "version": SERVICE_VERSION,
-        "features": {
-            "assistant": bool(provider_status(settings)["configured"]),
-            "connected_integrations": _integration_summary()["connected"],
-            "task_execution": False,
-        },
-    }
+    return health_payload(settings)
 
 
 @app.get("/capabilities")
@@ -145,7 +139,7 @@ def capabilities(settings: Settings = Depends(get_settings), _: str = Depends(re
         "auth_mode": settings.auth_mode,
         "assistant": provider_status(settings),
         "tools": {"total": len(tools), "implemented": sum(t.implemented for t in tools)},
-        "integrations": _integration_summary(),
+        "integrations": integration_summary(),
         "task_execution": False,
     }
 

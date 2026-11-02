@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
-import { buildHealth } from "@/server/health";
+import { cachedHealth } from "@/server/health";
 
-// Read BACKEND_URL at request time (never at build time) and never cache the answer.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** Public liveness + API-hop check. GET only; reveals no configuration. */
+/** Public liveness + backend-hop check. GET only; reveals no configuration. */
 export async function GET() {
-  const { status, body } = await buildHealth();
+  const { status, body } = await cachedHealth();
   return NextResponse.json(body, { status, headers: { "Cache-Control": "no-store" } });
 }

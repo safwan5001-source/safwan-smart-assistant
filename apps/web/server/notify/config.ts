@@ -1,3 +1,4 @@
+import "server-only";
 /**
  * Notification-server configuration. Everything comes from the environment and FAILS CLOSED:
  * without valid VAPID keys push is "unconfigured" and the API says so — nothing is faked.

@@ -1,3 +1,4 @@
+import "server-only";
 import { alertAt, type Reminder } from "@/lib/reminders";
 import type { ServerPrefs } from "@/lib/notify-prefs";
 import { REMINDER_LIMITS } from "@/lib/reminders";

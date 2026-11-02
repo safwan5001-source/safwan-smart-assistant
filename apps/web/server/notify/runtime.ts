@@ -1,3 +1,4 @@
+import "server-only";
 import { readNotifyConfig, type NotifyConfig } from "./config";
 import { createMemoryStore } from "./memory-store";
 import { createPgStore } from "./pg-store";

@@ -24,10 +24,13 @@ def _norm(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _split(req: str) -> tuple[str, frozenset[str]]:
-    m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(.*)", req)
+def _split(req: str) -> tuple[str, frozenset[str], frozenset[str]]:
+    """(normalised name, extras, specifier clauses). `psycopg[binary]>=3.2,<4` -> ('psycopg', {'binary'}, {'>=3.2', '<4'})."""
+    m = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[([^\]]*)\])?\s*(.*)", req)
     assert m, f"unparseable requirement: {req!r}"
-    return _norm(m.group(1)), frozenset(c.strip().replace(" ", "") for c in m.group(2).split(",") if c.strip())
+    extras = frozenset(_norm(e) for e in (m.group(2) or "").split(",") if e.strip())
+    clauses = frozenset(c.strip().replace(" ", "") for c in m.group(3).split(",") if c.strip())
+    return _norm(m.group(1)), extras, clauses
 
 
 def check_install_contract(pyproject: Path, lock: Path) -> list[str]:
@@ -50,13 +53,15 @@ def check_install_contract(pyproject: Path, lock: Path) -> list[str]:
     if root is None:
         problems.append(f"{lock.name} has no entry for the project itself ({project['name']}); regenerate it with `uv lock`")
         return problems
-    declared: set[tuple[str, frozenset[str], str | None]] = {(*_split(r), None) for r in project.get("dependencies", [])}
-    for extra, reqs in project.get("optional-dependencies", {}).items():
-        declared |= {(*_split(r), extra) for r in reqs}
-    in_lock: set[tuple[str, frozenset[str], str | None]] = set()
+    Entry = tuple[str, frozenset[str], frozenset[str], str | None]  # (name, extras, specifier clauses, optional-extra group)
+    declared: set[Entry] = {(*_split(r), None) for r in project.get("dependencies", [])}
+    for group, reqs in project.get("optional-dependencies", {}).items():
+        declared |= {(*_split(r), group) for r in reqs}
+    in_lock: set[Entry] = set()
     for r in root.get("metadata", {}).get("requires-dist", []):
         marker = re.search(r"extra\s*==\s*'([^']+)'", r.get("marker", "") or "")
-        in_lock.add((_norm(r["name"]), frozenset(c.strip().replace(" ", "") for c in r.get("specifier", "").split(",") if c.strip()),
+        in_lock.add((_norm(r["name"]), frozenset(_norm(e) for e in r.get("extras", [])),
+                     frozenset(c.strip().replace(" ", "") for c in r.get("specifier", "").split(",") if c.strip()),
                      marker.group(1) if marker else None))
     if declared != in_lock:
         problems.append(f"{lock.name} is out of date with pyproject.toml (differs: {sorted(map(str, declared ^ in_lock))}); run `uv lock`")
@@ -132,6 +137,20 @@ def test_guard_fails_when_a_runtime_dependency_is_not_locked(tmp_path):
 def test_guard_fails_when_the_lockfile_is_stale(tmp_path):
     py = PYPROJECT.replace('"pydantic>=2,<3"', '"pydantic>=2,<3", "psycopg[binary]>=3.2,<4"')
     assert any("out of date" in p for p in check_install_contract(*_project(tmp_path, py)))
+
+
+def test_guard_understands_dependencies_with_extras(tmp_path):
+    py = PYPROJECT.replace('"pydantic>=2,<3"', '"pydantic>=2,<3", "psycopg[binary]>=3.2,<4"')
+    lock = LOCK.replace("[[package]]\nname = \"demo-api\"", "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n[[package]]\nname = \"demo-api\"").replace(
+        '    { name = "pydantic", specifier = ">=2,<3" },', '    { name = "psycopg", extras = ["binary"], specifier = ">=3.2,<4" },\n    { name = "pydantic", specifier = ">=2,<3" },')
+    assert check_install_contract(*_project(tmp_path, py, lock)) == []
+
+
+def test_guard_fails_when_the_extras_of_a_dependency_change_without_relocking(tmp_path):
+    py = PYPROJECT.replace('"pydantic>=2,<3"', '"pydantic>=2,<3", "psycopg[binary]>=3.2,<4"')
+    lock = LOCK.replace("[[package]]\nname = \"demo-api\"", "[[package]]\nname = \"psycopg\"\nversion = \"3.2.0\"\n[[package]]\nname = \"demo-api\"").replace(
+        '    { name = "pydantic", specifier = ">=2,<3" },', '    { name = "psycopg", specifier = ">=3.2,<4" },\n    { name = "pydantic", specifier = ">=2,<3" },')
+    assert any("out of date" in p for p in check_install_contract(*_project(tmp_path, py, lock)))
 
 
 def test_guard_fails_when_a_specifier_changes_without_relocking(tmp_path):

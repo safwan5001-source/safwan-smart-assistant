@@ -1,3 +1,4 @@
+import "server-only";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { DeviceRec, NotifyStore } from "./types";
 

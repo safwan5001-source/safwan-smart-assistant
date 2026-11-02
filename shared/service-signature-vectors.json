@@ -1,0 +1,42 @@
+{
+  "_comment": "Wire contract for BFF->API service signatures (HMAC-SHA256 over the canonical string). Verified by services/api/tests/test_service_auth.py and apps/web/tests/service-signature.test.ts. TEST SECRET ONLY.",
+  "secret": "test-secret-0123456789abcdef-0123456789abcdef",
+  "vectors": [
+    {
+      "name": "get-no-body",
+      "method": "GET",
+      "target": "/internal/v1/ping",
+      "ts": 1767225600,
+      "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+      "body": "",
+      "account": null,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "safwan-svc-v1\nGET\n/internal/v1/ping\n1767225600\nAAAAAAAAAAAAAAAAAAAAAA\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n-",
+      "signature": "c8d335a0123ad6018b910d89d98db02ec7dc2cfb0077b271d4e718f5884b29d5"
+    },
+    {
+      "name": "post-json-with-account",
+      "method": "POST",
+      "target": "/internal/v1/echo",
+      "ts": 1767225601,
+      "nonce": "bm9uY2UtMDAwMDAwMDAwMQ",
+      "body": "{\"مرحبا\":\"عالم\",\"n\":1}",
+      "account": "11111111-1111-4111-8111-111111111111",
+      "body_sha256": "4e4bc1588556c2c9edf4a14268fe7d9b05ddaad7bd26fc8b577beab2ed053dd7",
+      "canonical": "safwan-svc-v1\nPOST\n/internal/v1/echo\n1767225601\nbm9uY2UtMDAwMDAwMDAwMQ\n4e4bc1588556c2c9edf4a14268fe7d9b05ddaad7bd26fc8b577beab2ed053dd7\n11111111-1111-4111-8111-111111111111",
+      "signature": "cae709d68fc697c48fa13666d61ee6eead37f64809d0a9401dfd8d88ef972b9a"
+    },
+    {
+      "name": "get-with-query",
+      "method": "GET",
+      "target": "/internal/v1/ping?x=1&y=%D8%A7",
+      "ts": 1767225602,
+      "nonce": "abcdefghijklmnopqrstuvwxyz012345",
+      "body": "",
+      "account": null,
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "safwan-svc-v1\nGET\n/internal/v1/ping?x=1&y=%D8%A7\n1767225602\nabcdefghijklmnopqrstuvwxyz012345\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n-",
+      "signature": "ca061c40975f49d125c164a9976c6db0c700c1d7e83e2fbcf0407ad1b59b121d"
+    }
+  ]
+}

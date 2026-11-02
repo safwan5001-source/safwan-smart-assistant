@@ -1,7 +1,7 @@
 /**
  * Assistant service boundary. The UI talks to this, never to a provider.
  * Nothing here claims AI is available: `status()` reports only what the BFF's public
- * /api/health says (web tier + API hop), and `respond()` refuses unless that report says the assistant is configured.
+ * /api/health says (web tier + signed backend hop), and `respond()` refuses unless that report says the assistant is configured.
  * API keys live on the server; there is no key (and must never be one) in this bundle.
  */
 export type AssistantStatus =

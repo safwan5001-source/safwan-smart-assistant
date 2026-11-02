@@ -19,5 +19,9 @@
 4. **لا قناة موافقات**: الأدوات الحساسة تُحجز ولا تُنفَّذ؛ تدفق الموافقة الخاص بكل عملية (مع منع التكرار) غير مبني.
 5. **لا حدود معدّل (rate limiting)** ولا CSP صارمة (تحتاج nonce بسبب نصوص Next المضمّنة).
 6. **الإملاء الصوتي** يعتمد على خدمة المتصفح/مزوّده وقد يرسل الصوت لخارج الجهاز.
-7. `vercel.json` يوجّه `/backend/health/neon` إلى الخدمة الخلفية ولا يوجد هذا المسار في API (لم يُعدَّل التكوين بناءً على التعليمات).
-8. `pnpm-lock.yaml` أُضيف لأول مرة لثبات البناء؛ CI ما زال `--no-frozen-lockfile`.
+7. (B1) تحويل `vercel.json` إلى BFF + Service Binding **لم يُثبت على Vercel بعد** — انظر `docs/B1-PREVIEW-CHECKLIST.md`.
+8. (B1) قفل الاعتماديات: CI يستخدم `--frozen-lockfile` (pnpm) و`uv.lock` (Python).
+9. (B1) **آليتا مصادقة منفصلتان تحت `/internal/*` بقرار معماري معتمد**: `/internal/v1/*` (BFF→API) بتوقيع HMAC وفق `SERVICE_AUTH_SECRET` مع نونس أحادي الاستعمال؛ و`/internal/browser/*` (تشخيص/قراءة المتصفح) بـ`Authorization: Bearer <BROWSER_SERVICE_TOKEN>` (≥ 32 حرفًا). لا يفتح أي اعتماد منهما الآخر، ولا يوجد إعفاء عام لأي بادئة. `tests/test_internal_auth_boundary.py` يفشل إن أُضيف مسار تحت `/internal` دون إدراجه صراحةً أو دون حارس. المسارَان `smoke`/`read` ما زالا ظاهرَين في `/openapi.json` (الافتراضي، كما على `main`)؛ الـAPI بلا نطاق عام. توحيد الآليتين وإخفاؤهما من المخطط **مهمة مستقلة**.
+10. (B1) **Independent Security Review** (ليست Codex): `docs/INDEPENDENT-SECURITY-REVIEW.md` — النتائج وما أُصلح وما بقي. المتبقي الأهم: نطاق الحساب GUC قابل للضبط ممن ينفّذ SQL بدور التشغيل (IR-B1)، وثغرتا توافر في الإشعارات من `main` (IR-W2/W3)، وترقية Next.js (IR-W4).
+
+راجع `docs/B1-SECURITY-REVIEW.md` لضوابط الجلسات وRLS وتوقيع الخدمات.

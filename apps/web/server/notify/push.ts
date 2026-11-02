@@ -1,3 +1,4 @@
+import "server-only";
 import { createHash } from "node:crypto";
 import type { Agent } from "node:https";
 import webpush from "web-push";

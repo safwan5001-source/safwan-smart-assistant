@@ -1,3 +1,4 @@
+import "server-only";
 import { Pool } from "pg";
 import { alertAt, parseReminderValue, REMINDER_LIMITS, type Reminder } from "@/lib/reminders";
 import { parseServerPrefs, type ServerPrefs } from "@/lib/notify-prefs";

@@ -1,5 +1,7 @@
 import pytest
 
+from app.config import get_settings
+
 PROTECTED = [("get", "/capabilities"), ("get", "/tools"), ("get", "/integrations"), ("get", "/audit"),
              ("get", "/permissions/policy")]
 
@@ -20,6 +22,21 @@ def test_vercel_production_overrides_development(client, monkeypatch):
     monkeypatch.setenv("APP_ENV", "development")
     monkeypatch.setenv("VERCEL_ENV", "production")
     assert client.get("/tools").status_code == 503
+
+
+@pytest.mark.parametrize("marker", ["RAILWAY_ENVIRONMENT_ID", "RAILWAY_ENVIRONMENT_NAME", "RAILWAY_PROJECT_ID", "RAILWAY_SERVICE_ID"])
+def test_any_railway_runtime_overrides_development(client, monkeypatch, marker):
+    """APP_ENV=development set by mistake on Railway (production OR a PR/preview environment) must not open the API."""
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv(marker, "anything")
+    assert client.get("/tools").status_code == 503
+    assert client.get("/capabilities").status_code == 503
+    assert get_settings().is_production and get_settings().auth_mode == "locked"
+
+
+def test_dev_mode_still_works_off_railway(client, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "development")
+    assert client.get("/tools").status_code == 200
 
 
 def test_dev_auth_cannot_be_enabled_in_production(client, monkeypatch):

@@ -1,3 +1,4 @@
+import "server-only";
 /**
  * /api/notify/* — thin, defensive HTTP layer over the store. Fixed error codes (never internal text), no-store caching,
  * same-origin only (bearer header, no cookies ⇒ not CSRF-able), bounded bodies, rate limits, SSRF-safe subscription endpoints.

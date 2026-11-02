@@ -1,3 +1,4 @@
+import "server-only";
 /**
  * Server dispatcher: the half that works when the app is CLOSED.
  *   1. reminders whose alert time arrived → advance state with the shared `fire()` maths → persist state + delivery rows atomically

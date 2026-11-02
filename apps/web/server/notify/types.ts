@@ -1,3 +1,4 @@
+import "server-only";
 import type { Reminder, ReminderPriority } from "@/lib/reminders";
 import type { ServerPrefs } from "@/lib/notify-prefs";
 

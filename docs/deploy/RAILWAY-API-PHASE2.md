@@ -86,3 +86,6 @@
 **التحقق المحلي:** `uv sync --locked --python 3.12` ثم تشغيل `uvicorn app.main:app --host 0.0.0.0 --port $PORT` بـ`APP_ENV=production` ⇒ `/health` = 200، و`/tools` = 503. وبدون البيئة المقفلة يظهر الخطأ نفسه `uvicorn: command not found`.
 **الحارس:** `services/api/tests/test_runtime_deps.py` يفشل إذا غاب `uv.lock`، أو غاب `uvicorn`/`fastapi`/`pydantic` من الاعتماديات الأساسية (لا من `[test]` فقط)، أو لم تُقفل اعتمادية، أو صار القفل قديمًا عن `pyproject.toml`. تحديث القفل: `cd services/api && uv lock`.
 **أثر PR #26:** يضيف `psycopg` و`uv.lock` خاصًا به؛ عند تحديث فرعه يُعاد توليد `uv.lock` (`uv lock`) ويحل الحارس أي انحراف.
+
+> **تحديث (المرحلة 3):** مراجعة PR #26 الكاملة وإعداد PostgreSQL وخطة الإطلاق في [RAILWAY-PHASE3-DB-AUTH.md](RAILWAY-PHASE3-DB-AUTH.md). ما ورد أعلاه عن «Service Binding خاص بـVercel» ما زال صحيحًا؛ `vercel.json` لم يعد جزءًا من #26.
+
