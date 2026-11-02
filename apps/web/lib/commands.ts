@@ -141,7 +141,8 @@ const dataCommands = {
     // push server first (needs the device credentials we are about to wipe); an unreachable server is reported, never hidden
     const serverErased = await eraseRemoteDevice().catch(() => false);
     tasksStore.reset(); threadsStore.reset(); activityStore.reset();
-    remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset(); pushDeviceStore.reset();
+    remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset();
+    if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried
     // Report (don't hide) a failure to clear files so the UI never claims a complete wipe it didn't do.
     const filesCleared = await clearFiles().then(() => true, () => false);
     return { filesCleared, serverErased };

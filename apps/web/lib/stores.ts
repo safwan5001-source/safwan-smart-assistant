@@ -37,11 +37,12 @@ export function parseFired(v: unknown): FiredEntry[] {
 }
 export const firedStore = createStore<FiredEntry[]>({ key: KEYS.fired, fallback: [], ...jsonCodec(parseFired, [] as FiredEntry[]) });
 /** Credentials of this device at the push server. The token is a bearer secret that only ever goes to our own API. */
-export type PushDevice = { deviceId: string; token: string; subscribed: boolean; registeredAt: number } | null;
+/** `erasePending`: the user asked to wipe everything but the server could not be reached — credentials are kept ONLY to retry the deletion. */
+export type PushDevice = { deviceId: string; token: string; subscribed: boolean; registeredAt: number; erasePending?: true } | null;
 export function parsePushDevice(v: unknown): PushDevice {
   const o = v as Record<string, unknown> | null;
   if (!o || typeof o.deviceId !== "string" || typeof o.token !== "string" || typeof o.registeredAt !== "number") return null;
-  return { deviceId: o.deviceId, token: o.token, subscribed: o.subscribed === true, registeredAt: o.registeredAt };
+  return { deviceId: o.deviceId, token: o.token, subscribed: o.subscribed === true, registeredAt: o.registeredAt, ...(o.erasePending === true ? { erasePending: true as const } : {}) };
 }
 export const pushDeviceStore = createStore<PushDevice>({ key: KEYS.pushDevice, fallback: null, ...jsonCodec(parsePushDevice, null as PushDevice) });
 

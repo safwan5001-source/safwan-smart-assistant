@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installBrowser } from "./setup";
 import { detectCaps, disablePush, enablePush, eraseRemoteDevice, getPushState, mergeReminders, pushUnavailableReason, sendTestPush, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
-import { prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
+import { parsePushDevice, prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
 import { handleNotify } from "@/server/notify/api";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { runCommand } from "@/lib/commands";
@@ -178,5 +178,41 @@ describe("client ⇄ server flow (real handlers, in-process transport, fake brow
     stub("fetch", async () => { throw new Error("offline"); });
     expect(await eraseRemoteDevice()).toBe(false);
     expect(pushDeviceStore.getSnapshot()).not.toBeNull();
+  });
+  it("review: «مسح كل البيانات» with the server unreachable KEEPS the credentials (erasePending) and a later retry really deletes the server rows", async () => {
+    await enablePush();
+    const d = pushDeviceStore.getSnapshot()!;
+    remindersStore.set([mkReminder({}, NOW, "wipe2")]); await syncReminders();
+    const online = g.fetch as (u: string, i?: RequestInit) => Promise<Response>;
+    stub("fetch", async () => { throw new Error("offline"); });
+    const res = await runCommand("data.erase_all", {}, { approved: true });
+    expect(res).toMatchObject({ status: "executed", data: { serverErased: false } });
+    expect(remindersStore.getSnapshot()).toEqual([]);                          // local data is gone
+    expect(pushDeviceStore.getSnapshot()).toMatchObject({ deviceId: d.deviceId, token: d.token, subscribed: false, erasePending: true });
+    expect(await rt.store!.getDevice(d.deviceId)).not.toBeNull();              // server still has it — nothing was pretended
+    // while pending: no sync may run (it would re-import the server's reminders into the freshly wiped device)
+    stub("fetch", online);
+    expect(await syncReminders()).toBe(false);
+    expect(remindersStore.getSnapshot()).toEqual([]);
+    // the flag survives a reload (what is persisted parses back with it)
+    expect(parsePushDevice(JSON.parse(JSON.stringify(pushDeviceStore.getSnapshot())))).toMatchObject({ erasePending: true });
+    // back online: the retry deletes everything on the server and clears the credentials
+    expect(await eraseRemoteDevice()).toBe(true);
+    expect(await rt.store!.getDevice(d.deviceId)).toBeNull();
+    expect(pushDeviceStore.getSnapshot()).toBeNull();
+  });
+  it("review: enabling push while an erase is pending finishes the erase first (then registers a NEW device)", async () => {
+    await enablePush();
+    const old = pushDeviceStore.getSnapshot()!;
+    const online = g.fetch as (u: string, i?: RequestInit) => Promise<Response>;
+    stub("fetch", async () => { throw new Error("offline"); });
+    await runCommand("data.erase_all", {}, { approved: true });
+    expect(await enablePush()).toBe("error");                                   // still offline → refuses, pending stays
+    expect(pushDeviceStore.getSnapshot()?.erasePending).toBe(true);
+    stub("fetch", online);
+    expect(await enablePush()).toBe("on");
+    expect(await rt.store!.getDevice(old.deviceId)).toBeNull();
+    expect(pushDeviceStore.getSnapshot()!.deviceId).not.toBe(old.deviceId);
+    expect(pushDeviceStore.getSnapshot()!.erasePending).toBeUndefined();
   });
 });

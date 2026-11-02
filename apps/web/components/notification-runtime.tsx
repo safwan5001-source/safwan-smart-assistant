@@ -8,7 +8,7 @@ import { audioPlayer } from "@/lib/audio";
 import { SOUND_IDS } from "@/lib/sounds";
 import { safeHref, type NoticePriority } from "@/lib/notifications";
 import { remindersStore, prefsStore, pushDeviceStore } from "@/lib/stores";
-import { detectCaps, enablePush, schedulePrefsSync, scheduleSync, syncReminders } from "@/lib/push-client";
+import { detectCaps, enablePush, eraseRemoteDevice, schedulePrefsSync, scheduleSync, syncReminders } from "@/lib/push-client";
 import { runCommand } from "@/lib/commands";
 import type { AlertOutcome } from "@/lib/alerts";
 
@@ -66,6 +66,7 @@ export default function NotificationRuntime() {
     };
     if (swOk) navigator.serviceWorker.addEventListener("message", onMsg);
     const refresh = async () => {
+      if (pushDeviceStore.getSnapshot()?.erasePending) { void eraseRemoteDevice(); return; } // retry a wipe that could not reach the server
       if (!pushDeviceStore.getSnapshot()?.subscribed) return;
       if (caps.notification && Notification.permission === "granted" && swOk) {
         // keep the worker current and re-create a subscription the OS dropped (permission is already granted ⇒ no prompt)

@@ -31,6 +31,18 @@ export function reminderPayload(f: Fired, prefs: ServerPrefs): PushPayload {
     tag: f.key,
   };
 }
+/**
+ * Privacy is decided at SEND time: a push queued while "show text on the lock screen" was on must not leak that text after the user
+ * turned it off (and synced) — the stored payload is redacted to the generic wording. The opposite direction is never upgraded.
+ */
+export function applyPrivacy(payload: string, prefs: ServerPrefs): string {
+  if (prefs.lockScreenContent) return payload;
+  try {
+    const p = JSON.parse(payload) as Partial<PushPayload>;
+    if (!p || typeof p !== "object" || p.kind !== "reminder" || p.generic === true) return payload;
+    return JSON.stringify({ ...p, title: GENERIC_TITLE, body: GENERIC_BODY, generic: true });
+  } catch { return payload; }
+}
 export function testPayload(key: string): PushPayload {
   return { v: 1, key, kind: "test", title: GENERIC_TITLE, body: "هذا إشعار تجريبي — الإشعارات تعمل على هذا الجهاز.", url: "/settings", tag: key, priority: "normal", generic: true };
 }

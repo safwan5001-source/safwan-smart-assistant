@@ -110,6 +110,7 @@ export async function getPushState(): Promise<PushState> {
 
 /** Must be called from a user gesture (tap). */
 export async function enablePush(): Promise<PushState> {
+  if (pushDeviceStore.getSnapshot()?.erasePending && !(await eraseRemoteDevice())) return "error"; // finish the pending wipe first
   const caps = detectCaps();
   const blocked = pushUnavailableReason(caps);
   if (blocked) return blocked;
@@ -166,6 +167,8 @@ export async function eraseRemoteDevice(): Promise<boolean> {
     }
   } catch { /* ignore */ }
   if (ok) pushDeviceStore.reset();
+  // server unreachable: keep the credentials ONLY so the deletion can be retried (runtime retries on focus/online); stop all syncing meanwhile
+  else pushDeviceStore.set((d) => (d ? { ...d, subscribed: false, erasePending: true } : d));
   return ok;
 }
 
@@ -190,7 +193,7 @@ export async function syncReminders(): Promise<boolean> {
 }
 async function doSync(): Promise<boolean> {
   const device = pushDeviceStore.getSnapshot();
-  if (!device?.subscribed) return false;
+  if (!device?.subscribed || device.erasePending) return false; // never re-import server rows of a device whose erasure is pending
   const sentTombs = tombstonesStore.getSnapshot();
   const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs }, device);
   if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)

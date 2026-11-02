@@ -7,7 +7,7 @@
  */
 import { fire } from "@/lib/reminders";
 import { shouldHold, quietEnd } from "@/lib/quiet-hours";
-import { deliveryOf, reminderPayload, topicOf, ttlOf, urgencyOf, type PushSender } from "./push";
+import { applyPrivacy, deliveryOf, reminderPayload, topicOf, ttlOf, urgencyOf, type PushSender } from "./push";
 import type { NotifyStore } from "./types";
 
 export const MAX_ATTEMPTS = 6;
@@ -42,7 +42,7 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
         await store.markDelivery(device.id, delivery.key, { status: "pending", attempts: delivery.attempts, nextAttemptAt: quietEnd(now, device.prefs.quiet, device.prefs.tz) });
         rep.held++; continue;
       }
-      const r = await send(device.subscription, delivery.payload, { ttl: ttlOf(delivery.kind), urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
+      const r = await send(device.subscription, applyPrivacy(delivery.payload, device.prefs), { ttl: ttlOf(delivery.kind), urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
       const attempts = delivery.attempts + 1;
       if (r.status >= 200 && r.status < 300) { await store.markDelivery(device.id, delivery.key, { status: "sent", attempts, sentAt: now }); rep.sent++; }
       else if (r.status === 404 || r.status === 410) {

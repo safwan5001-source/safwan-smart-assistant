@@ -6,7 +6,8 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStore } from "@/server/notify/memory-store";
 import { createPgStore } from "@/server/notify/pg-store";
 import { parseServerPrefs } from "@/lib/notify-prefs";
-import { fire } from "@/lib/reminders";
+import { fire, updateReminder } from "@/lib/reminders";
+import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { handleNotify } from "@/server/notify/api";
 import { enablePush, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
@@ -163,5 +164,48 @@ describe("P2: an idle device does not sync forever", () => {
     await syncReminders();
     expect(remindersStore.getSnapshot()[0].title).toBe("edited");
     expect(d.subscribed).toBe(true);
+  });
+});
+
+describe("P2: lock-screen privacy is applied when a queued push is finally sent", () => {
+  it("a rich push queued while the option was ON is redacted after the user turns it OFF", async () => {
+    let now = NOW;
+    const s = fakeSender((n) => (n === 1 ? { status: 503, error: "http_503" } : 201));
+    const rt = makeRuntime({ send: s.send, now: () => now });
+    const dev = await registerDevice(rt, makeSubscription().sub, { lockScreenContent: true });
+    const r = mkReminder({ title: "موعد الطبيب السري", time: "09:00", date: "2026-11-03" }, NOW, "pv1");
+    await rt.store!.syncReminders(dev.deviceId, [r], [], now);
+    now = r.dueAt + 1000;
+    expect(await dispatchTick(rt.store!, rt.send!, now)).toMatchObject({ fired: 1, retried: 1 });
+    expect(s.sent[0].payload).toContain("الطبيب السري");                       // first attempt was rich (the user had opted in)
+    await rt.store!.setPrefs(dev.deviceId, parseServerPrefs({ lockScreenContent: false }));
+    now += 60_000;                                                             // retry window
+    expect(await dispatchTick(rt.store!, rt.send!, now)).toMatchObject({ sent: 1 });
+    const retry = JSON.parse(s.sent[1].payload);
+    expect(s.sent[1].payload).not.toContain("الطبيب السري");
+    expect(retry).toMatchObject({ title: GENERIC_TITLE, body: GENERIC_BODY, generic: true });
+  });
+  it("applyPrivacy: never upgrades generic → rich, leaves test pushes and junk alone", () => {
+    const off = parseServerPrefs({ lockScreenContent: false }), on = parseServerPrefs({ lockScreenContent: true });
+    const rich = JSON.stringify({ kind: "reminder", generic: false, title: "سر", body: "سر", key: "k" });
+    expect(JSON.parse(applyPrivacy(rich, off))).toMatchObject({ title: GENERIC_TITLE, generic: true, key: "k" });
+    expect(applyPrivacy(rich, on)).toBe(rich);
+    const gen = JSON.stringify({ kind: "reminder", generic: true, title: GENERIC_TITLE, body: GENERIC_BODY });
+    expect(applyPrivacy(gen, on)).toBe(gen);
+    const test = JSON.stringify({ kind: "test", generic: true, title: "t", body: "b" });
+    expect(applyPrivacy(test, off)).toBe(test);
+    expect(applyPrivacy("not json", off)).toBe("not json");
+  });
+});
+
+describe("P2: a recurring reminder whose first day has passed stays editable", () => {
+  it("title-only edit of a daily reminder with a past anchor is accepted and keeps the schedule", () => {
+    const created = riyadh(2026, 10, 1, 12, 0);
+    const r = mkReminder({ repeat: "daily", time: "20:00", date: "2026-10-01" }, created, "ed1");
+    const later = riyadh(2026, 11, 2, 12, 0);                                  // a month later: the anchor is long past
+    const out = updateReminder(r, { title: "عنوان جديد", date: r.anchor }, later);
+    expect(out.title).toBe("عنوان جديد");
+    expect(out.anchor).toBe("2026-10-01");                                     // weekday/day-of-month basis unchanged
+    expect(out.dueAt).toBeGreaterThan(later);                                  // next occurrence is in the future
   });
 });
