@@ -2,6 +2,8 @@ import { alertAt, type Reminder } from "@/lib/reminders";
 import type { ServerPrefs } from "@/lib/notify-prefs";
 import type { DeliveryRec, DeliveryStatus, DeviceRec, NewDelivery, NotifyStore, PushSub } from "./types";
 
+/** key-order independent serialisation, used to detect real content differences */
+const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
 const RETENTION_DELIVERIES = 14 * 24 * 3600_000;
 const RETENTION_DEVICES = 180 * 24 * 3600_000;
 
@@ -31,11 +33,19 @@ export function createMemoryStore(): NotifyStore {
     async deleteDevice(id) { devices.delete(id); reminders.delete(id); deliveries.delete(id); },
     async syncReminders(deviceId, incoming, deleted, now) {
       const b = bucket(deviceId);
-      for (const id of deleted) b.delete(id);
+      const cancelPending = (reminderId: string, why: string) => {
+        for (const dl of deliveries.get(deviceId)?.values() ?? []) if (dl.reminderId === reminderId && dl.status === "pending") { dl.status = "cancelled"; dl.lastError = why; }
+      };
+      for (const id of deleted) { b.delete(id); cancelPending(id, "reminder_deleted"); }
       for (const r of incoming) {
         if (deleted.includes(r.id)) continue;
         const cur = b.get(r.id);
-        if (!cur || r.rev > cur.r.rev) b.set(r.id, { r: clone(r), alertAt: alertAt(r) });
+        // newer revision wins; on an EQUAL revision with different content the client (the user's explicit action) wins over the
+        // server's own schedule advance, otherwise a pause/complete made while the dispatcher fired would be silently lost
+        if (!cur || r.rev > cur.r.rev || (r.rev === cur.r.rev && stable(r) !== stable(cur.r))) {
+          b.set(r.id, { r: clone(r), alertAt: alertAt(r) });
+          if (r.status === "completed" || r.status === "paused") cancelPending(r.id, `reminder_${r.status}`);
+        }
       }
       const d = devices.get(deviceId); if (d) d.lastSeenAt = now;
       return [...b.values()].map((x) => clone(x.r));

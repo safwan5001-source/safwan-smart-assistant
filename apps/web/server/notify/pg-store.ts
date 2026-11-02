@@ -94,15 +94,22 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
       const c = await pool.connect();
       try {
         await c.query("BEGIN");
-        if (deleted.length) await c.query("DELETE FROM notify.reminders WHERE device_id = $1 AND id = ANY($2::text[])", [deviceId, deleted]);
+        const cancelPending = (ids: string[], why: string) => c.query(
+          "UPDATE notify.deliveries SET status = 'cancelled', last_error = $3 WHERE device_id = $1 AND reminder_id = ANY($2::text[]) AND status = 'pending'", [deviceId, ids, why]);
+        if (deleted.length) {
+          await c.query("DELETE FROM notify.reminders WHERE device_id = $1 AND id = ANY($2::text[])", [deviceId, deleted]);
+          await cancelPending(deleted, "reminder_deleted"); // a retry queued before the delete must never fire afterwards
+        }
         for (const r of incoming) {
           if (deleted.includes(r.id)) continue;
-          // last-writer-wins: only replace when the incoming revision is strictly newer
-          await c.query(
+          // newer revision wins; on an EQUAL revision with different content the client (the user's explicit action) wins over the
+          // server's own schedule advance, otherwise a pause/complete made while the dispatcher fired would be silently lost
+          const up = await c.query(
             `INSERT INTO notify.reminders (device_id, id, rev, alert_at, body) VALUES ($1,$2,$3,$4,$5)
              ON CONFLICT (device_id, id) DO UPDATE SET rev = EXCLUDED.rev, alert_at = EXCLUDED.alert_at, body = EXCLUDED.body
-             WHERE EXCLUDED.rev > notify.reminders.rev`,
+             WHERE EXCLUDED.rev > notify.reminders.rev OR (EXCLUDED.rev = notify.reminders.rev AND EXCLUDED.body IS DISTINCT FROM notify.reminders.body)`,
             [deviceId, r.id, r.rev, alertAt(r), JSON.stringify(r)]);
+          if (up.rowCount && (r.status === "completed" || r.status === "paused")) await cancelPending([r.id], `reminder_${r.status}`);
         }
         await c.query("UPDATE notify.devices SET last_seen_at = $2 WHERE id = $1", [deviceId, now]);
         const res = await c.query("SELECT body FROM notify.reminders WHERE device_id = $1 ORDER BY id", [deviceId]);

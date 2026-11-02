@@ -197,8 +197,12 @@ async function doSync(): Promise<boolean> {
   if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
   if (!r.ok || !r.json) return false;
   const remote = parseReminders(r.json.reminders);
-  remindersStore.set((local) => mergeReminders(local, remote, tombstonesStore.getSnapshot()));
-  tombstonesStore.set((t) => t.filter((id) => !sentTombs.includes(id)));
+  // Only write when the merge really changed something: store writes notify subscribers, and the runtime re-syncs on every write,
+  // so an unconditional set() would make an idle device ping the server forever.
+  const local = remindersStore.getSnapshot();
+  const merged = mergeReminders(local, remote, tombstonesStore.getSnapshot());
+  if (merged.length !== local.length || merged.some((x, i) => x !== local[i])) remindersStore.set(merged);
+  if (sentTombs.length) tombstonesStore.set((t) => t.filter((id) => !sentTombs.includes(id)));
   return true;
 }
 

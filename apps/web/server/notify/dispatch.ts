@@ -36,6 +36,12 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
     for (const { device, delivery } of await store.dueDeliveries(now, BATCH)) {
       if (!device.subscription) { await store.markDelivery(device.id, delivery.key, { status: "gone", attempts: delivery.attempts }); rep.gone++; continue; }
       if (now > delivery.expiresAt) { await store.markDelivery(device.id, delivery.key, { status: "expired", attempts: delivery.attempts }); rep.expired++; continue; }
+      // quiet hours are evaluated again at SEND time with the device's CURRENT prefs: a retry backing off into the quiet window,
+      // or quiet hours switched on after the push was queued, must not wake the user (explicit test pushes are exempt)
+      if (delivery.kind === "reminder" && shouldHold(now, device.prefs.quiet, device.prefs.tz, delivery.priority)) {
+        await store.markDelivery(device.id, delivery.key, { status: "pending", attempts: delivery.attempts, nextAttemptAt: quietEnd(now, device.prefs.quiet, device.prefs.tz) });
+        rep.held++; continue;
+      }
       const r = await send(device.subscription, delivery.payload, { ttl: ttlOf(delivery.kind), urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
       const attempts = delivery.attempts + 1;
       if (r.status >= 200 && r.status < 300) { await store.markDelivery(device.id, delivery.key, { status: "sent", attempts, sentAt: now }); rep.sent++; }

@@ -11,7 +11,7 @@ export type DeviceRec = {
   createdAt: number;
   lastSeenAt: number;
 };
-export type DeliveryStatus = "pending" | "sent" | "failed" | "gone" | "expired";
+export type DeliveryStatus = "pending" | "sent" | "failed" | "gone" | "expired" | "cancelled";
 export type NewDelivery = {
   key: string; reminderId: string | null; kind: "reminder" | "test"; payload: string; priority: ReminderPriority; createdAt: number; expiresAt: number;
 };
