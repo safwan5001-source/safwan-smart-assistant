@@ -103,7 +103,7 @@ export async function installNetworkGuard(context, page, policy, { onBlock = () 
   await cdp.send("Fetch.enable", { patterns: [{ urlPattern: "*", requestStage: "Response" }] });
 }
 
-export function createBrowse({ sessionCsp = SESSION_CSP, client, projectId, policy, connect = (url) => chromium.connectOverCDP(url, { timeout: 20_000 }), log = console.error }) {
+export function createBrowse({ sessionCsp = SESSION_CSP, sessionOptions = {}, client, projectId, policy, connect = (url) => chromium.connectOverCDP(url, { timeout: 20_000 }), log = console.error }) {
   return async function browse(url, { signal, step, sessionReleased, interactive, sessionSeconds }) {
     let session, browser, creating, gate = null;
 
@@ -126,7 +126,7 @@ export function createBrowse({ sessionCsp = SESSION_CSP, client, projectId, poli
 
     try {
       session = await stage("create_session", "browser_execution_failed", () => (creating = client.createSession({
-        projectId, timeoutSeconds: sessionSeconds ?? 120, userMetadata: { purpose: interactive ? "safwan-browser-chat-interactive" : "safwan-browser-chat" },
+        ...sessionOptions, projectId, timeoutSeconds: sessionSeconds ?? 120, userMetadata: { purpose: interactive ? "safwan-browser-chat-interactive" : "safwan-browser-chat" },
       })));
       let context, page;
       await stage("connect", "browser_execution_failed", async () => {

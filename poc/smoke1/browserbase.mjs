@@ -47,11 +47,14 @@ export function createClient({ apiKey, base = DEFAULT_BASE, fetchImpl = fetch, t
     return res.json();
   };
   return {
-    createSession: ({ projectId, timeoutSeconds = 300, viewport = { width: 1280, height: 800 }, region, userMetadata } = {}) => {
+    // `proxies` (external egress proxy: [{type:"external",server,username,password}]) and `allowedDomains` (top-level navigation allow-list,
+    // documented as experimental) are optional and OFF by default, so existing callers are unchanged.
+    createSession: ({ projectId, timeoutSeconds = 300, viewport = { width: 1280, height: 800 }, region, userMetadata, proxies, allowedDomains } = {}) => {
       if (!(timeoutSeconds >= 60 && timeoutSeconds <= 21600)) throw new Error("timeout must be 60..21600 seconds");
       return call("create session", "POST", "/v1/sessions", {
         ...(projectId ? { projectId } : {}), timeout: timeoutSeconds, keepAlive: false,
-        browserSettings: { viewport }, ...(region ? { region } : {}), ...(userMetadata ? { userMetadata } : {}),
+        browserSettings: { viewport, ...(allowedDomains?.length ? { allowedDomains } : {}) }, ...(proxies?.length ? { proxies } : {}),
+        ...(region ? { region } : {}), ...(userMetadata ? { userMetadata } : {}),
       });
     },
     liveUrls: (id, expiresInSeconds) => {

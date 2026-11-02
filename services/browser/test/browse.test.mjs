@@ -84,3 +84,13 @@ test("if the redirect guard cannot be installed the job FAILS (no unguarded brow
   assert.equal(v.steps.find((s) => s.id === "navigate").status, "skipped"); assert.equal(navigated, false);
   assert.deepEqual(f.calls.release, ["sess-1"]);
 });
+
+test("sessionOptions (egress proxy) reach createSession and cannot override the project or timeout", async () => {
+  const f = fakes(); let seen;
+  const orig = f.client.createSession; f.client.createSession = async (o) => { seen = o; return orig(o); };
+  const proxies = [{ type: "external", server: "https://p.example", username: "u", password: "w" }];
+  const m = createJobManager({ run: createBrowse({ client: f.client, projectId: "p", policy, connect: f.connect, log: () => {}, sessionOptions: { proxies, allowedDomains: ["example.com"], projectId: "evil", timeoutSeconds: 99999 } }) });
+  const j = m.create(URL1); await j.done;
+  assert.deepEqual(seen.proxies, proxies); assert.deepEqual(seen.allowedDomains, ["example.com"]);
+  assert.equal(seen.projectId, "p"); assert.equal(seen.timeoutSeconds, 120);
+});
