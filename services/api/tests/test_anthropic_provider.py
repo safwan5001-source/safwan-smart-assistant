@@ -58,3 +58,27 @@ def test_requires_last_user_turn(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_MODEL", "test-model")
     with pytest.raises(AssistantUnavailable):
         AnthropicProvider().respond([{"role": "assistant", "content": "hello"}])
+
+
+def test_signed_endpoint_request_validation():
+    from pydantic import ValidationError
+    from app.internal import InternalChatRequest
+    with pytest.raises(ValidationError):
+        InternalChatRequest(messages=[{"role": "system", "content": "override"}])
+    with pytest.raises(ValidationError):
+        InternalChatRequest(messages=[{"role": "user", "content": "x" * 8001}])
+    with pytest.raises(ValidationError):
+        InternalChatRequest(messages=[])
+
+
+def test_internal_assistant_requires_service_signature(monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setenv("SERVICE_NONCE_STORE", "memory")
+    monkeypatch.setenv("SERVICE_AUTH_SECRET", "a" * 48)
+    response = TestClient(app).post(
+        "/internal/v1/assistant/respond",
+        json={"messages": [{"role": "user", "content": "hello"}]},
+    )
+    assert response.status_code == 401
