@@ -1,5 +1,6 @@
 import os
 import json
+from contextlib import asynccontextmanager
 from urllib import request as urllib_request
 from urllib.error import HTTPError, URLError
 from typing import Any
@@ -17,11 +18,18 @@ from .integrations import CATALOG, get_integration, resolve_status
 from .internal import router as internal_router
 from .permissions import PermissionMode, Risk, policy_matrix
 from .security import require_auth
+from .service_auth import log_service_auth_config
 from .status import health_payload, integration_summary
 from .tools import execute_tool, registry
 from .tools.builtin import register_builtin
 
-app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION)
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    log_service_auth_config()  # category/booleans only: lets an operator confirm the Sealed variables reached this container
+    yield
+
+
+app = FastAPI(title="Safwan Assistant API", version=SERVICE_VERSION, lifespan=lifespan)
 register_builtin(registry)
 app.include_router(internal_router)
 # Ceilings applied BEFORE any body is buffered (independent review IR-A1). The browser routes take a ~100-byte JSON; the signed
