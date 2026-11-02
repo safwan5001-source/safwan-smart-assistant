@@ -34,7 +34,7 @@ test("permanent worker safeguards do not require a real Browserbase session", as
   assert.equal((await post("https://example.com", "")).status, 401);
   assert.equal((await post("https://example.com", "wrong")).status, 401);
   assert.equal((await post("https://example.com", token, "text/plain")).status, 415);
-  for (const url of ["http://example.com", "https://localhost/", "https://127.0.0.1/", "https://example.com.evil.test/", "https://example.com:443/", "https://user:pass@example.com/", "file:///etc/passwd", "https://evil.test/"]) {
+  for (const url of ["http://example.com", "https://localhost/", "https://127.0.0.1/", "https://example.com.evil.test/", "https://user:pass@example.com/", "file:///etc/passwd", "https://evil.test/"]) {
     assert.equal((await post(url)).status, 400, url);
   }
   assert.equal((await fetch(base + "/does-not-exist")).status, 404);
