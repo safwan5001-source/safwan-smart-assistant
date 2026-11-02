@@ -141,9 +141,9 @@ test("classify: deny is final, buttons need approval, plain navigation and plain
 });
 
 test("fingerprint changes when the element's identity or destination changes", () => {
-  const a = facts({ text: "Save", inForm: true, formAction: "https://lab.example.org/browser-lab/save" });
+  const a = facts({ text: "Save", inForm: true, formAction: "https://lab.example.org/browser-lab/save", formTarget: "https://lab.example.org/browser-lab/save?record=A" });
   assert.equal(fingerprint(a), fingerprint({ ...a }));
-  for (const patch of [{ text: "Save all" }, { formAction: "https://lab.example.org/browser-lab/other" }, { formMethod: "get" }, { id: "x" }, { type: "submit" }, { href: "https://lab.example.org/browser-lab/x" }]) {
+  for (const patch of [{ text: "Save all" }, { formAction: "https://lab.example.org/browser-lab/other" }, { formMethod: "get" }, { formTarget: "https://lab.example.org/browser-lab/save?record=B" }, { id: "x" }, { type: "submit" }, { href: "https://lab.example.org/browser-lab/x" }]) {
     assert.notEqual(fingerprint({ ...a, ...patch }), fingerprint(a), JSON.stringify(patch));
   }
 });

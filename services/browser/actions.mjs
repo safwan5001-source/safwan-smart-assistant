@@ -115,7 +115,7 @@ export const looksLikeCardNumber = (text) => {
 
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
-  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler,
+  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler,
 ])).digest("hex").slice(0, 16);
 
 /**

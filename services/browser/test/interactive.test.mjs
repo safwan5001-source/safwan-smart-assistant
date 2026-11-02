@@ -42,6 +42,8 @@ const PAGES = {
     <label><input type="checkbox" id="auto" onchange="echo.textContent='autosaved'"> Autosave</label>
     <a href="/browser-lab/page2.html?q=${"A".repeat(400)}">Long query link</a>
     <button type="button" aria-label="Neutral"><img alt="Delete account" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button>
+    <form id="qf" action="/browser-lab/submit?record=A" method="post"><button type="submit">Update record</button></form>
+    <script>setInterval(async()=>{try{if((await (await fetch('/browser-lab/flip')).text())==='1')document.getElementById('qf').setAttribute('action','/browser-lab/submit?record=B')}catch(e){}},100)</script>
     <button type="button">Pay now</button>
     <button type="button" id="dlg" onclick="alert('hi');document.getElementById('echo').textContent+=' dialog-done'">Show dialog</button>
     <button type="button" id="leave" onclick="location.href='https://evil.test/js-nav'">Go away</button>
@@ -296,6 +298,21 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);
     const r = await until(v.id, (x) => !x.pending && settled(x), "after switch");
     assert.deepEqual([lastAction(r).status, lastAction(r).error], ["rejected", "element_changed"]);
+    flip = false;
+    await stopAndCheck(v.id);
+  });
+
+  await t.test("approval is bound to the COMPLETE destination: changing only the query while waiting refuses the step", async () => {
+    hits = [];
+    const v = await start();
+    await act(v.id, { tool: "click", target: role("button", "Update record") });
+    const w = await until(v.id, (x) => x.pending, "pending query form");
+    assert.equal(w.pending.submitsTo, "https://lab.test/browser-lab/submit", "the view shows origin + path only");
+    flip = true; await tick(500);
+    await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);
+    const r = await until(v.id, (x) => !x.pending && settled(x), "after query swap");
+    assert.deepEqual([lastAction(r).status, lastAction(r).error], ["rejected", "element_changed"]);
+    assert.equal(hits.some((h) => h.method === "POST"), false);
     flip = false;
     await stopAndCheck(v.id);
   });

@@ -18,6 +18,8 @@ const BASE = "/internal/v1/browser/tasks";
 const MAX_BODY = 2048;
 const CONFLICTS = new Set(["action_in_progress", "limit_reached", "not_ready", "session_ended", "not_interactive", "no_pending_approval", "busy"]);
 const MAX_JPEG = 260_000;
+/** A bounded interactive view (4000-char excerpt + 20 actions, multibyte, JSON-escaped by the API) can exceed backend.ts's 64 KB default. */
+const VIEW_MAX = 160_000;
 
 export type Deps = { env: Env; callBackend: typeof realCallBackend; now: () => number };
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
@@ -153,17 +155,17 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
         if (!scopes.length) return err("interactive_disabled", 503);       // no lab scope here: interactive control is OFF
         const url = body.url === undefined ? sessionStartUrl(scopes) : body.url;
         if (!sessionTargetOk(url, scopes)) return err("url_not_allowed", 400);
-        return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url, mode: "interactive" }, timeoutMs: 12_000, env: deps.env }), 202, scopes);
+        return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url, mode: "interactive" }, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202, scopes);
       }
       if (body.mode !== undefined) return err("bad_request", 400);
       if (!isAllowedBrowserUrl(body.url)) return err("url_not_allowed", 400);
-      return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url: body.url }, timeoutMs: 12_000, env: deps.env }), 202);
+      return taskReply(await deps.callBackend({ path: BASE, method: "POST", body: { url: body.url }, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202);
     }
     if (path[0] === "tasks" && id !== undefined) {
       if (!isTaskId(id)) return err("not_found", 404);
       if (route === `GET /tasks/${id}`) {
         if (!limiters.poll("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}`, timeoutMs: 6_000, env: deps.env }), 200, scopes);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}`, timeoutMs: 6_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       // ── interactive control: every route below needs the owner cookie, a same-origin write, a rate limit and a configured scope ──
       if (route === `POST /tasks/${id}/actions`) {
@@ -174,7 +176,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
         const action = parseActionRequest(raw, (u) => sessionTargetOk(u, scopes));
         if (!action) return err((raw as { tool?: unknown } | undefined)?.tool === "navigate" ? "url_not_allowed" : "bad_request", 400);
         // Rebuilt from validated fields; the typed text goes on to the worker and is never logged or echoed by this tier.
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions`, method: "POST", body: action, timeoutMs: 12_000, env: deps.env }), 202, scopes);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions`, method: "POST", body: action, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 202, scopes);
       }
       const decision = /^(approve|reject)$/.exec(path[4] ?? "");
       if (path[2] === "actions" && decision && path.length === 5 && method === "POST") {
@@ -183,18 +185,18 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
         const seq = stepNumber(path[3]);
         if (seq === null) return err("not_found", 404);
         if (!limiters.decide("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions/${seq}/${decision[1]}`, method: "POST", body: {}, timeoutMs: 12_000, env: deps.env }), 200, scopes);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions/${seq}/${decision[1]}`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       if (route === `POST /tasks/${id}/finish`) {
         if (!sameOrigin(req)) return err("forbidden", 403);
         if (!scopes.length) return err("interactive_disabled", 503);
         if (!limiters.cancel("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/finish`, method: "POST", body: {}, timeoutMs: 12_000, env: deps.env }), 200, scopes);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/finish`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       if (route === `POST /tasks/${id}/cancel`) {
         if (!sameOrigin(req)) return err("forbidden", 403);
         if (!limiters.cancel("owner", now)) return err("rate_limited", 429);
-        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/cancel`, method: "POST", body: {}, timeoutMs: 12_000, env: deps.env }), 200, scopes);
+        return taskReply(await deps.callBackend({ path: `${BASE}/${id}/cancel`, method: "POST", body: {}, timeoutMs: 12_000, maxBytes: VIEW_MAX, env: deps.env }), 200, scopes);
       }
       if (route === `GET /tasks/${id}/screenshot`) {
         if (!limiters.poll("owner", now)) return err("rate_limited", 429);

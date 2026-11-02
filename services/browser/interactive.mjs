@@ -18,10 +18,10 @@ const FACTS = (el) => {
   const type = tag === "input" || tag === "button" ? str(el.type).toLowerCase() : "";
   const buttonLike = tag === "button" || (tag === "input" && ["submit", "image", "button", "reset"].includes(type));
   const isSubmit = (tag === "input" && (type === "submit" || type === "image")) || (tag === "button" && type === "submit" && !!form) || el.hasAttribute("formaction");
-  let formAction = "";
+  let formAction = "", formTarget = "";
   // The EFFECTIVE destination: a submitter's own `formaction` overrides the form's `action`. It is what the approval shows and what the fingerprint binds.
   if (form || el.hasAttribute("formaction")) {
-    try { const u = new URL(str(el.getAttribute("formaction")) || str(form && form.getAttribute("action")) || location.href, location.href); formAction = u.origin + u.pathname; } catch { formAction = "?"; }
+    try { const u = new URL(str(el.getAttribute("formaction")) || str(form && form.getAttribute("action")) || location.href, location.href); formAction = u.origin + u.pathname; formTarget = u.href.slice(0, 400); } catch { formAction = "?"; formTarget = "?"; }
   }
   const byId = (ids) => String(ids ?? "").split(/\s+/).filter(Boolean).slice(0, 5).map((i) => { const n = document.getElementById(i); return n ? cut(n.textContent, 80) : ""; }).join(" ");
   const alts = [...el.querySelectorAll("img[alt],svg title,[aria-label]")].slice(0, 5).map((n) => cut(n.getAttribute("alt") || n.getAttribute("aria-label") || n.textContent, 60)).join(" ");
@@ -33,7 +33,7 @@ const FACTS = (el) => {
     labelText: labels, autocomplete: cut(el.getAttribute("autocomplete"), 40), fieldName: cut(el.getAttribute("name"), 80),
     href: tag === "a" ? str(el.href) : "", hasDownload: el.hasAttribute("download"),
     readOnly: el.readOnly === true, contentEditable: el.isContentEditable === true,
-    inForm: !!form, formAction: cut(formAction, 160), isSubmit, formMethod: cut(el.getAttribute("formmethod") || (form && form.getAttribute("method")), 10).toLowerCase(),
+    inForm: !!form, formAction: cut(formAction, 160), formTarget, isSubmit, formMethod: cut(el.getAttribute("formmethod") || (form && form.getAttribute("method")), 10).toLowerCase(),
     hasHandler: [...el.attributes].some((a) => /^on/i.test(a.name)),
     hasDisclosureAttr: el.hasAttribute("aria-expanded") || el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-controls"),
   };

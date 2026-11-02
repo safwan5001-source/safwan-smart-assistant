@@ -96,7 +96,7 @@ STEP_STATUSES = {"pending", "running", "done", "failed", "skipped"}
 JOB_STATUSES = {"running", "cancelling", "succeeded", "failed", "cancelled"}
 ERROR_CODES = {"timeout", "navigation_failed", "disallowed_final_url", "screenshot_too_large", "browser_execution_failed"}
 
-MAX_JOB_JSON = 16_384
+MAX_JOB_JSON = 65_536  # bounded worst case of an interactive view (4000-char excerpt + 20 actions of multibyte text) is ~20 KB; leave headroom
 MAX_SCREENSHOT = 260_000
 
 

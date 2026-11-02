@@ -358,6 +358,17 @@ def test_an_interactive_job_is_refused_when_we_never_authorized_interactive_cont
     assert view(client, worker, ijob(url="https://example.com/", result=None)).status_code == 502
 
 
+def test_the_largest_legal_interactive_view_fits_the_bridge_limit(client, worker):
+    cjk = "漢" * 80
+    acts = [{"seq": i, "tool": "click", "status": "failed", "summary": "نقر على زر «" + cjk + "»" + "漢" * 200, "error": "element_not_found"} for i in range(1, 21)]
+    big = ijob(actions=acts, result={"title": "漢" * 200, "url": LAB, "excerpt": "漢" * 4000, "hasScreenshot": True, "version": 9})
+    body = json.dumps({"job": big}, ensure_ascii=False).encode()
+    assert len(body) > 16_384, "this is the case the old limit broke"
+    worker.reply = Resp(body, 200)
+    r = call(client, "GET", f"{BASE}/{TASK}")
+    assert r.status_code == 200 and len(r.json()["task"]["actions"]) == 20
+
+
 def test_unknown_error_codes_collapse_to_fixed_vocabulary(client, worker):
     t = view(client, worker, ijob(actions=actions(1, status="failed", error="Traceback: /srv/secret/app.py"))).json()["task"]
     assert t["actions"][0]["error"] == "action_failed"
