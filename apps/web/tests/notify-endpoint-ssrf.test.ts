@@ -65,4 +65,22 @@ describe("push endpoint allow-list vs the parser web-push really uses", () => {
     }
     expect(approved).toBeGreaterThan(0); // the canonical cases inside the fuzz set are still approved: the loop is not vacuous
   });
+
+  it("rejects hostnames the legacy parser blanks or truncates (> 253 chars, labels > 63 or empty)", () => {
+    // url.parse(...).hostname is "" for hosts of 256+ chars, and web-push then connects to localhost:443 (re-review IR-R3).
+    const label = "a".repeat(60);
+    for (const len of [253, 254, 255, 256, 257, 300, 500]) {
+      const host = (label + ".").repeat(Math.ceil(len / 61)).slice(0, len - ".f.push.apple.com".length).replace(/\.$/, "a") + ".f.push.apple.com";
+      const raw = `https://${host}/x`;
+      if (host.length > 253) expect(isAllowedEndpoint(raw, policy), `len ${host.length}`).toBe(false);
+      const whatwg = new URL(raw).hostname.toLowerCase();
+      if (isAllowedEndpoint(raw, policy)) expect((legacyParse(raw).hostname ?? "").toLowerCase(), `len ${host.length}`).toBe(whatwg);
+    }
+    for (const bad of [
+      `https://${"b".repeat(64)}.push.apple.com/x`,   // label of 64
+      "https://a..push.apple.com/x",                  // empty label
+      "https://.push.apple.com/x",                    // leading dot
+      "https://x.push.apple.com./x",                  // trailing dot (FQDN form)
+    ]) expect(isAllowedEndpoint(bad, policy), bad).toBe(false);
+  });
 });

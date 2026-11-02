@@ -36,7 +36,8 @@ SELECT r.rolsuper OR r.rolbypassrls OR r.rolcreaterole OR r.rolcreatedb OR r.rol
                    WHERE g.oid <> r.oid AND g.rolname <> 'safwan_app' AND pg_has_role(current_user, g.oid, 'MEMBER'))
        -- the login must not be able to create objects (a place to plant functions/tables) in the database or in `public`
        OR has_database_privilege(current_user, current_database(), 'CREATE')
-       OR has_schema_privilege(current_user, 'public', 'CREATE')
+       OR EXISTS (SELECT 1 FROM pg_namespace n
+                   WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND has_schema_privilege(current_user, n.oid, 'CREATE'))
   FROM pg_roles r WHERE r.rolname = current_user
 """
 

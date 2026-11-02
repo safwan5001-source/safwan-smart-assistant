@@ -116,6 +116,44 @@ def test_the_limit_stops_reading_the_stream_instead_of_buffering_it():
     assert len(chunks) > 100, "the middleware kept pulling the oversized stream"
 
 
+def test_the_cap_still_applies_when_the_server_runs_under_a_root_path():
+    """uvicorn --root-path /api puts the prefix into scope["path"] while Starlette's router strips it (re-review IR-R1)."""
+    from app.body_limit import BodyLimitMiddleware
+
+    reached = []
+
+    async def inner(scope, receive, send):
+        reached.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    sent: list[dict] = []
+
+    async def send(m):
+        sent.append(m)
+
+    async def receive():
+        return {"type": "http.request", "body": b"x" * 6000, "more_body": False}
+
+    mw = BodyLimitMiddleware(inner, limits=[("/internal/browser/", 4096)])
+    scope = {"type": "http", "method": "POST", "path": "/api/internal/browser/read", "root_path": "/api",
+             "headers": [(b"content-length", b"6000")]}
+    asyncio.run(mw(scope, receive, send))
+    assert sent[0]["status"] == 413 and reached == []
+
+
+# --- IR-R2: an oversize chunked body to the signed prefix must be a clean 413, not an unhandled ClientDisconnect traceback
+def test_oversize_chunked_body_to_the_signed_prefix_is_a_clean_413(monkeypatch):
+    def chunks():
+        for _ in range(40):  # 2.5 MiB, no Content-Length
+            yield b"x" * 65536
+
+    ts, nonce = int(time.time()), "q" * 24
+    headers = {"x-svc-ts": str(ts), "x-svc-nonce": nonce, "x-svc-sig": "0" * 64}
+    r = TestClient(app, raise_server_exceptions=True).request("GET", "/internal/v1/ping", content=chunks(), headers=headers)
+    assert r.status_code == 413 and r.json() == {"detail": {"code": "payload_too_large"}}
+
+
 def test_the_signed_prefix_has_its_own_cap(client):
     r = client.post("/internal/v1/ping", content=b"x" * (sa.MAX_BODY_BYTES + 1))
     assert r.status_code == 413
@@ -204,6 +242,34 @@ def test_production_guard_refuses_roles_that_can_escalate(pg_dsn, grants):
             connect_runtime(dsn, production=True)
     finally:
         _drop(pg_dsn, name)
+
+
+def test_production_guard_refuses_membership_in_a_custom_role_named_like_ours(pg_dsn):
+    extra = "safwan_rev_extra_" + secrets.token_hex(3)  # starts with "safwan" on purpose: only the exact name safwan_app is allowed
+    with psycopg.connect(pg_dsn, autocommit=True) as c:
+        c.execute(f"CREATE ROLE {extra} NOLOGIN")
+    name, dsn = _login(pg_dsn, [f"GRANT {extra} TO " + "{r}"])
+    try:
+        with pytest.raises(OverPrivilegedRole):
+            connect_runtime(dsn, production=True)
+    finally:
+        _drop(pg_dsn, name)
+        with psycopg.connect(pg_dsn, autocommit=True) as c:
+            c.execute(f"DROP ROLE IF EXISTS {extra}")
+
+
+def test_production_guard_refuses_create_on_any_schema(pg_dsn):
+    schema = "rev_s_" + secrets.token_hex(3)
+    with psycopg.connect(pg_dsn, autocommit=True) as c:
+        c.execute(f"CREATE SCHEMA {schema}")
+    name, dsn = _login(pg_dsn, [f"GRANT CREATE ON SCHEMA {schema} TO " + "{r}"])
+    try:
+        with pytest.raises(OverPrivilegedRole):
+            connect_runtime(dsn, production=True)
+    finally:
+        _drop(pg_dsn, name)
+        with psycopg.connect(pg_dsn, autocommit=True) as c:
+            c.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
 
 
 def test_guard_catches_ownership_reachable_only_through_SET(pg_dsn):

@@ -23,6 +23,9 @@ export function isAllowedEndpoint(raw: string, policy: EndpointPolicy): boolean 
   let u: URL;
   try { u = new URL(raw); } catch { return false; }
   if (u.hostname.toLowerCase() !== authority.toLowerCase().replace(/:\d*$/, "")) return false;
+  // WHATWG has no limit on host length but legacy url.parse (what web-push uses) blanks a host of 256+ chars, and web-push then
+  // connects to localhost:443 (re-review IR-R3). Valid DNS only: <= 253 chars, labels of 1-63 chars, no empty label / trailing dot.
+  if (u.hostname.length > 253 || u.hostname.split(".").some((l) => l.length < 1 || l.length > 63)) return false;
   if (u.username || u.password || u.hash) return false;
   const host = u.hostname.toLowerCase();
   if (u.protocol === "https:" && u.port === "" || (u.protocol === "https:" && u.port === "443")) {

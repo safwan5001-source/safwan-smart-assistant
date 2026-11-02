@@ -36,8 +36,19 @@ class BodyLimitMiddleware:
                 return cap
         return None
 
+    def _cap_for(self, scope) -> int | None:
+        """Cap for this request. Under `uvicorn --root-path /api` the server puts the prefix INTO scope["path"] while Starlette's router
+        strips it before matching, so the path is tried both as given and with root_path removed; the stricter cap wins (re-review IR-R1)."""
+        path = scope.get("path", "")
+        candidates = [path]
+        root = scope.get("root_path") or ""
+        if root and path.startswith(root):
+            candidates.append(path[len(root):])
+        caps = [c for c in (self._limit_for(p) for p in candidates) if c is not None]
+        return min(caps) if caps else None
+
     async def __call__(self, scope, receive, send):
-        cap = self._limit_for(scope.get("path", "")) if scope["type"] == "http" else None
+        cap = self._cap_for(scope) if scope["type"] == "http" else None
         if cap is None:
             await self.app(scope, receive, send)
             return
@@ -79,4 +90,11 @@ class BodyLimitMiddleware:
                 started = True
             await send(message)
 
-        await self.app(scope, limited_receive, guarded_send)
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            # After we rejected, the application sees a client disconnect and may raise (e.g. starlette ClientDisconnect out of a
+            # dependency that was reading the body). The client already has its 413; do not turn it into a traceback per request
+            # (re-review IR-R2: unauthenticated log amplification). Anything raised when we did NOT reject propagates unchanged.
+            if not rejected:
+                raise
