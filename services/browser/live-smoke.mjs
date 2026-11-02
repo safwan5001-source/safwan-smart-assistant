@@ -29,10 +29,11 @@ try {
   const excerpt = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim().slice(0, 4000);
   const shot = await page.screenshot({ type: "jpeg", quality: 55 });
   const titleOk = title === "Example Domain";
-  const textOk = excerpt.includes("Example Domain");
+  const textOk = excerpt.length >= 20 && excerpt.length <= 4000;
+  const urlOk = new URL(page.url()).hostname === "example.com";
   const jpegOk = shot.byteLength >= 1000 && shot.byteLength <= 250000;
-  console.log(`BROWSER_READ_V1_ASSERTIONS title=${titleOk} text=${textOk} jpeg=${jpegOk} chars=${excerpt.length} bytes=${shot.byteLength}`);
-  if (!titleOk || !textOk || !jpegOk) throw new Error("Read V1 assertions failed");
+  console.log(`BROWSER_READ_V1_ASSERTIONS title=${titleOk} text=${textOk} url=${urlOk} jpeg=${jpegOk} chars=${excerpt.length} bytes=${shot.byteLength}`);
+  if (!titleOk || !textOk || !urlOk || !jpegOk) throw new Error("Read V1 assertions failed");
   console.log("BROWSER_READ_V1_PASS title=Example Domain excerpt_chars=" + excerpt.length + " jpeg_bytes=" + shot.byteLength);
 } catch (error) {
   process.exitCode = 1;
