@@ -16,6 +16,9 @@ const ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{
 
 export function createApp({ token, policy, client, projectId, connect, log = console.error, deadlineMs, ttlMs }) {
   if (!token || token.length < 32) throw new Error("BROWSER_SERVICE_TOKEN must be 32+ characters");
+  // Visible ASCII only (no whitespace/newline): a stray trailing newline in the Railway variable can never match an Authorization header
+  // (Node trims header values) and makes the API's http.client refuse to send it at all. Refuse to start rather than fail silently.
+  if (!/^[\x21-\x7e]+$/.test(token)) throw new Error("BROWSER_SERVICE_TOKEN must be visible ASCII only (no spaces, newlines or non-ASCII characters)");
   const expected = Buffer.from(token);
   const manager = createJobManager({ run: createBrowse({ client, projectId, policy, connect, log }), deadlineMs, ttlMs });
 

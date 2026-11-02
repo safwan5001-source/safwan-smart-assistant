@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import socket
 import unicodedata
 from typing import Any
 from urllib import request as urllib_request
@@ -130,12 +131,46 @@ def clean_job(raw: Any) -> dict[str, Any]:
     return out
 
 
+_UUID_IN_PATH = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+def _fail(reason: str, method: str, path: str, status: int | None = None) -> HTTPException:
+    """The single place a worker-bridge failure becomes a 502. The client still gets one generic code, but the *class* of failure is
+    logged (fixed vocabulary, route shape only): never the exception text, URL, token, headers or page content.
+
+      worker_unconfigured  token/URL unusable, nothing sent       -> 503 (not here)
+      invalid_request      urllib refused to build the request    (nothing reached the network)
+      dns_failed / connect_failed / timeout                       (internal-network failure)
+      worker_unauthorized  worker answered 401/403                (BROWSER_SERVICE_TOKEN differs between the two services)
+      worker_rejected      worker answered with another unexpected status
+      oversized            worker body over the bound
+      invalid_job_view     worker body failed clean_job           (Browserbase failures never land here: they arrive as a *valid* failed job)
+    """
+    op = f"{method} {_UUID_IN_PATH.sub(':id', path)}"
+    log.error("browser worker call failed reason=%s op=%s status=%s", reason, op, status if status is not None else "-")
+    return HTTPException(status_code=502, detail={"code": "browser_unavailable"})
+
+
+def _network_reason(exc: BaseException) -> str:
+    inner = exc.reason if isinstance(exc, URLError) else exc
+    if isinstance(exc, TimeoutError) or isinstance(inner, TimeoutError):
+        return "timeout"
+    if isinstance(inner, socket.gaierror):
+        return "dns_failed"
+    if isinstance(exc, ValueError):  # includes UnicodeEncodeError from a header value
+        return "invalid_request"
+    return "connect_failed"
+
+
 def _call_worker(method: str, path: str, body: dict[str, Any] | None, *, timeout: float, max_bytes: int) -> tuple[int, bytes]:
     """Returns (status, body). Raises HTTPException(503) when unconfigured and (502) when the worker is unreachable/misbehaving."""
     settings = get_settings()
     base = _worker_base(settings)
     token = os.environ.get("BROWSER_SERVICE_TOKEN", "")
-    if base is None or len(token) < browser_token.MIN_TOKEN_CHARS or browser_token.collides_with_service_secret(token):
+    if base is None or len(token) < browser_token.MIN_TOKEN_CHARS or not browser_token.header_safe(token) \
+            or browser_token.collides_with_service_secret(token):
+        log.error("browser worker not configured reason=worker_unconfigured url_ok=%s token_len_ok=%s token_header_safe=%s",
+                  base is not None, len(token) >= browser_token.MIN_TOKEN_CHARS, browser_token.header_safe(token))
         raise HTTPException(status_code=503, detail={"code": "browser_unconfigured"})
     data = json.dumps(body).encode("utf-8") if body is not None else None
     headers = {"Authorization": "Bearer " + token}
@@ -147,14 +182,14 @@ def _call_worker(method: str, path: str, body: dict[str, Any] | None, *, timeout
             status, raw = resp.status, resp.read(max_bytes + 1)
     except HTTPError as exc:
         status, raw = exc.code, exc.read(max_bytes + 1) if exc.fp else b""
-    except (URLError, TimeoutError, OSError, ValueError):
-        raise HTTPException(status_code=502, detail={"code": "browser_unavailable"}) from None
+    except (URLError, TimeoutError, OSError, ValueError) as exc:
+        raise _fail(_network_reason(exc), method, path) from None
     if len(raw) > max_bytes:
-        raise HTTPException(status_code=502, detail={"code": "browser_unavailable"})
+        raise _fail("oversized", method, path, status)
     return status, raw
 
 
-def _job_from(status: int, raw: bytes, ok: tuple[int, ...]) -> dict[str, Any]:
+def _job_from(status: int, raw: bytes, ok: tuple[int, ...], method: str, path: str) -> dict[str, Any]:
     if status == 404:
         raise HTTPException(status_code=404, detail={"code": "not_found"})
     if status == 429:
@@ -162,12 +197,11 @@ def _job_from(status: int, raw: bytes, ok: tuple[int, ...]) -> dict[str, Any]:
     if status == 400:
         raise HTTPException(status_code=400, detail={"code": "url_not_allowed"})
     if status not in ok:
-        raise HTTPException(status_code=502, detail={"code": "browser_unavailable"})
+        raise _fail("worker_unauthorized" if status in (401, 403) else "worker_rejected", method, path, status)
     try:
         return {"task": clean_job(json.loads(raw).get("job"))}
     except (ValueError, TypeError, AttributeError):
-        log.error("browser worker returned an invalid job view")
-        raise HTTPException(status_code=502, detail={"code": "browser_unavailable"}) from None
+        raise _fail("invalid_job_view", method, path, status) from None
 
 
 def _require_enabled() -> None:
@@ -189,7 +223,7 @@ def create_task(payload: NewTask, _: ServiceCall = Depends(require_service_call)
     _require_enabled()
     url = validate_url(payload.url)
     status, raw = _call_worker("POST", "/v1/jobs", {"url": url}, timeout=10, max_bytes=MAX_JOB_JSON)
-    result = _job_from(status, raw, ok=(202,))
+    result = _job_from(status, raw, (202,), "POST", "/v1/jobs")
     audit_log.record("browser.task.create", actor="bff", host=ALLOWED_HOSTS[0], task=result["task"]["id"], status="started")
     return result
 
@@ -197,15 +231,17 @@ def create_task(payload: NewTask, _: ServiceCall = Depends(require_service_call)
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, _: ServiceCall = Depends(require_service_call)) -> dict[str, Any]:
     _require_enabled()
-    status, raw = _call_worker("GET", f"/v1/jobs/{_task_id(task_id)}", None, timeout=5, max_bytes=MAX_JOB_JSON)
-    return _job_from(status, raw, ok=(200,))
+    path = f"/v1/jobs/{_task_id(task_id)}"
+    status, raw = _call_worker("GET", path, None, timeout=5, max_bytes=MAX_JOB_JSON)
+    return _job_from(status, raw, (200,), "GET", path)
 
 
 @router.post("/tasks/{task_id}/cancel")
 def cancel_task(task_id: str, _: ServiceCall = Depends(require_service_call)) -> dict[str, Any]:
     _require_enabled()
-    status, raw = _call_worker("POST", f"/v1/jobs/{_task_id(task_id)}/cancel", None, timeout=10, max_bytes=MAX_JOB_JSON)
-    result = _job_from(status, raw, ok=(200,))
+    path = f"/v1/jobs/{_task_id(task_id)}/cancel"
+    status, raw = _call_worker("POST", path, None, timeout=10, max_bytes=MAX_JOB_JSON)
+    result = _job_from(status, raw, (200,), "POST", path)
     audit_log.record("browser.task.cancel", actor="bff", task=result["task"]["id"], status=result["task"]["status"])
     return result
 
@@ -217,5 +253,6 @@ def task_screenshot(task_id: str, _: ServiceCall = Depends(require_service_call)
     if status == 404:
         raise HTTPException(status_code=404, detail={"code": "not_found"})
     if status != 200 or not raw.startswith(b"\xff\xd8\xff"):  # a JPEG, nothing else (no HTML/SVG that could execute when displayed)
-        raise HTTPException(status_code=502, detail={"code": "browser_unavailable"})
+        raise _fail("worker_unauthorized" if status in (401, 403) else "worker_rejected" if status != 200 else "invalid_screenshot",
+                    "GET", "/v1/jobs/:id/screenshot", status)
     return {"mimeType": "image/jpeg", "base64": base64.b64encode(raw).decode("ascii")}
