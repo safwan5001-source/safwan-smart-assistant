@@ -1,0 +1,30 @@
+[
+  {
+    "id": "notification-soft",
+    "file": "/sounds/notification-soft.mp3",
+    "durationMs": 1149,
+    "bytes": 9403,
+    "sha256": "be9545bf8e78c34753acda03fc261d78cfd54e9b732319107aa187d7b91f0e1f"
+  },
+  {
+    "id": "reminder-bell",
+    "file": "/sounds/reminder-bell.mp3",
+    "durationMs": 2168,
+    "bytes": 17553,
+    "sha256": "c742ab0ae7bcdc4c51fb9b991ee9ec87b8f96b083d55cef63c66119a28fed2af"
+  },
+  {
+    "id": "critical-alert",
+    "file": "/sounds/critical-alert.mp3",
+    "durationMs": 1384,
+    "bytes": 11283,
+    "sha256": "dd6716aa01d4c997b3add3c8e4f3b6485f3457968a3b61d234d8c861a30d3eea"
+  },
+  {
+    "id": "success-tone",
+    "file": "/sounds/success-tone.mp3",
+    "durationMs": 705,
+    "bytes": 5850,
+    "sha256": "5c6bc8d3ba92b516170f7401e2f1867aaffcb9dee93e4561564066525cf2596f"
+  }
+]

@@ -31,6 +31,7 @@ pnpm check                         # typecheck + lint + vitest + build + pytest
 ## الوثائق
 - [المعمارية](docs/ARCHITECTURE.md) · [خطة التنفيذ والقبول](docs/IMPLEMENTATION.md)
 - [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
+- [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md)
 
 ## مبادئ معتمدة
 - مستخدم واحد؛ منفصل عن أَوْج. دفترة سيناريو اختبار أول لا نطاق المشروع.

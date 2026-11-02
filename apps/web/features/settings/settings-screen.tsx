@@ -11,6 +11,7 @@ import { MODE_LABEL } from "@/lib/permissions";
 import { runCommand } from "@/lib/commands";
 import { listFiles } from "@/lib/files-db";
 import { formatSize } from "@/lib/format";
+import NotificationSettings from "./notification-settings";
 
 const THEMES: { id: Theme; label: string; icon: IconName }[] = [{ id: "system", label: "تلقائي", icon: "auto" }, { id: "light", label: "فاتح", icon: "sun" }, { id: "dark", label: "داكن", icon: "moon" }];
 
@@ -33,7 +34,7 @@ export default function SettingsScreen() {
     if (!ok) return;
     const res = await runCommand("data.erase_all", {}, { approved: true });
     if (res.status !== "executed") toast("تعذر المسح", "error");
-    else if (res.data.filesCleared) { setFiles({ count: 0, bytes: 0 }); toast("تم مسح البيانات المحلية"); }
+    else if (res.data.filesCleared) { setFiles({ count: 0, bytes: 0 }); toast(res.data.serverErased ? "تم مسح البيانات المحلية وبيانات الإشعارات على الخادم" : "تم مسح البيانات المحلية، لكن تعذر الوصول إلى خادم الإشعارات لحذف نسخته. أعد المحاولة لاحقاً.", res.data.serverErased ? "ok" : "error"); }
     else toast("مُسحت المهام والمحادثات، لكن تعذر الوصول إلى مكتبة الملفات فلم تُحذف.", "error");
   };
 
@@ -50,6 +51,7 @@ export default function SettingsScreen() {
           <label className="switch"><input type="checkbox" role="switch" checked={compact} onChange={(e) => compactStore.set(e.target.checked)} aria-label="عرض مدمج" /></label></div>
       </section>
 
+      <NotificationSettings />
       <section className="card card-pad stack" aria-labelledby="perm-h">
         <div><h2 id="perm-h">نمط المهام الافتراضي</h2><p className="muted" style={{ fontSize: 14 }}>يحدد كيف يبدأ المساعد المهام الجديدة عند تفعيله. لا يمنح أي تصريح مسبق بتنفيذ عمليات مالية أو حساسة؛ هذه تطلب موافقة خاصة دائماً.</p></div>
         <div className="seg" role="group" aria-label="نمط المهام الافتراضي">

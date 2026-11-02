@@ -5,6 +5,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import Icon from "./icon";
 import { LogoTile } from "./ui";
 import SearchDialog from "./search-dialog";
+import NotificationBell from "./notification-bell";
 import { NAV, TABS, isActive, titleFor } from "@/lib/nav";
 import { aiReady, useAssistant } from "./assistant-context";
 
@@ -57,6 +58,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <Link href="/" className="brand-mini" aria-label="الرئيسية"><LogoTile size="sm" /></Link>
           <h2 className="topbar-title">{titleFor(pathname)}</h2>
           <button className="icon-btn bordered" onClick={() => setSearchOpen(true)} aria-label="بحث (اختصار: /)" aria-haspopup="dialog"><Icon name="search" size={20} /></button>
+          <NotificationBell />
           <Link href="/settings" className="icon-btn bordered mobile-only" aria-label="الإعدادات"><Icon name="settings" size={20} /></Link>
         </header>
         <main id="main" tabIndex={-1}>{children}</main>
@@ -64,7 +66,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <nav className="bottom-nav" aria-label="التنقل السفلي">
         {TABS.map((n) => {
-          const active = n.href === "/more" ? ["/more", "/integrations", "/calls", "/settings"].some((h) => isActive(pathname, h)) : isActive(pathname, n.href);
+          const active = n.href === "/more" ? ["/more", "/integrations", "/calls", "/settings", "/reminders", "/notifications"].some((h) => isActive(pathname, h)) : isActive(pathname, n.href);
           return <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined}><Icon name={n.icon} size={23} /><span>{n.label}</span></Link>;
         })}
       </nav>

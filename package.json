@@ -8,6 +8,7 @@
     "typecheck:web": "pnpm --filter @safwan/web typecheck",
     "lint:web": "pnpm --filter @safwan/web lint",
     "test:web": "pnpm --filter @safwan/web test",
+    "test:e2e:notify": "pnpm --filter @safwan/web test:e2e:notify",
     "test:api": "cd services/api && python -m pytest -q",
     "check": "pnpm typecheck:web && pnpm lint:web && pnpm test:web && pnpm build:web && pnpm test:api"
   }
