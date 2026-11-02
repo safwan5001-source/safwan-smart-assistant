@@ -95,6 +95,27 @@ describe.each(impls)("review fixes on the store (round 5) — %s", (_n, make) =>
     await store.setSubscription(id, makeSubscription().sub, NOW);
     return id;
   };
+  it("a reminder deleted while an earlier push of the same batch is in flight is NOT sent, and its cancellation is kept", async () => {
+    const id = randomUUID(); const mine = makeSubscription().sub;
+    await store.createDevice({ id, tokenHash: "cd".repeat(32), prefs: parseServerPrefs({}), now: NOW });
+    await store.setSubscription(id, mine, NOW);
+    try {
+      const A = mkReminder({}, NOW, "race-a"), B = mkReminder({}, NOW, "race-b");
+      await store.syncReminders(id, [A, B], [], NOW);
+      let sentToMe = 0, first = true;
+      const send = async (sub: { endpoint: string }) => {
+        if (sub.endpoint !== mine.endpoint) return { status: 201 };                // leftovers of other tests sharing the database
+        sentToMe++;
+        if (first) { first = false; await store.syncReminders(id, [], [A.id, B.id], NOW + 1); } // the user deletes both while this push is on the wire
+        return { status: 201 };
+      };
+      await dispatchTick(store, send as never, A.dueAt + 1000);
+      expect(sentToMe).toBe(1);                                                    // the second (obsolete) push never left
+      const dl = await store.listDeliveries(id, 10);
+      expect(dl).toHaveLength(2);
+      expect(dl.map((d) => d.status).sort()).toEqual(["cancelled", "sent"]);       // the unsent one is NOT overwritten with "sent"
+    } finally { await store.deleteDevice(id); }
+  });
   it("the STORED collection is capped (repeated batches with fresh ids cannot grow a device); nothing is written on refusal", async () => {
     const id = await device();
     const batch = (tag: string, n: number) => Array.from({ length: n }, (_, i) => mkReminder({}, NOW, `${tag}${i}`));

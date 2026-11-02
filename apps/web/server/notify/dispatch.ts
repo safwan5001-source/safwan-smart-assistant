@@ -48,6 +48,8 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
         await store.markDelivery(device.id, delivery.key, { status: "pending", attempts: delivery.attempts, nextAttemptAt: quietEnd(now, device.prefs.quiet, device.prefs.tz) });
         rep.held++; continue;
       }
+      // the batch was read earlier: a reminder deleted/rescheduled while previous pushes were in flight has had its delivery cancelled since
+      if (!(await store.isDeliveryPending(device.id, delivery.key))) continue;
       const r = await send(device.subscription, applyPrivacy(delivery.payload, device.prefs), { ttl: ttlOf(delivery.kind), urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
       const attempts = delivery.attempts + 1;
       if (r.status >= 200 && r.status < 300) { await store.markDelivery(device.id, delivery.key, { status: "sent", attempts, sentAt: now }); rep.sent++; }

@@ -169,8 +169,11 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
     async markDelivery(deviceId, key, patch) {
       await q(
         `UPDATE notify.deliveries SET status = $3, attempts = $4, next_attempt_at = COALESCE($5, next_attempt_at),
-           sent_at = COALESCE($6, sent_at), last_error = COALESCE($7, last_error) WHERE device_id = $1 AND key = $2`,
+           sent_at = COALESCE($6, sent_at), last_error = COALESCE($7, last_error) WHERE device_id = $1 AND key = $2 AND (status = 'pending' OR (status = 'cancelled' AND $3 = 'sent'))`,
         [deviceId, key, patch.status, patch.attempts, patch.nextAttemptAt ?? null, patch.sentAt ?? null, patch.lastError ?? null]);
+    },
+    async isDeliveryPending(deviceId, key) {
+      return ((await q("SELECT 1 FROM notify.deliveries WHERE device_id = $1 AND key = $2 AND status = 'pending'", [deviceId, key])).rowCount ?? 0) > 0;
     },
     async listDeliveries(deviceId, limit) {
       const res = await q("SELECT * FROM notify.deliveries WHERE device_id = $1 ORDER BY created_at DESC LIMIT $2", [deviceId, limit]);

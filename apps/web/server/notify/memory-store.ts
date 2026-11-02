@@ -87,12 +87,13 @@ export function createMemoryStore(): NotifyStore {
       return out.sort((a, b) => a.delivery.nextAttemptAt - b.delivery.nextAttemptAt).slice(0, limit);
     },
     async markDelivery(deviceId, key, patch) {
-      const dl = deliveries.get(deviceId)?.get(key); if (!dl) return;
+      const dl = deliveries.get(deviceId)?.get(key); if (!dl || !(dl.status === "pending" || (dl.status === "cancelled" && patch.status === "sent"))) return; // never resurrect a cancelled/finished delivery (a push already on the wire may still be recorded as sent)
       dl.status = patch.status as DeliveryStatus; dl.attempts = patch.attempts;
       if (patch.nextAttemptAt !== undefined) dl.nextAttemptAt = patch.nextAttemptAt;
       if (patch.sentAt !== undefined) dl.sentAt = patch.sentAt;
       if (patch.lastError !== undefined) dl.lastError = patch.lastError;
     },
+    async isDeliveryPending(deviceId, key) { return deliveries.get(deviceId)?.get(key)?.status === "pending"; },
     async listDeliveries(deviceId, limit) {
       return [...(deliveries.get(deviceId)?.values() ?? [])].sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map(clone);
     },

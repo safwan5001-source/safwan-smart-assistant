@@ -42,6 +42,8 @@ export interface NotifyStore {
   addDelivery(deviceId: string, d: NewDelivery): Promise<boolean>;
   dueDeliveries(now: number, limit: number): Promise<{ device: DeviceRec; delivery: DeliveryRec }[]>;
   markDelivery(deviceId: string, key: string, patch: { status: DeliveryStatus; attempts: number; nextAttemptAt?: number; sentAt?: number; lastError?: string }): Promise<void>;
+  /** True while the delivery is still `pending` — re-checked right before each send so a cancellation accepted meanwhile is honoured. */
+  isDeliveryPending(deviceId: string, key: string): Promise<boolean>;
   listDeliveries(deviceId: string, limit: number): Promise<DeliveryRec[]>;
   /** retention: drops finished deliveries older than 14 days and devices idle for 180 days */
   purge(now: number): Promise<number>;
