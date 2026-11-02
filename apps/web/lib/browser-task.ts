@@ -232,13 +232,13 @@ export function parseBrowseCommand(text: string): BrowseCommand | null {
 const ROLE_WORDS: Record<string, Locator["by"] | Role> = {
   زر: "button", button: "button", رابط: "link", link: "link", حقل: "textbox", textbox: "textbox", input: "textbox", بحث: "searchbox", searchbox: "searchbox",
   خانة: "checkbox", checkbox: "checkbox", اختيار: "radio", radio: "radio", قائمة: "combobox", combobox: "combobox", مفتاح: "switch", switch: "switch", تبويب: "tab", tab: "tab",
-  عنوان: "label", label: "label", نص_إرشادي: "placeholder", placeholder: "placeholder", نص: "text", text: "text",
+  خانة_اختيار: "checkbox", زر_اختيار: "radio", حقل_بحث: "searchbox", عنوان: "label", label: "label", نص_إرشادي: "placeholder", placeholder: "placeholder", نص: "text", text: "text",
 };
 const Q = "[\"“”«»„‟]";
 const QUOTED = `${Q}([^"“”«»„‟]{1,200})${Q}`;
 const VERB = "(?:انقر|اضغط|click|tap)";
-const CLICK_RE = new RegExp(`^/${VERB}\\s+(?:على\\s+)?(\\S+(?:\\s+إرشادي)?)\\s+${QUOTED}\\s*$`, "i");
-const TYPE_RE = new RegExp(`^/(?:اكتب|type)\\s+${QUOTED}\\s+(?:في|in|into)\\s+(\\S+(?:\\s+إرشادي)?)\\s+${QUOTED}\\s*$`, "i");
+const CLICK_RE = new RegExp(`^/${VERB}\\s+(?:على\\s+)?(\\S+(?:\\s+(?:إرشادي|اختيار|بحث))?)\\s+${QUOTED}\\s*$`, "i");
+const TYPE_RE = new RegExp(`^/(?:اكتب|type)\\s+${QUOTED}\\s+(?:في|in|into)\\s+(\\S+(?:\\s+(?:إرشادي|اختيار|بحث))?)\\s+${QUOTED}\\s*$`, "i");
 const OPEN_RE = /^\/(?:افتح|انتقل|open|goto)\s+(\S+)\s*$/i;
 const OBSERVE_RE = /^\/(?:اقرأ|حدّث|حدث|observe|read)\s*$/i;
 export const ACTION_USAGE = 'الصيغ: ‎/افتح https://…  ‎·  ‎/انقر زر "الاسم"  ‎·  ‎/اكتب "النص" في حقل "الاسم"  ‎·  ‎/اقرأ';

@@ -150,6 +150,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     const v = await start();
     const code = async (target) => { const r = await run(v.id, { tool: "click", target }); return [lastAction(r).status, lastAction(r).error]; };
     assert.deepEqual(await code(role("button", "Does not exist")), ["failed", "element_not_found"]);
+    assert.deepEqual(await code(role("button", "Delete everything")), ["denied", "sensitive_action"], "judged on the request itself, before any lookup");
     assert.deepEqual(await code(role("button", "Twin")), ["failed", "element_ambiguous"]);
     assert.deepEqual(await code(role("button", "Disabled one")), ["failed", "element_disabled"]);
     assert.deepEqual(await code(role("button", "Hidden one")), ["failed", "element_not_found"]); // hidden elements are not in the accessibility tree

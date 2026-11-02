@@ -2,7 +2,7 @@
 // One action at a time, each of them: validated (actions.mjs) -> element found exactly once, visible, enabled, inside the lab ->
 // classified (deny / approve / allow) -> [explicit user approval, element re-verified] -> executed -> page re-observed (text + JPEG).
 // The page is untrusted: everything read from it is reduced to bounded primitives, and nothing from it is ever executed or logged.
-import { ActionError, classify, fingerprint, describe } from "./actions.mjs";
+import { ActionError, classify, fingerprint, describe, isSensitiveWord } from "./actions.mjs";
 import { abortError } from "./jobs.mjs";
 import { cleanText } from "./policy.mjs";
 
@@ -102,6 +102,8 @@ export async function runInteractive({ page, raced, signal, interactive, policy,
       await settle();
       return;
     }
+    // What the caller asks for is judged before anything is looked up, so a sensitive request is refused the same way whether or not the element exists.
+    if (isSensitiveWord(action.target.value)) throw fail("sensitive_action", "denied");
     const first = await verify(page, action, policy, t);
     const verdict = classify(action, first.facts, { allowUrl: (u) => policy.allowRequest(u) });
     if (verdict.decision === "deny") throw fail(verdict.code, "denied");

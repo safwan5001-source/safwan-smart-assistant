@@ -60,6 +60,9 @@ describe("chat command lines", () => {
     expect(act('/انقر نص إرشادي "بحث"')).toEqual({ tool: "click", target: { by: "placeholder", value: "بحث" } });
     expect(act("/افتح https://lab.example.org/browser-lab/page2.html")).toEqual({ tool: "navigate", url: "https://lab.example.org/browser-lab/page2.html" });
     expect(act("/اقرأ")).toEqual({ tool: "observe" });
+    expect(act('/انقر خانة اختيار "أوافق"')).toEqual({ tool: "click", target: { by: "role", role: "checkbox", value: "أوافق" } });
+    expect(act('/انقر زر اختيار "نعم"')).toEqual({ tool: "click", target: { by: "role", role: "radio", value: "نعم" } });
+    expect(act('/اكتب "x" في حقل بحث "بحث"')).toMatchObject({ tool: "type", target: { by: "role", role: "searchbox", value: "بحث" } });
   });
   it("is not triggered by ordinary text or other commands, and explains malformed ones", () => {
     for (const t of ["انقر زر", "hello /click", "/مهمة انقر", "/متصفح", "", "  "]) expect(parseActionLine(t)).toBeNull();

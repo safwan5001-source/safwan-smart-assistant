@@ -170,8 +170,9 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
         if (!sameOrigin(req)) return err("forbidden", 403);
         if (!scopes.length) return err("interactive_disabled", 503);
         if (!limiters.act("owner", now)) return err("rate_limited", 429);
-        const action = parseActionRequest(await readJson(req), (u) => sessionTargetOk(u, scopes));
-        if (!action) return err("bad_request", 400);
+        const raw = await readJson(req);
+        const action = parseActionRequest(raw, (u) => sessionTargetOk(u, scopes));
+        if (!action) return err((raw as { tool?: unknown } | undefined)?.tool === "navigate" ? "url_not_allowed" : "bad_request", 400);
         // Rebuilt from validated fields; the typed text goes on to the worker and is never logged or echoed by this tier.
         return taskReply(await deps.callBackend({ path: `${BASE}/${id}/actions`, method: "POST", body: action, timeoutMs: 12_000, env: deps.env }), 202, scopes);
       }

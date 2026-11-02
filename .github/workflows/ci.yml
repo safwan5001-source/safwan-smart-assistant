@@ -180,3 +180,34 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v4
         with: { name: browser-chat-e2e-output, path: apps/web/e2e-output }
+
+  browser-session-e2e:
+    # CHAT-BROWSER-2 (interactive control) end to end with REAL processes, serving the SHIPPED lab page. Same stand-ins as browser-chat-e2e.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: services/api/.python-version
+      - run: python -m pip install "uv==${UV_VERSION}"
+      - run: uv sync --frozen --extra test --no-install-project
+        working-directory: services/api
+      - run: pnpm install --frozen-lockfile
+      - run: npm install --no-audit --no-fund
+        working-directory: services/browser
+      - run: pnpm --filter @safwan/web exec playwright install --with-deps chromium
+      - run: pnpm build:web
+      - run: node e2e/browser-session.e2e.mjs
+        working-directory: apps/web
+        env:
+          E2E_OUT: e2e-output
+          PYTHON: ${{ github.workspace }}/services/api/.venv/bin/python
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: browser-session-e2e-output, path: apps/web/e2e-output }
