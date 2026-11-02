@@ -290,3 +290,109 @@ def test_the_real_opener_does_not_follow_redirects():
         assert e.value.code == 302 and hits == ["/x"]
     finally:
         srv.shutdown()
+
+
+# ── root cause of the production 502: a header-unsafe BROWSER_SERVICE_TOKEN ──────────────────────
+# Evidence (Railway, 2026-11-02): POST /internal/v1/browser/tasks -> 502 in ~50 ms, no DNS lookup or TCP flow to the worker, nothing in
+# the worker's ingress, no "invalid job view" log. `http.client` raises ValueError for a CR/LF (or non-latin-1 char) in a header value
+# *before opening a socket*; the bridge caught ValueError together with network errors and answered an unexplained 502.
+UNSAFE_TOKENS = {
+    "trailing_lf": "w" * 40 + "\n",
+    "trailing_crlf": "w" * 40 + "\r\n",
+    "leading_space": " " + "w" * 40,
+    "inner_space": "w" * 20 + " " + "w" * 20,
+    "tab": "w" * 20 + "\t" + "w" * 20,
+    "non_latin1": "w" * 40 + "ل",
+    "latin1_accent": "w" * 40 + "é",
+}
+
+
+@pytest.mark.parametrize("token", list(UNSAFE_TOKENS.values()), ids=list(UNSAFE_TOKENS))
+def test_header_unsafe_token_is_a_configuration_error_not_an_unexplained_502(client, worker, monkeypatch, caplog, token):
+    monkeypatch.setenv("BROWSER_SERVICE_TOKEN", token)
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        for method, target, payload in (("POST", BASE, {"url": "https://example.com/"}), ("GET", f"{BASE}/{TASK}", None),
+                                        ("POST", f"{BASE}/{TASK}/cancel", None), ("GET", f"{BASE}/{TASK}/screenshot", None)):
+            r = call(client, method, target, payload)
+            assert r.status_code == 503 and r.json()["detail"] == {"code": "browser_unconfigured"}, (method, target)
+    assert worker.calls == []
+    log_text = caplog.text
+    assert "reason=worker_unconfigured" in log_text and "token_header_safe=False" in log_text
+    assert token.strip() not in log_text and "w" * 20 not in log_text            # the secret never reaches the logs
+
+
+def test_unsafe_token_never_reaches_urllib_with_the_real_opener(client, monkeypatch):
+    """Same scenario without the fake `_open`: no socket may be opened at all."""
+    import socket
+    monkeypatch.setenv("BROWSER_SERVICE_TOKEN", UNSAFE_TOKENS["trailing_lf"])
+    def no_network(*a, **k):
+        raise AssertionError("a socket was opened")
+    monkeypatch.setattr(socket, "create_connection", no_network)
+    monkeypatch.setattr(socket, "getaddrinfo", no_network)
+    assert call(client, "POST", BASE, {"url": "https://example.com/"}).status_code == 503
+
+
+@pytest.mark.parametrize("token,ok", [("w" * 40, True), ("Ab3-_.~+/=" * 4, True), ("0123456789abcdef" * 4, True), ("w" * 31, True), ("", False), ("a b", False), ("a\n", False), ("é", False)])
+def test_header_safe_accepts_only_visible_ascii(token, ok):
+    from app import browser_token
+    assert browser_token.header_safe(token) is ok
+
+
+# ── every failure class is distinguishable in the logs (and only there) ──────────────────────────
+@pytest.mark.parametrize("reply,reason", [
+    (URLError(OSError("x")), "connect_failed"),
+    (URLError(ConnectionRefusedError()), "connect_failed"),
+    (ConnectionResetError(), "connect_failed"),
+    (URLError(__import__("socket").gaierror(-2, "Name or service not known")), "dns_failed"),
+    (TimeoutError("t"), "timeout"),
+    (URLError(TimeoutError("t")), "timeout"),
+    (ValueError("Invalid header value"), "invalid_request"),
+    (UnicodeEncodeError("latin-1", "ل", 0, 1, "x"), "invalid_request"),
+])
+def test_network_failure_classes_are_logged_with_a_fixed_vocabulary(client, worker, caplog, reply, reason):
+    worker.reply = reply
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        r = call(client, "POST", BASE, {"url": "https://example.com/"})
+    assert r.status_code == 502 and r.json()["detail"] == {"code": "browser_unavailable"}
+    assert f"reason={reason} op=POST /v1/jobs status=-" in caplog.text
+    assert "railway" not in caplog.text and BROWSER_TOKEN not in caplog.text
+
+
+@pytest.mark.parametrize("status,reason", [(401, "worker_unauthorized"), (403, "worker_unauthorized"), (415, "worker_rejected"), (500, "worker_rejected"), (503, "worker_rejected")])
+def test_worker_auth_rejection_is_told_apart_from_other_rejections(client, worker, caplog, status, reason):
+    worker.reply = Resp(b'{"error":"unauthorized"}', status)
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        assert call(client, "POST", BASE, {"url": "https://example.com/"}).status_code == 502
+    assert f"reason={reason} op=POST /v1/jobs status={status}" in caplog.text
+
+
+def test_invalid_job_view_is_told_apart_and_logs_no_content(client, worker, caplog):
+    worker.reply = Resp({"job": job(url="https://evil.test/secret-path")}, 200)
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        assert call(client, "GET", f"{BASE}/{TASK}").status_code == 502
+    assert "reason=invalid_job_view op=GET /v1/jobs/:id status=200" in caplog.text
+    assert "evil.test" not in caplog.text and TASK not in caplog.text
+
+
+def test_oversized_and_bad_screenshot_are_classified(client, worker, caplog):
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        worker.reply = Resp(b'{"job":' + b" " * 20_000 + b"}", 200)
+        call(client, "GET", f"{BASE}/{TASK}")
+        worker.reply = Resp(b"<html>", 200)
+        call(client, "GET", f"{BASE}/{TASK}/screenshot")
+        worker.reply = Resp(b"nope", 401)
+        call(client, "GET", f"{BASE}/{TASK}/screenshot")
+    assert "reason=oversized op=GET /v1/jobs/:id" in caplog.text
+    assert "reason=invalid_screenshot op=GET /v1/jobs/:id/screenshot status=200" in caplog.text
+    assert "reason=worker_unauthorized op=GET /v1/jobs/:id/screenshot status=401" in caplog.text
+
+
+def test_a_browserbase_failure_is_a_valid_failed_job_not_a_502(client, worker, caplog):
+    """Provider errors happen after POST /v1/jobs returned 202: the worker reports them inside a *valid* job view."""
+    failed = job(status="failed", error="browser_execution_failed", finishedAt=1_700_000_009_000,
+                 steps=[{"id": "create_session", "status": "failed"}] + [{"id": s, "status": "skipped"} for s in bt.STEP_IDS[1:-1]] + [{"id": "release", "status": "done"}])
+    worker.reply = Resp({"job": failed}, 200)
+    with caplog.at_level("ERROR", logger="safwan.browser_tasks"):
+        r = call(client, "GET", f"{BASE}/{TASK}")
+    assert r.status_code == 200 and r.json()["task"]["status"] == "failed" and r.json()["task"]["error"] == "browser_execution_failed"
+    assert "browser worker call failed" not in caplog.text

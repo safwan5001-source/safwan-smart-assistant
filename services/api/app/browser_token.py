@@ -12,13 +12,24 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 
 MIN_TOKEN_CHARS = 32
+# Visible ASCII only. The token travels in an `Authorization` header: a CR/LF (typically a trailing newline pasted into a Railway
+# variable) or a non-latin-1 character makes http.client raise ValueError *before any socket is opened*, which used to surface as an
+# unexplained 502 "browser_unavailable" with no network traffic and no log line. Whitespace is refused too (never silently trimmed:
+# the worker would compare a different string).
+_HEADER_SAFE = re.compile(r"[\x21-\x7e]+")
 _SECRET_ENV_NAMES = ("SERVICE_AUTH_SECRET", "SERVICE_AUTH_SECRET_PREVIOUS")
 
 
 def _expected() -> str:
     return os.environ.get("BROWSER_SERVICE_TOKEN", "")
+
+
+def header_safe(token: str) -> bool:
+    """True when the token can be sent verbatim as a bearer credential (visible ASCII, no whitespace/control characters)."""
+    return bool(_HEADER_SAFE.fullmatch(token))
 
 
 def collides_with_service_secret(token: str | None = None) -> bool:

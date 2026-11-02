@@ -33,6 +33,13 @@ test("createApp refuses a weak token", () => {
   assert.throws(() => createApp({ token: "short", policy: createPolicy(["example.com"]) }), /32/);
 });
 
+test("createApp refuses a token that cannot travel in an Authorization header (trailing newline, spaces, non-ASCII)", () => {
+  for (const bad of ["a".repeat(40) + "\n", "a".repeat(40) + "\r\n", " " + "a".repeat(40), "a".repeat(20) + " " + "a".repeat(20), "a".repeat(40) + "é", "a".repeat(40) + "ل"]) {
+    assert.throws(() => createApp({ token: bad, policy: createPolicy(["example.com"]) }), /visible ASCII/, JSON.stringify(bad.slice(38)));
+  }
+  assert.doesNotThrow(() => createApp({ token: "Ab3-_.~+/=".repeat(4), policy: createPolicy(["example.com"]), projectId: "p", log: () => {} }).manager.stop());
+});
+
 test("every job route needs the bearer token; unknown routes are 404 without revealing anything", async (t) => {
   const s = await boot(); t.after(s.close);
   const id = "11111111-1111-4111-8111-111111111111";
