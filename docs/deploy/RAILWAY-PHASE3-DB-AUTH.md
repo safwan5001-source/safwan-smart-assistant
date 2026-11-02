@@ -90,7 +90,7 @@
 **ما تفعله أنت (ثلاث قيم، كلها hex آمنة للـURL، 256 بتًا):**
 ```bash
 # macOS                              # Linux (Wayland: wl-copy)                     # Windows PowerShell
-openssl rand -hex 32 | pbcopy        openssl rand -hex 32 | xclip -selection clipboard   $b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Fill($b); (($b|%{$_.ToString('x2')}) -join '') | Set-Clipboard
+openssl rand -hex 32 | tr -d '\n' | pbcopy        openssl rand -hex 32 | tr -d '\n' | xclip -selection clipboard   $b=New-Object byte[] 32; [Security.Cryptography.RandomNumberGenerator]::Fill($b); (($b|%{$_.ToString('x2')}) -join '') | Set-Clipboard
 ```
 القيمة تذهب إلى الحافظة **دون طباعتها في الطرفية**، ثم: لوحة Railway ← الخدمة ← Variables ← New Variable ← الصق ← ⋮ ← **Seal**. كرّر لكل قيمة جديدة.
 

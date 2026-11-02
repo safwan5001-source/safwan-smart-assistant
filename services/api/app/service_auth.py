@@ -17,6 +17,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import os
 import re
 import threading
 import time
@@ -122,6 +123,46 @@ def _unavailable(reason: str, code: str) -> HTTPException:
     return HTTPException(status_code=503, detail={"code": code})
 
 
+# ── configuration diagnostics: a CATEGORY and booleans, never the value and never its exact length ───────────────────
+# Why: "no valid SERVICE_AUTH_SECRET" used to cover three different operator mistakes (unset / empty / shorter than the minimum), so a
+# production 503 could not be narrowed down without reading a Sealed value that nobody can read. Quotes, spaces or a newline do NOT
+# produce that message (they only lengthen the value; they make the two services disagree -> `bad signature`), so they are reported
+# as separate flags.
+def secret_status(name: str) -> str:
+    raw = os.environ.get(name)
+    if raw is None:
+        return "unset"
+    if raw == "":
+        return "empty"
+    if raw.strip() == "":
+        return "blank"
+    if len(raw.encode("utf-8")) < MIN_SECRET_BYTES:
+        return "below_minimum_length"
+    return "ok"
+
+
+def secret_shape(name: str) -> dict[str, bool]:
+    raw = os.environ.get(name) or ""
+    return {
+        "edge_whitespace": raw != raw.strip(),
+        "wrapped_in_quotes": len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'`",
+        "contains_newline": "\n" in raw or "\r" in raw,
+    }
+
+
+def _describe(name: str) -> str:
+    shape = secret_shape(name)
+    return f"status={secret_status(name)} " + " ".join(f"{k}={v}" for k, v in shape.items())
+
+
+def log_service_auth_config() -> None:
+    """One line at startup so an operator can verify the variables before any traffic. Category + booleans only."""
+    logging.getLogger("uvicorn.error").info(
+        "service auth config: secret=%s previous=%s collides_with_browser_token=%s",
+        secret_status("SERVICE_AUTH_SECRET"), secret_status("SERVICE_AUTH_SECRET_PREVIOUS"), collides_with_service_secret(),
+    )
+
+
 def _secrets(settings: Settings) -> list[bytes]:
     out = [s.encode("utf-8") for s in (settings.service_auth_secret, settings.service_auth_secret_previous) if s]
     return [s for s in out if len(s) >= MIN_SECRET_BYTES]
@@ -149,7 +190,7 @@ async def require_service_call(
 ) -> ServiceCall:
     keys = _secrets(settings)
     if not keys or not settings.service_auth_secret or len(settings.service_auth_secret.encode()) < MIN_SECRET_BYTES:
-        raise _unavailable("no valid SERVICE_AUTH_SECRET", "service_auth_unconfigured")
+        raise _unavailable(f"no valid SERVICE_AUTH_SECRET ({_describe('SERVICE_AUTH_SECRET')})", "service_auth_unconfigured")
     # The browser worker holds BROWSER_SERVICE_TOKEN and renders untrusted content: if it equalled a signing secret it could forge
     # BFF calls (independent review IR-A3). Fail closed instead of letting the two mechanisms become interchangeable.
     if collides_with_service_secret():
