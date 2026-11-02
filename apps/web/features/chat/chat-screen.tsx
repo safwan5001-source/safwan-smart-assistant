@@ -8,7 +8,8 @@ import { useDialogs } from "@/components/dialogs";
 import { aiReady, useAssistant } from "@/components/assistant-context";
 import { useHydrated, useMediaQuery, useStore, useStoreError } from "@/lib/hooks";
 import { threadsStore } from "@/lib/stores";
-import { runCommand, runQuickCommand } from "@/lib/commands";
+import { runCommand, runQuickCommand, type QuickReply, type ReminderOffer } from "@/lib/commands";
+import ReminderDialog from "@/components/reminder-dialog";
 import { assistantService } from "@/lib/assistant";
 import { useDictation } from "@/lib/speech";
 import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/files-db";
@@ -30,6 +31,7 @@ export default function ChatScreen() {
 
   const [selected, setSelected] = useState<string | null>(null); // null = auto, "new" = blank chat
   const [sheet, setSheet] = useState(false);
+  const [offer, setOffer] = useState<ReminderOffer | null>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [draft, setDraft] = useState("");
@@ -69,7 +71,8 @@ export default function ChatScreen() {
       if (sent.status !== "executed") { setNotice(sent.status === "invalid" ? sent.message : "تعذر إرسال الرسالة."); return; }
       const id = sent.data;
       setSelected(id); syncUrl(id); setDraft(""); setAttachments([]); setNotice("");
-      const quick = text ? await runQuickCommand(text) : { handled: false };
+      const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
+      if (quick.reminderOffer) setOffer(quick.reminderOffer);
       if (quick.handled && quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" });
       else if (ready && text) {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
@@ -240,6 +243,7 @@ export default function ChatScreen() {
           </div>
         )}
       </Modal>
+      <ReminderDialog open={!!offer} onClose={() => setOffer(null)} seed={offer?.draft} clarification={offer?.clarification} notes={offer?.notes} />
     </div>
   );
 }

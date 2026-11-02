@@ -37,7 +37,8 @@ bash scripts/backup-restore-rehearsal.sh                 # تمرين نسخ/ا�
 
 ## الوثائق
 - [المعمارية](docs/ARCHITECTURE.md) · [خطة التنفيذ والقبول](docs/IMPLEMENTATION.md)
-- [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [مراجعة B1 الأمنية](docs/B1-SECURITY-REVIEW.md) · [قائمة إثبات Preview](docs/B1-PREVIEW-CHECKLIST.md) · [سجل القرارات](docs/DECISIONS.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
+- [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [مراجعة B1 الأمنية](docs/B1-SECURITY-REVIEW.md) · [قائمة إثبات Preview](docs/B1-PREVIEW-CHECKLIST.md) · [سجل القرارات](docs/DECISIONS.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
+- [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md)
 - [النشر على Railway — المرحلة 2: API](docs/deploy/RAILWAY-API-PHASE2.md) · [المرحلة 3: PostgreSQL والمصادقة](docs/deploy/RAILWAY-PHASE3-DB-AUTH.md)
 
 ## مبادئ معتمدة

@@ -1,0 +1,11 @@
+# One-shot Browserbase Smoke-1 runner. Build context MUST be repository root.
+FROM node:22-bookworm-slim
+WORKDIR /app
+COPY poc/smoke1/package.json ./poc/smoke1/package.json
+RUN cd poc/smoke1 && npm install --omit=dev --no-audit --no-fund
+COPY poc/smoke1/ ./poc/smoke1/
+COPY poc/test-site/pages.mjs ./poc/test-site/pages.mjs
+WORKDIR /app/poc/smoke1
+# Explicit owner approval is still required: SMOKE1_APPROVED=yes.
+# Never start the cloud smoke automatically on every Railway deployment.
+CMD ["node", "-e", "console.log('Browserbase smoke runner is built; set an explicit start command only for an approved one-shot run.')"]

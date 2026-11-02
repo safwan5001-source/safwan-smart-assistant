@@ -6,7 +6,7 @@ import { NAV } from "@/lib/nav";
 import MoreSearchButton from "./search-button";
 
 export const metadata: Metadata = { title: "المزيد" };
-const MORE = NAV.filter((n) => ["/integrations", "/calls", "/settings"].includes(n.href));
+const MORE = NAV.filter((n) => ["/reminders", "/notifications", "/integrations", "/calls", "/settings"].includes(n.href));
 
 export default function Page() {
   return (
