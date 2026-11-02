@@ -277,3 +277,8 @@ export function parseActionLine(text: string, urlOk: (u: string) => boolean = (u
   }
   return { kind: "error", reason: `تعذر فهم الأمر. ${ACTION_USAGE}` };
 }
+
+/** True for anything that belongs to the browser feature and must never be forwarded to an AI provider: «/متصفح …» commands and the action lines (they carry typed values). */
+export function isBrowserCommandLine(text: string): boolean {
+  return parseBrowseCommand(text) !== null || parseActionLine(text) !== null;
+}

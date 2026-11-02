@@ -11,6 +11,7 @@ import { threadsStore } from "@/lib/stores";
 import { runCommand, runQuickCommand, type QuickReply, type ReminderOffer } from "@/lib/commands";
 import ReminderDialog from "@/components/reminder-dialog";
 import BrowserCard from "./browser-card";
+import { isBrowserCommandLine } from "@/lib/browser-task";
 import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-card";
 import { assistantService } from "@/lib/assistant";
 import { useDictation } from "@/lib/speech";
@@ -92,7 +93,8 @@ export default function ChatScreen() {
       if (quick.handled) { if (quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" }); }
       else if (ready && text) {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
-          .filter((m) => m.text).map((m) => ({ role: m.role ?? "user", content: m.text }));
+          // Browser commands (they carry typed values) and the browser cards never become AI context, now or in later turns.
+          .filter((m) => m.text && !m.browser && !isBrowserCommandLine(m.text)).map((m) => ({ role: m.role ?? "user", content: m.text }));
         try {
           const reply = await assistantService.respond(turns, status);
           await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" });

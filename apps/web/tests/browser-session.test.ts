@@ -4,7 +4,7 @@ import { runCommand, runQuickCommand } from "@/lib/commands";
 import { threadsStore } from "@/lib/stores";
 import { parseThreads } from "@/lib/domain";
 import { createBrowserClient } from "@/lib/browser-client";
-import { SESSION_STEP_IDS, parseActionLine, parseActionRequest, parseBrowseCommand, parseLocator, parseTaskView } from "@/lib/browser-task";
+import { SESSION_STEP_IDS, isBrowserCommandLine, parseActionLine, parseActionRequest, parseBrowseCommand, parseLocator, parseTaskView } from "@/lib/browser-task";
 import { handleBrowserChat, resetBrowserChatLimits, type Deps } from "@/server/browser-chat/api";
 import { COOKIE_NAME, issueCookieValue, readGate } from "@/server/browser-chat/gate";
 import { isolateScopes, readScopes, sameSite, sessionResultOk, sessionStartUrl, sessionTargetOk, siteOf } from "@/server/browser-chat/scopes";
@@ -78,6 +78,15 @@ describe("chat command lines", () => {
     expect(parseBrowseCommand("/browse interactive")).toEqual({ kind: "offer-interactive" });
     expect(parseBrowseCommand("/متصفح")).toEqual({ kind: "offer", url: "https://example.com/" });
     expect(parseBrowseCommand("/متصفح انقر على زر الدفع")).toMatchObject({ kind: "blocked" });
+  });
+});
+
+describe("browser commands never become AI context", () => {
+  it("recognises every browser command line, including ones that carry typed values, and nothing else", () => {
+    for (const t of ['/اكتب "رمز سري" في حقل "الاسم"', '/type "x" in textbox "Name"', '/انقر زر "إرسال"', "/افتح https://x.test/", "/اقرأ", "/متصفح", "/متصفح تفاعلي", "/browse", "  /اكتب   \"a\" في حقل \"b\" "]) {
+      expect(isBrowserCommandLine(t), t).toBe(true);
+    }
+    for (const t of ["مرحبا", "اكتب لي رسالة", "please click the button", "/مهمة اشتر حليب", "ذكرني بكرة", ""]) expect(isBrowserCommandLine(t), t).toBe(false);
   });
 });
 
