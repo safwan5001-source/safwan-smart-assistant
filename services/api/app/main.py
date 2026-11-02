@@ -6,7 +6,7 @@ from urllib.error import HTTPError, URLError
 from typing import Any
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .assistant import AssistantUnavailable, get_provider, provider_status
@@ -58,7 +58,7 @@ class BrowserSmokeRequest(BaseModel):
 
 
 @app.post("/internal/browser/smoke")
-def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = __import__("fastapi").Header(default=None)) -> dict[str, Any]:
+def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """Owner-controlled diagnostic. Does not change normal production authentication."""
     expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
     if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
