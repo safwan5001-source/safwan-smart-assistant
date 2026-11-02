@@ -195,7 +195,7 @@ async function doSync(): Promise<boolean> {
   const device = pushDeviceStore.getSnapshot();
   if (!device?.subscribed || device.erasePending) return false; // never re-import server rows of a device whose erasure is pending
   const sentTombs = tombstonesStore.getSnapshot();
-  const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs }, device);
+  const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs, prefs: toServerPrefs(prefsStore.getSnapshot()) }, device);
   if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)
   if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
   if (!r.ok || !r.json) return false;

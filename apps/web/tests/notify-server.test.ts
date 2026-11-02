@@ -95,11 +95,11 @@ describe("HTTP API", () => {
     expect((await call(rt, "DELETE", "/devices/me/subscription", undefined, auth)).status).toBe(200);
     expect(await (await call(rt, "GET", "/devices/me", undefined, auth)).json()).toMatchObject({ subscribed: false });
   });
-  it("bodies: wrong content type, oversized, malformed JSON → 400", async () => {
+  it("bodies: wrong content type, oversized (> 5 MiB), malformed JSON → 400", async () => {
     const rt = makeRuntime(); const { auth } = await registerDevice(rt, makeSubscription().sub);
     expect((await handleNotify(new Request("http://x", { method: "PUT", headers: { ...auth, "content-type": "text/plain" }, body: "{}" }), ["reminders", "sync"], rt)).status).toBe(400);
     expect((await handleNotify(new Request("http://x", { method: "PUT", headers: { ...auth, "content-type": "application/json" }, body: "{oops" }), ["reminders", "sync"], rt)).status).toBe(400);
-    const big = JSON.stringify({ reminders: [], pad: "x".repeat(300 * 1024) });
+    const big = JSON.stringify({ reminders: [], pad: "x".repeat(6 * 1024 * 1024) });
     expect((await handleNotify(new Request("http://x", { method: "PUT", headers: { ...auth, "content-type": "application/json" }, body: big }), ["reminders", "sync"], rt)).status).toBe(400);
   });
   it("sync requires push to be enabled, then merges last-writer-wins and honours tombstones", async () => {

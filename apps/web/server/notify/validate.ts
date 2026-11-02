@@ -37,6 +37,8 @@ export function parseSubscription(v: unknown, policy: EndpointPolicy): PushSub |
   return { endpoint: o.endpoint, keys: { p256dh, auth } };
 }
 
+/** A full sync carries up to REMINDER_LIMITS.perDevice reminders (title ≤200 + notes ≤2000 chars, multi-byte in Arabic): 5 MiB is a safe bound. */
+export const SYNC_MAX_BYTES = 5 * 1024 * 1024;
 export type SyncBody = { reminders: Reminder[]; deleted: string[] };
 export function parseSyncBody(v: unknown): SyncBody | null {
   const o = v as { reminders?: unknown; deleted?: unknown } | null;

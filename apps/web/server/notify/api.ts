@@ -8,7 +8,7 @@ import { authenticate, bearerMatches, hashToken, newDeviceId, newToken } from ".
 import { dispatchTick } from "./dispatch";
 import { deliveryOf, testPayload, topicOf, ttlOf, urgencyOf } from "./push";
 import { isReady, type Runtime } from "./runtime";
-import { parseSubscription, parseSyncBody, readJson } from "./validate";
+import { parseSubscription, parseSyncBody, readJson, SYNC_MAX_BYTES } from "./validate";
 
 const HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } as const;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: HEADERS });
@@ -89,8 +89,16 @@ export async function handleNotify(req: Request, path: string[], rt: Runtime): P
       case "PUT /reminders/sync": {
         if (!dev.subscription) return err("push_not_enabled", 409);
         if (!lim.sync(dev.id, now)) return err("rate_limited", 429);
-        const body = parseSyncBody(await readJson(req));
+        const raw = await readJson(req, SYNC_MAX_BYTES);
+        const body = parseSyncBody(raw);
         if (!body) return err("bad_request", 400);
+        // the client attaches its CURRENT preferences to every sync, so a preference change made while offline (lock-screen privacy,
+        // quiet hours) reaches the server on the next reconnect even if the dedicated prefs request had failed
+        const rawPrefs = (raw as { prefs?: unknown }).prefs;
+        if (rawPrefs && typeof rawPrefs === "object") {
+          const p = parseServerPrefs(rawPrefs);
+          if (JSON.stringify(p) !== JSON.stringify(dev.prefs)) await store.setPrefs(dev.id, p);
+        }
         return json({ reminders: await store.syncReminders(dev.id, body.reminders, body.deleted, now), serverTime: now });
       }
       case "POST /devices/me/test": {

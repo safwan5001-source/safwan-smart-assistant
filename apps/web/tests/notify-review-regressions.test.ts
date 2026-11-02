@@ -10,11 +10,11 @@ import { fire, updateReminder } from "@/lib/reminders";
 import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { handleNotify } from "@/server/notify/api";
-import { enablePush, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
+import { enablePush, schedulePrefsSync, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
 import { prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
 import type { NotifyStore, NewDelivery } from "@/server/notify/types";
 import { installBrowser } from "./setup";
-import { fakeSender, makeRuntime, makeSubscription, mkReminder, riyadh, registerDevice, vapid } from "./notify-helpers";
+import { fakeSender, makeRuntime, makeSubscription, mkReminder, req, riyadh, registerDevice, vapid } from "./notify-helpers";
 
 const PG = process.env.NOTIFY_TEST_DATABASE_URL;
 const impls: [string, () => NotifyStore][] = [["memory", createMemoryStore]];
@@ -122,9 +122,10 @@ describe("P2: an idle device does not sync forever", () => {
   const saved: Record<string, PropertyDescriptor | undefined> = {};
   const stub = (k: string, v: unknown) => { saved[k] ??= Object.getOwnPropertyDescriptor(globalThis, k); Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true }); };
   let calls = 0;
+  let rt: ReturnType<typeof makeRuntime>;
   beforeEach(() => {
     installBrowser(); calls = 0;
-    const rt = makeRuntime({ send: fakeSender().send, now: () => NOW });
+    rt = makeRuntime({ send: fakeSender().send, now: () => NOW });
     for (const s of [remindersStore, tombstonesStore, pushDeviceStore, prefsStore]) s.reset();
     const sub = makeSubscription().sub; let existing: unknown = null;
     const subscription = () => ({ endpoint: sub.endpoint, toJSON: () => sub, options: { applicationServerKey: urlBase64ToUint8Array(vapid.publicKey).buffer }, unsubscribe: async () => true });
@@ -154,6 +155,20 @@ describe("P2: an idle device does not sync forever", () => {
     let w2 = 0; const off2 = remindersStore.subscribe(() => { w2++; });
     await syncReminders(); off2();
     expect(w2).toBe(0);
+  });
+  it("a preference change made while offline reaches the server with the next sync (nothing is lost)", async () => {
+    await enablePush();
+    const d = pushDeviceStore.getSnapshot()!;
+    prefsStore.set((p) => ({ ...p, lockScreenContent: true })); await syncReminders();
+    expect((await rt.store!.getDevice(d.deviceId))!.prefs.lockScreenContent).toBe(true);
+    const online = g.fetch as (u: string, i?: RequestInit) => Promise<Response>;
+    stub("fetch", async () => { throw new Error("offline"); });
+    prefsStore.set((p) => ({ ...p, lockScreenContent: false, quiet: { ...p.quiet, enabled: true } }));
+    schedulePrefsSync(0); await new Promise((r) => setTimeout(r, 20));          // the dedicated prefs request fails silently
+    expect((await rt.store!.getDevice(d.deviceId))!.prefs.lockScreenContent).toBe(true);
+    stub("fetch", online);
+    expect(await syncReminders()).toBe(true);                                    // reconnect / startup / focus → plain reminder sync
+    expect((await rt.store!.getDevice(d.deviceId))!.prefs).toMatchObject({ lockScreenContent: false, quiet: { enabled: true } });
   });
   it("a sync that DOES bring changes still adopts them", async () => {
     await enablePush();
@@ -207,5 +222,26 @@ describe("P2: a recurring reminder whose first day has passed stays editable", (
     expect(out.title).toBe("عنوان جديد");
     expect(out.anchor).toBe("2026-10-01");                                     // weekday/day-of-month basis unchanged
     expect(out.dueAt).toBeGreaterThan(later);                                  // next occurrence is in the future
+  });
+});
+
+describe("P2: the sync endpoint accepts the full supported collection", () => {
+  const put = (rt: ReturnType<typeof makeRuntime>, auth: Record<string, string>, body: unknown) =>
+    handleNotify(req("PUT", body, auth), ["reminders", "sync"], rt);
+  it("500 reminders with 2000-char Arabic notes (≈2 MB) sync fine; prefs ride along; absurd bodies are still refused", async () => {
+    const rt = makeRuntime({ send: fakeSender().send, now: () => NOW });
+    const dev = await registerDevice(rt, makeSubscription().sub, { lockScreenContent: true });
+    const notes = "ملاحظة ".repeat(285).slice(0, 2000);
+    const many = Array.from({ length: 500 }, (_, i) => mkReminder({ notes, title: `تذكير ${i}` }, NOW, `big${i}`));
+    const bytes = JSON.stringify({ reminders: many, deleted: [] }).length;
+    expect(bytes).toBeGreaterThan(256 * 1024);                                   // would have been rejected by the old default cap
+    const ok = await put(rt, dev.auth, { reminders: many, deleted: [], prefs: { lockScreenContent: false } });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { reminders: unknown[] }).reminders).toHaveLength(500);
+    expect((await rt.store!.getDevice(dev.deviceId))!.prefs.lockScreenContent).toBe(false);
+    const huge = await put(rt, dev.auth, { reminders: [], deleted: [], pad: "x".repeat(5 * 1024 * 1024 + 10) });
+    expect(huge.status).toBe(400);
+    const tooMany = await put(rt, dev.auth, { reminders: [...many, mkReminder({}, NOW, "one-more")], deleted: [] });
+    expect(tooMany.status).toBe(400);
   });
 });
