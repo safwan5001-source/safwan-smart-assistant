@@ -93,3 +93,57 @@ export async function callBackend(opts: CallOptions): Promise<BackendResult> {
     ctl.abort(); // no-op once the body is fully read; otherwise tears down whatever is still streaming
   }
 }
+
+/**
+ * Streaming variant (Claude answers). Same signing and the same fixed-route / no-redirect rules as callBackend, but a 200 body is handed
+ * back as a stream (capped at `maxBytes`, cancelled upstream when the consumer goes away or `signal` aborts). Non-200 answers are read
+ * (<= 2 KB) only to extract the API's fixed `detail.code`; nothing else from upstream text is ever returned.
+ */
+export type StreamResult =
+  | { kind: "stream"; body: ReadableStream<Uint8Array> }
+  | { kind: "error"; status: number; code: string }
+  | { kind: "unconfigured" }
+  | { kind: "unreachable" };
+
+export async function streamBackend(opts: { path: string; body: unknown; account: string; signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number }): Promise<StreamResult> {
+  const cfg = readConfig(opts.env);
+  if (!cfg) return { kind: "unconfigured" };
+  if (!PATH.test(opts.path)) throw new Error("backend path must be a fixed /internal/v1/* route");
+  const body = JSON.stringify(opts.body);
+  const url = new URL(cfg.base.href.replace(/\/+$/, "") + opts.path);
+  const headers = { accept: "application/x-ndjson", "content-type": "application/json",
+    ...signedHeaders(cfg.secret, { method: "POST", target: url.pathname + url.search, body, account: opts.account, now: opts.now }) };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 130_000);
+  const onAbort = () => ctl.abort();
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
+  const cleanup = () => { clearTimeout(timer); opts.signal?.removeEventListener("abort", onAbort); };
+  let res: Response;
+  try {
+    res = await (opts.fetchImpl ?? fetch)(url, { method: "POST", headers, body, redirect: "manual", cache: "no-store", signal: ctl.signal });
+  } catch { cleanup(); return { kind: "unreachable" }; }
+  if (res.status !== 200 || !res.body) {
+    let code = "unavailable";
+    if (res.status >= 400 && res.status < 500 && res.status !== 401) {
+      try { const t = await readCapped(res, 2048); const d = t ? (JSON.parse(t) as { detail?: { code?: unknown } }).detail?.code : undefined; if (typeof d === "string" && /^[a-z_]{1,40}$/.test(d)) code = d; } catch { /* keep generic */ }
+    } else await discard(res);
+    cleanup(); ctl.abort();
+    return { kind: "error", status: res.status, code };
+  }
+  const max = Math.min(Math.max(opts.maxBytes ?? 256 * 1024, 1), 1024 * 1024);
+  const reader = res.body.getReader();
+  let total = 0;
+  const out = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) { cleanup(); controller.close(); return; }
+        total += value.byteLength;
+        if (total > max) { cleanup(); ctl.abort(); controller.error(new Error("stream too large")); return; }
+        controller.enqueue(value);
+      } catch (e) { cleanup(); ctl.abort(); controller.error(e); }
+    },
+    cancel() { cleanup(); ctl.abort(); return reader.cancel().catch(() => {}); },
+  });
+  return { kind: "stream", body: out };
+}

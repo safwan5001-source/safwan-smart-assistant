@@ -12,6 +12,7 @@ import { runCommand } from "@/lib/commands";
 import { listFiles } from "@/lib/files-db";
 import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
+import ClaudeSettings from "./claude-settings";
 
 const THEMES: { id: Theme; label: string; icon: IconName }[] = [{ id: "system", label: "تلقائي", icon: "auto" }, { id: "light", label: "فاتح", icon: "sun" }, { id: "dark", label: "داكن", icon: "moon" }];
 
@@ -60,6 +61,8 @@ export default function SettingsScreen() {
         <small className="muted">الوضع الفعلي عند التفعيل: «{MODE_LABEL[DEFAULT_ASSISTANT_MODE(pref)].title}» — {MODE_LABEL[DEFAULT_ASSISTANT_MODE(pref)].hint}</small>
         <Link href="/integrations#policy-h" className="btn btn-sm" style={{ justifySelf: "start" }}>عرض مصفوفة الصلاحيات<Icon name="forward" size={16} /></Link>
       </section>
+
+      <ClaudeSettings />
 
       <section className="card card-pad" aria-labelledby="sys-h">
         <div className="section-head"><h2 id="sys-h">حالة النظام</h2><button className="btn btn-sm" onClick={refresh}>إعادة الفحص</button></div>

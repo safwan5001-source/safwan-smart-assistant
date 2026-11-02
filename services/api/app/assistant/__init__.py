@@ -1,3 +1,3 @@
-from .provider import AssistantProvider, AssistantUnavailable, get_provider, provider_status
+from .provider import AssistantProvider, AssistantUnavailable, get_provider, is_configured, provider_status
 
-__all__ = ["AssistantProvider", "AssistantUnavailable", "get_provider", "provider_status"]
+__all__ = ["AssistantProvider", "AssistantUnavailable", "get_provider", "is_configured", "provider_status"]

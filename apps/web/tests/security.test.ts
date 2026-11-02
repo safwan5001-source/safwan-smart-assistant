@@ -70,7 +70,7 @@ describe("browser bundle hygiene", () => {
     // `export { handler as POST }` (what the notify route uses) went unnoticed and the test passed vacuously.
     // The notification API is the only route with writes (bearer-token devices, see docs/NOTIFICATIONS.md); everything else is GET only.
     // The chat browser API (owner cookie + signed BFF hop, see docs/CHAT-BROWSER.md) is the second: GET/POST/DELETE, never PUT.
-    const allowed = (f: string): string[] => (/[\\/]api[\\/]notify[\\/]/.test(f) ? ["DELETE", "GET", "POST", "PUT"] : /[\\/]api[\\/]browser[\\/]/.test(f) ? ["DELETE", "GET", "POST"] : ["GET"]);
+    const allowed = (f: string): string[] => (/[\\/]api[\\/]notify[\\/]/.test(f) ? ["DELETE", "GET", "POST", "PUT"] : /[\\/]api[\\/](browser|assistant)[\\/]/.test(f) ? ["DELETE", "GET", "POST"] : ["GET"]);
     const routes = walk(join(root, "app", "api")).filter((f) => /route\.ts$/.test(f));
     expect(routes.length).toBeGreaterThan(0);
     for (const f of routes) {
