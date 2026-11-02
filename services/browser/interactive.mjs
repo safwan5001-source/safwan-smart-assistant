@@ -110,6 +110,8 @@ export async function runInteractive({ page, raced, signal, interactive, policy,
     const first = await verify(page, action, policy, t);
     const verdict = classify(action, first.facts, { allowUrl: (u) => policy.allowRequest(u) });
     if (verdict.decision === "deny") throw fail(verdict.code, "denied");
+    // A submit whose effective destination is outside the policy is refused outright: it must never reach the approval panel (or the API's view validation).
+    if (verdict.decision === "approve" && first.facts.formAction && !policy.allowRequest(first.facts.formAction)) throw fail("leaves_scope", "denied");
     if (verdict.decision === "approve") {
       const answer = await askApproval(seq, verdict.kind, describe(action), first.facts.formAction || undefined);
       if (answer !== true) throw fail(answer === "timeout" ? "approval_timeout" : "approval_rejected", "rejected");

