@@ -188,7 +188,11 @@ def assistant_respond(
             status_code=503,
             detail={"code": "assistant_not_configured", "message": "No AI provider is configured; no reply was generated."},
         ) from None
-    return {"provider": provider.name, "content": provider.respond([m.model_dump() for m in request.messages])}
+    try:
+        answer = provider.respond([m.model_dump() for m in request.messages])
+    except AssistantUnavailable:
+        raise HTTPException(status_code=502, detail={"code": "assistant_provider_unavailable", "message": "AI provider could not complete the request."}) from None
+    return {"provider": provider.name, "content": answer}
 
 
 @app.get("/audit")

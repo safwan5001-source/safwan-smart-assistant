@@ -16,7 +16,7 @@ export class AssistantUnavailableError extends Error {
 export type ChatTurn = { role: "user" | "assistant" | "system"; content: string };
 type Fetch = typeof fetch;
 
-export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/api", timeoutMs = 4000) {
+export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a), base = "/api", timeoutMs = 60000) {
   const call = async (path: string, init?: RequestInit) => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), timeoutMs);
@@ -34,13 +34,23 @@ export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a),
         return { server: "online", assistant: b.features?.assistant === true, version: typeof b.version === "string" ? b.version : "?" };
       } catch { return { server: "offline" }; }
     },
+    async sessionStatus(): Promise<{ enabled: boolean; authenticated: boolean }> {
+      const res = await call("/assistant/status");
+      if (!res.ok) return { enabled: false, authenticated: false };
+      const data = await res.json() as {enabled?:unknown; authenticated?:unknown};
+      return { enabled: data.enabled === true, authenticated: data.authenticated === true };
+    },
+    async unlock(code: string): Promise<boolean> {
+      const res = await call("/assistant/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({code}) });
+      return res.ok;
+    },
     async respond(turns: ChatTurn[], status: AssistantStatus): Promise<string> {
       if (status.server !== "online" || !status.assistant) throw new AssistantUnavailableError();
       const res = await call("/assistant/respond", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ messages: turns.slice(-50) }),
       });
-      if (!res.ok) throw new AssistantUnavailableError(res.status === 503 ? "المساعد الذكي غير مفعّل على الخادم." : "تعذر الحصول على رد من المساعد.");
+      if (!res.ok) throw new AssistantUnavailableError(res.status === 401 ? "يلزم فتح جلسة Claude من جديد." : res.status === 429 ? "تم بلوغ حد طلبات الذكاء الاصطناعي." : res.status === 503 ? "Claude غير متاح حاليًا على الخادم." : "تعذر الحصول على رد من المساعد.");
       const data = (await res.json()) as { content?: unknown };
       if (typeof data.content !== "string" || !data.content) throw new AssistantUnavailableError("رد غير صالح من الخادم.");
       return data.content;
