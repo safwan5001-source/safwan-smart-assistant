@@ -53,7 +53,14 @@ async function browse(url) {
     });
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     if (!allowHosts.includes(new URL(page.url()).hostname.toLowerCase())) throw new Error("Disallowed final URL");
-    return { title: (await page.title()).slice(0, 200), url: page.url() };
+    const title = (await page.title()).slice(0, 200);
+    const excerpt = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\\s+/g, " ").trim().slice(0, 4000);
+    // Screenshots may contain sensitive information. Never log or persist them.
+    const screenshot = await page.screenshot({ type: "jpeg", quality: 55, timeout: 10000 });
+    if (screenshot.length > 250000) throw new Error("Screenshot exceeds response cap");
+    return { title, url: page.url(), excerpt, screenshot: {
+      mimeType: "image/jpeg", base64: screenshot.toString("base64"), bytes: screenshot.length
+    } };
   } finally {
     try { await browser?.close(); } catch {}
     try { if (session?.id) await client.release(session.id); } catch { console.error("Browserbase session release failed"); }
