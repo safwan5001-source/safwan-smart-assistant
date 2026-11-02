@@ -10,7 +10,7 @@
  */
 import { evaluate, type PermissionMode, type Risk } from "./permissions";
 import { LIMITS, parseBrowserRef, type Priority, type Task, type Thread, type Message, type Attachment, type Role, type BrowserRef } from "./domain";
-import { parseBrowseCommand } from "./browser-task";
+import { parseActionLine, parseBrowseCommand, type ActionRequest } from "./browser-task";
 import { activityStore, firedStore, noticesStore, prefsStore, remindersStore, tasksStore, threadsStore, tombstonesStore, pushDeviceStore } from "./stores";
 import { clearFiles } from "./files-db";
 import { parseSlash } from "./slash";
@@ -117,7 +117,7 @@ const chatCommands = {
     const t = mustThread(p.threadId);
     const msg = t.messages.find((m) => m.id === p.id) ?? invalid("الرسالة غير موجودة.");
     if (!msg.browser) invalid("ليست بطاقة تصفح.");
-    const next = parseBrowserRef({ ...msg.browser, ...p.patch, url: msg.browser!.url }) ?? invalid("طلب التصفح غير صالح.");
+    const next = parseBrowserRef({ ...msg.browser, ...p.patch, url: msg.browser!.url, mode: msg.browser!.mode }) ?? invalid("طلب التصفح غير صالح.");
     patchThread(p.threadId, (x) => ({ ...x, messages: x.messages.map((m) => (m.id === p.id ? { ...m, browser: next } : m)) }));
   } } satisfies Def<{ threadId: string; id: string; patch: Partial<BrowserRef> }, void>,
   "chat.rename": { id: "chat.rename", title: "إعادة تسمية", risk: "write", run: (p: { id: string; title: string }) => {
@@ -195,7 +195,7 @@ export async function runCommand<K extends CommandId>(id: K, payload: PayloadOf<
 
 // ── chat quick commands (deterministic, no AI) ───────────────────────────
 export type ReminderOffer = { draft: Partial<ReminderInput>; clarification: Clarification; notes: string[] };
-export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer; browserOffer?: { url: string } };
+export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer; browserOffer?: { url: string; mode?: "interactive" }; browserAction?: ActionRequest };
 export async function runQuickCommand(text: string): Promise<QuickReply> {
   // «ذكرني بكرة الساعة 9 …» — typed or dictated. Ambiguity is asked about BEFORE anything is saved.
   if (isReminderIntent(text)) {
@@ -209,7 +209,13 @@ export async function runQuickCommand(text: string): Promise<QuickReply> {
   }
   // «/متصفح» — read-only test browsing. Only OFFERS a card; nothing is sent anywhere until the user presses «تشغيل» on it.
   const browse = parseBrowseCommand(text);
-  if (browse) return browse.kind === "offer" ? { handled: true, browserOffer: { url: browse.url } } : { handled: true, reply: browse.reason };
+  if (browse) {
+    if (browse.kind === "offer-interactive") return { handled: true, browserOffer: { url: "", mode: "interactive" } };
+    return browse.kind === "offer" ? { handled: true, browserOffer: { url: browse.url } } : { handled: true, reply: browse.reason };
+  }
+  // «/افتح» «/انقر» «/اكتب» «/اقرأ» — a command line for the ACTIVE interactive session card. Parsing only; the card submits it, the worker decides.
+  const line = parseActionLine(text);
+  if (line) return line.kind === "action" ? { handled: true, browserAction: line.action } : { handled: true, reply: line.reason };
   const slash = parseSlash(text);
   if (!slash) return { handled: false };
   if (slash.name === "help") {

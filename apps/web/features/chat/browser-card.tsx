@@ -2,18 +2,14 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import { Notice } from "@/components/ui";
-import { browserClient, type Fail } from "@/lib/browser-client";
-import { ERROR_LABEL, STEP_LABEL, isFinished, type TaskView } from "@/lib/browser-task";
+import { browserClient } from "@/lib/browser-client";
+import { FAIL_TEXT } from "./browser-text";
+import { ERROR_LABEL, STEP_LABEL, isFinished, type StepId, type TaskView } from "@/lib/browser-task";
 import type { BrowserRef } from "@/lib/domain";
 
 type Gate = "checking" | "disabled" | "locked" | "ready" | "offline";
 const POLL_MS = 1500, POLL_MAX_MS = 4000, MAX_FAILURES = 6;
 
-const FAIL_TEXT: Record<Fail, string> = {
-  disabled: "التصفح السحابي غير مفعّل على الخادم.", unauthorized: "الرمز غير صحيح أو انتهت صلاحية الدخول.", rate_limited: "محاولات كثيرة؛ انتظر قليلاً ثم أعد المحاولة.",
-  busy: "هناك مهمة تصفح أخرى قيد التنفيذ. انتظر انتهاءها أو أوقفها.", not_found: "انتهت صلاحية هذه المهمة على الخادم.", url_not_allowed: "العنوان غير مسموح في هذه التجربة.",
-  unavailable: "الخدمة غير متاحة الآن.", network: "تعذر الاتصال بالخادم.",
-};
 const STATUS_LABEL: Record<TaskView["status"], string> = { running: "قيد التنفيذ", cancelling: "جارٍ الإيقاف…", succeeded: "اكتملت", failed: "فشلت", cancelled: "أُوقفت" };
 
 /**
@@ -192,7 +188,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
         {task.steps.map((s) => (
           <li key={s.id} data-status={s.status}>
             <span className="bt-dot" aria-hidden="true">{s.status === "done" ? "✓" : s.status === "failed" ? "✕" : s.status === "running" ? <i className="spinner" /> : s.status === "skipped" ? "–" : "○"}</span>
-            <span>{STEP_LABEL[s.id]}</span>
+            <span>{STEP_LABEL[s.id as StepId]}</span>
             <span className="sr-only">{{ pending: "بانتظار", running: "قيد التنفيذ", done: "تم", failed: "فشل", skipped: "تُخطّيت" }[s.status]}</span>
           </li>
         ))}

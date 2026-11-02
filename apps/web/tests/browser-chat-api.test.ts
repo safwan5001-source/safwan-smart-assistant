@@ -49,7 +49,7 @@ describe("owner gate (cookie)", () => {
 describe("/api/browser/session", () => {
   it("reports status without revealing anything when the feature is off", async () => {
     const r = await call("GET", "status", {}, deps({ env: {} }));
-    expect(await r.json()).toEqual({ enabled: false, authenticated: false });
+    expect(await r.json()).toEqual({ enabled: false, authenticated: false, interactive: { enabled: false } });
   });
   it("is closed (503) for every other route while the feature is off", async () => {
     for (const [m, p] of [["POST", "session"], ["POST", "tasks"], ["GET", `tasks/${ID}`], ["POST", `tasks/${ID}/cancel`], ["GET", `tasks/${ID}/screenshot`]] as const) {

@@ -133,7 +133,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     assert.equal(lastAction(r).status, "done", JSON.stringify(r.actions));
     assert.match(echo(r), new RegExp("name=" + CANARY), "the page really received the text");
     assert.equal(JSON.stringify(r.actions).includes(CANARY), false, "the action log never contains typed text");
-    assert.match(lastAction(r).summary, /type 25 chars/);
+    assert.match(lastAction(r).summary, /كتابة 25 حرفًا/);
     r = await run(v.id, { tool: "type", target: { by: "label", value: "Secret word" }, text: "hunter2" });
     assert.deepEqual([lastAction(r).status, lastAction(r).error], ["denied", "sensitive_field"]);
     r = await run(v.id, { tool: "type", target: { by: "label", value: "Query" }, text: "4111 1111 1111 1111" });
@@ -180,7 +180,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     let n = (await get(v.id)).actions.length;
     assert.equal((await act(v.id, { tool: "click", target: role("button", "Count") })).status, 202);
     let w = await until(v.id, (x) => x.pending, "pending approval");
-    assert.deepEqual([w.pending.seq, w.pending.kind], [n + 1, "button"]); assert.match(w.pending.summary, /click button «Count»/); assert.equal(lastAction(w).status, "awaiting_approval");
+    assert.deepEqual([w.pending.seq, w.pending.kind], [n + 1, "button"]); assert.match(w.pending.summary, /نقر على زر «Count»/); assert.equal(lastAction(w).status, "awaiting_approval");
     assert.ok(w.pending.expiresAt > Date.now());
     await tick(300);
     assert.match(echo(await get(v.id)), /Count\s*0/, "not clicked while waiting");

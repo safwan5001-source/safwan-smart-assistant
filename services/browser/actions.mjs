@@ -61,15 +61,16 @@ export function parseAction(raw, normalizeUrl) {
   }
 }
 
-/** A short description that is safe to log and to show: names the tool and the element the CALLER named, never the typed text. */
+const ROLE_AR = { button: "زر", link: "رابط", textbox: "حقل", searchbox: "حقل بحث", checkbox: "خانة اختيار", radio: "زر اختيار", combobox: "قائمة", switch: "مفتاح", tab: "تبويب" };
+/** A short Arabic description that is safe to log and to show: names the tool and the element the CALLER named, never the typed text. */
 export function describe(action) {
   const t = action.target;
-  const who = t ? (t.by === "role" ? `${t.role} «${t.value}»` : `${t.by} «${t.value}»`) : "";
+  const who = !t ? "" : t.by === "role" ? `${ROLE_AR[t.role]} «${t.value}»` : t.by === "label" ? `عنصر بعنوان «${t.value}»` : t.by === "placeholder" ? `حقل نصه الإرشادي «${t.value}»` : `عنصر نصه «${t.value}»`;
   switch (action.tool) {
-    case "navigate": return `navigate ${action.url}`;
-    case "click": return `click ${who}`;
-    case "type": return `type ${action.text.length} chars into ${who}`;
-    default: return "observe";
+    case "navigate": return `انتقال إلى ${action.url}`;
+    case "click": return `نقر على ${who}`;
+    case "type": return `كتابة ${action.text.length} حرفًا في ${who}`;
+    default: return "قراءة الصفحة";
   }
 }
 
