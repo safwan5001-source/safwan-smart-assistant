@@ -16,7 +16,7 @@ function fakes({ guardFails = false, createDelay = 0, createFails = false, conne
     locator: () => ({ innerText: async () => "Example Domain  text" }),
     screenshot: async () => shot,
   };
-  const context = { pages: () => [page], newPage: async () => page, route: async () => {}, newCDPSession: async () => { if (guardFails) throw new Error("cdp unavailable"); return { on() {}, send: async () => ({}) }; } };
+  const context = { pages: () => [page], newPage: async () => page, route: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {}, on() {}, newCDPSession: async () => { if (guardFails) throw new Error("cdp unavailable"); return { on() {}, send: async () => ({}) }; } };
   const browser = { contexts: () => [context], newContext: async () => context, close: async () => { calls.closed++; } };
   const client = {
     createSession: async () => { calls.created++; await tick(createDelay); if (createFails) throw new Error("create failed https://secret"); return { id: "sess-1", connectUrl: "wss://x/?signingKey=S" }; },

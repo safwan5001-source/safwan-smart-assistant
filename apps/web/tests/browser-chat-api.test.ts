@@ -28,7 +28,7 @@ beforeEach(() => { backend = vi.fn(); resetBrowserChatLimits(); });
 
 describe("owner gate (cookie)", () => {
   it("is off without a strong access code", () => {
-    for (const e of [{}, { BROWSER_CHAT_ACCESS_CODE: "short" }, { BROWSER_CHAT_ACCESS_CODE: "é".repeat(15) }]) expect(readGate(e)).toBeNull();
+    for (const e of [{}, { BROWSER_CHAT_ACCESS_CODE: "short" }, { BROWSER_CHAT_ACCESS_CODE: "é".repeat(15) }, { BROWSER_CHAT_ACCESS_CODE: "a".repeat(64) }, { BROWSER_CHAT_ACCESS_CODE: "abcabcabc".repeat(6) }]) expect(readGate(e)).toBeNull();
     expect(readGate(env)).not.toBeNull();
   });
   it("accepts only the exact code", () => {
@@ -68,6 +68,13 @@ describe("/api/browser/session", () => {
     expect(verifyCookieValue(gate, value, NOW)).toBe(true);
     expect((await call("GET", "status", { headers: { cookie: cookie(value) } })).status).toBe(200);
   });
+  it("only failures count, per caller: a flood of forged-IP failures cannot lock the owner out (review F3)", async () => {
+    for (let i = 0; i < 40; i++) await call("POST", "session", { headers: { ...same, "x-forwarded-for": `203.0.113.${i}` }, body: { code: "wrong" } });
+    const r = await call("POST", "session", { headers: { ...same, "x-forwarded-for": "198.51.100.7" }, body: { code: CODE } });
+    expect(r.status).toBe(200);                                             // the owner still gets in
+    const again = await call("POST", "session", { headers: { ...same, "x-forwarded-for": "203.0.113.1" }, body: { code: CODE } });
+    expect(again.status).toBe(200);                                         // even from an IP that already failed: the right code is never throttled
+  });
   it("wrong codes get one uniform 401 and no cookie; attempts are rate limited", async () => {
     for (const body of [{ code: "wrong" }, { code: "" }, {}, { code: 5 }]) {
       const r = await call("POST", "session", { headers: same, body });
@@ -76,7 +83,7 @@ describe("/api/browser/session", () => {
     let last = 0;
     for (let i = 0; i < 10; i++) last = (await call("POST", "session", { headers: same, body: { code: "wrong" } })).status;
     expect(last).toBe(429);
-    expect((await call("POST", "session", { headers: same, body: { code: CODE } })).status).toBe(429);   // even the right code is throttled during a burst
+    expect((await call("POST", "session", { headers: same, body: { code: "x" } })).status).toBe(429);      // the same caller keeps getting throttled
   });
   it("rejects cross-site and header-less state-changing calls", async () => {
     for (const headers of [{}, { host: HOST }, { origin: "https://evil.test", host: HOST }, { ...same, "sec-fetch-site": "cross-site" }, { origin: "null", host: HOST }] as Record<string, string>[]) {
@@ -130,6 +137,10 @@ describe("tasks (authenticated)", () => {
     const text = await r.text();
     expect(text).not.toMatch(/secret|sessionId|connectUrl/);
     expect(JSON.parse(text).task.id).toBe(ID);
+  });
+  it("a chat command handled locally is never forwarded to the AI provider (review F4)", async () => {
+    const src = (await import("node:fs")).readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
+    expect(src).toMatch(/if \(quick\.handled\) \{ if \(quick\.reply\)[\s\S]*?\}\s*else if \(ready && text\)/);
   });
   it("maps upstream failures to fixed codes and never leaks upstream text, addresses or secrets", async () => {
     const cases: [unknown, number, string][] = [

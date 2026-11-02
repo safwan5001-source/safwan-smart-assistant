@@ -76,7 +76,8 @@ export default function ChatScreen() {
       if (quick.reminderOffer) setOffer(quick.reminderOffer);
       // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
       if (quick.browserOffer) await runCommand("chat.send", { threadId: id, text: "طلب تصفح تجريبي (قراءة فقط): " + quick.browserOffer.url, role: "system", browser: { url: quick.browserOffer.url, state: "offer" } });
-      if (quick.handled && quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" });
+      // a handled quick command (incl. the browser card) is final: it is never forwarded to the AI provider (review F4)
+      if (quick.handled) { if (quick.reply) await runCommand("chat.send", { threadId: id, text: quick.reply, role: "system" }); }
       else if (ready && text) {
         const turns = (threadsStore.getSnapshot().find((t) => t.id === id)?.messages ?? [])
           .filter((m) => m.text).map((m) => ({ role: m.role ?? "user", content: m.text }));

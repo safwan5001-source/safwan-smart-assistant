@@ -12,7 +12,7 @@ async function boot({ hang = false } = {}) {
   const released = [];
   const page = { goto: () => (hang ? new Promise(() => {}) : Promise.resolve()), url: () => "https://example.com/", title: async () => "Example Domain",
     locator: () => ({ innerText: async () => "Hello" }), screenshot: async () => JPEG };
-  const context = { pages: () => [page], route: async () => {}, newCDPSession: async () => ({ on() {}, send: async () => ({}) }) };
+  const context = { pages: () => [page], route: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {}, on() {}, newCDPSession: async () => ({ on() {}, send: async () => ({}) }) };
   const browser = { contexts: () => [context], close: async () => {} };
   const { server, manager } = createApp({
     token: TOKEN, policy: createPolicy(["example.com"]), projectId: "p", log: () => {},

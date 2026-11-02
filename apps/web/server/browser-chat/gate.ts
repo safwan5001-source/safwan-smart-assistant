@@ -12,6 +12,8 @@ import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
  */
 export type Env = Record<string, string | undefined>;
 export const MIN_CODE_CHARS = 32;
+/** Rejects "aaaa…", repeated phrases and keyboard runs: generate with `openssl rand -base64 36`. The cookie MAC key is derived from this code. */
+export const MIN_DISTINCT_CHARS = 14;
 export const COOKIE_NAME = "safwan_bc";
 export const COOKIE_PATH = "/api/browser";
 export const COOKIE_TTL_S = 8 * 3600;
@@ -20,7 +22,7 @@ export type Gate = { key: Buffer; code: Buffer };
 
 export function readGate(env: Env = process.env): Gate | null {
   const code = env.BROWSER_CHAT_ACCESS_CODE;
-  if (!code || Buffer.byteLength(code, "utf8") < MIN_CODE_CHARS) return null;
+  if (!code || Buffer.byteLength(code, "utf8") < MIN_CODE_CHARS || new Set(code).size < MIN_DISTINCT_CHARS) return null; // length alone says nothing about randomness
   // Domain-separated key: the access code is never used directly as an HMAC key, and no other feature can mint these cookies.
   const key = Buffer.from(hkdfSync("sha256", Buffer.from(code, "utf8"), Buffer.from("safwan-browser-chat"), Buffer.from("cookie-v1"), 32));
   return { key, code: Buffer.from(code, "utf8") };

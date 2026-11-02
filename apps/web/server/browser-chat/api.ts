@@ -24,9 +24,24 @@ const HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers: { ...HEADERS, ...extra } });
 const err = (code: string, status: number, extra: Record<string, string> = {}) => json({ error: code }, status, extra);
 
+/** Counts only FAILED attempts per key. A correct code is never throttled by other people's failures (review F3: no owner lock-out). */
+export function createFailureLimiter(max: number, windowMs: number, cap = 10_000) {
+  const fails = new Map<string, { n: number; reset: number }>();
+  return {
+    blocked: (id: string, now: number) => { const f = fails.get(id); return !!f && f.reset > now && f.n >= max; },
+    fail: (id: string, now: number) => {
+      const f = fails.get(id);
+      if (!f || f.reset <= now) {
+        if (fails.size >= cap) { for (const [k, v] of fails) if (v.reset <= now) fails.delete(k); if (fails.size >= cap) fails.clear(); }
+        fails.set(id, { n: 1, reset: now + windowMs });
+      } else f.n++;
+    },
+  };
+}
+
 // per-process limiters (this feature is single-owner; a shared store would be overkill)
 const limiters = {
-  unlockIp: createLimiter(5, 60_000), unlockAll: createLimiter(20, 600_000),
+  unlockFail: createFailureLimiter(5, 60_000),
   create: createLimiter(6, 60_000), poll: createLimiter(240, 60_000), cancel: createLimiter(20, 60_000),
 };
 const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
@@ -64,10 +79,6 @@ function upstreamError(r: BackendResult): Response | null {
   if (r.kind === "unavailable" && r.status === 503) return err("unavailable", 503);   // API says it cannot serve (flag off, worker not configured)
   return err("unavailable", 502);                                                    // incl. "rejected": a signature problem is OUR misconfiguration
 }
-function apiCode(json: unknown): string | null {
-  const c = (json as { detail?: { code?: unknown } } | null)?.detail?.code;
-  return typeof c === "string" ? c : null;
-}
 
 function taskReply(r: BackendResult, okStatus: number): Response {
   const bad = upstreamError(r);
@@ -81,7 +92,6 @@ function taskReply(r: BackendResult, okStatus: number): Response {
     case 404: return err("not_found", 404);
     case 409: return err("busy", 409);
     case 400: return err("url_not_allowed", 400);
-    case 503: return err(apiCode(ok.json) === "browser_chat_disabled" ? "disabled" : "unavailable", 503);
     default: return err("unavailable", 502);
   }
 }
@@ -100,10 +110,16 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
 
     if (route === "POST /session") {
       if (!sameOrigin(req)) return err("forbidden", 403);
-      if (!limiters.unlockIp(clientIp(req), now) || !limiters.unlockAll("all", now)) return err("rate_limited", 429);
+      const ip = clientIp(req);
       const body = (await readJson(req)) as { code?: unknown } | undefined;
       if (!body || typeof body !== "object") return err("bad_request", 400);
-      if (!codeMatches(gate, body.code)) return err("unauthorized", 401);  // same answer for every wrong input
+      // Only failures count, and only against the caller's own key: the right code is always honoured, an anonymous caller (who can
+      // forge X-Forwarded-For) can burn nothing but its own budget. The code is 32+ high-entropy characters, so guessing is infeasible.
+      if (!codeMatches(gate, body.code)) {
+        if (limiters.unlockFail.blocked(ip, now)) return err("rate_limited", 429);
+        limiters.unlockFail.fail(ip, now);
+        return err("unauthorized", 401);                                   // same answer for every wrong input
+      }
       return json({ authenticated: true }, 200, { "Set-Cookie": setCookieHeader(issueCookieValue(gate, now), secure) });
     }
     if (route === "DELETE /session") {
@@ -161,6 +177,6 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
 
 /** Test seam: forget rate-limit history. */
 export function resetBrowserChatLimits() {
-  limiters.unlockIp = createLimiter(5, 60_000); limiters.unlockAll = createLimiter(20, 600_000);
+  limiters.unlockFail = createFailureLimiter(5, 60_000);
   limiters.create = createLimiter(6, 60_000); limiters.poll = createLimiter(240, 60_000); limiters.cancel = createLimiter(20, 60_000);
 }

@@ -16,7 +16,25 @@ const header = (list, name) => list?.find((h) => h.name.toLowerCase() === name)?
  *     with BlockedByClient, so the redirected request is never sent. If this layer cannot be installed the job fails (never "best effort").
  * Requests from any page other than the main one (popups, new tabs) are refused outright.
  */
+// Runs in EVERY frame before any page script. Closes the channels that neither context.route nor CDP Fetch can see or that race
+// (independent review F1/F2): scripted popups, programmatic target=_blank, WebRTC/WebTransport. Defence in depth, not the boundary:
+// the real boundary remains a provider-side egress allow-list (docs/CHAT-BROWSER.md).
+const HARDEN_PAGE = () => {
+  const no = () => null;
+  try { Object.defineProperty(window, "open", { value: no, writable: false, configurable: false }); } catch { /* already locked */ }
+  for (const name of ["RTCPeerConnection", "webkitRTCPeerConnection", "WebTransport"]) { try { Object.defineProperty(window, name, { value: undefined, writable: false, configurable: false }); } catch { /* ignore */ } }
+  const self = (el) => { if (el && el.getAttribute && /^_?(blank|new)/i.test(el.getAttribute("target") || "")) el.setAttribute("target", "_self"); };
+  const origSubmit = HTMLFormElement.prototype.submit;
+  HTMLFormElement.prototype.submit = function () { self(this); return origSubmit.call(this); };
+  for (const type of ["click", "submit", "auxclick"]) document.addEventListener(type, (e) => { const t = e.target; self(t?.closest?.("a,area,form")); }, true);
+};
+
 export async function installNetworkGuard(context, page, policy) {
+  await context.addInitScript(HARDEN_PAGE);
+  // WebSocket handshakes are invisible to route()/Fetch: refuse them all (nothing is forwarded to any server).
+  await context.routeWebSocket(/.*/, (ws) => { ws.close({ code: 1008, reason: "blocked" }).catch?.(() => {}); });
+  // Backstop: any page other than ours is closed at once.
+  context.on("page", (p) => { if (p !== page) p.close().catch(() => {}); });
   await context.route("**/*", (route) => {
     let mine = false;
     try { mine = route.request().frame().page() === page; } catch { /* service worker / detached frame: refuse */ }
@@ -69,6 +87,7 @@ export function createBrowse({ client, projectId, policy, connect = (url) => chr
       let context, page;
       await stage("connect", "browser_execution_failed", async () => {
         browser = await connect(session.connectUrl);
+        if (signal.aborted) { await browser.close().catch(() => {}); throw abortError(); }
         signal.addEventListener("abort", () => { browser.close().catch(() => {}); }, { once: true }); // kills any in-flight CDP call at once
         context = browser.contexts()[0] ?? await browser.newContext();
         page = context.pages()[0] ?? await context.newPage();
@@ -92,7 +111,8 @@ export function createBrowse({ client, projectId, policy, connect = (url) => chr
       return { title: text.title, url: page.url(), excerpt: text.excerpt, screenshot };
     } finally {
       step("release", "running");
-      try { await browser?.close(); } catch { /* the remote release below ends the session regardless */ }
+      // bounded: a hung remote close must not wedge the single slot (the session release below ends the browser anyway)
+      try { await Promise.race([browser?.close(), new Promise((r) => setTimeout(r, 5000))]); } catch { /* the remote release below ends the session regardless */ }
       // Aborted while createSession was in flight: the session will exist shortly and must still be released.
       if (!session && creating) session = await creating.catch(() => undefined);
       let released = !session; // nothing was ever created: nothing to release
