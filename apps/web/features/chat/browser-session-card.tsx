@@ -312,6 +312,12 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
         <div className="bt-approval" role="alertdialog" aria-labelledby={ids + "-ap"} aria-describedby={ids + "-apd"} tabIndex={-1} ref={approvalRef}>
           <strong id={ids + "-ap"}>تنتظر موافقتك — الخطوة {task.pending.seq}</strong>
           <p id={ids + "-apd"} dir="auto">{task.pending.summary}</p>
+          {task.pending.fields && task.pending.fields.length > 0 && (
+            <div className="bt-fields-list" aria-label="البيانات التي سيُرسلها النموذج">
+              <strong>البيانات التي سيُرسلها النموذج:</strong>
+              <ul>{task.pending.fields.map((f, i) => <li key={i} dir="auto"><bdi dir="ltr" className="num">{f.name}</bdi> = <span>{f.value || "—"}</span></li>)}</ul>
+            </div>
+          )}
           {task.pending.element && (
             <p className="bt-el" dir="auto">العنصر الفعلي في الصفحة: <strong>«{task.pending.element.text || "بلا نص"}»</strong> <small className="muted">({task.pending.element.role || task.pending.element.tag})</small></p>
           )}

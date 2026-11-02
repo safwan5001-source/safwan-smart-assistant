@@ -405,6 +405,7 @@ tr:last-child td { border-bottom: 0; }
 .bt-approval { position: sticky; inset-block-end: 6px; z-index: 2; display: grid; gap: 8px; padding: 12px 14px; border-radius: var(--radius); border: 2px solid var(--warn); background: var(--warn-soft); }
 .bt-approval:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
 .bt-approval .btn { min-height: 44px; min-inline-size: 110px; }
+.bt-fields-list ul { margin: 4px 0 0; padding-inline-start: 18px; display: grid; gap: 2px; font-size: 13.5px; overflow-wrap: anywhere; }
 .bt-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-block-size: 220px; overflow: auto; }
 .bt-log li { display: flex; align-items: flex-start; gap: 8px; font-size: 13.5px; line-height: 1.55; }
 .bt-log .badge { flex-shrink: 0; }

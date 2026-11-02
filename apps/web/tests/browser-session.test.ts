@@ -146,6 +146,13 @@ describe("parseTaskView (interactive)", () => {
     expect(v.pending!.method).toBe("POST"); expect(v.actions![0].error).toBe("effect_blocked");
     expect(parseTaskView(withPending({ seq: 2, kind: "submit", summary: "s", method: "DELETE" }), { sessionUrlOk: shape })).toBeNull();
   });
+  it("keeps the form fields of a pending submit (bounded, cleaned) and custom-element tags; refuses malformed ones", () => {
+    const withP = (extra: Record<string, unknown>) => sview({ actions: [{ seq: 1, tool: "click", status: "awaiting_approval", summary: "x" }], pending: { seq: 1, kind: "submit", summary: "s", ...extra } });
+    const v = parseTaskView(withP({ element: { tag: "my-button", text: "Send" }, fields: [{ name: "amount", value: "10" }, { name: "n\u202e", value: "v\u0000", x: 1 }] }), { sessionUrlOk: shape })!;
+    expect(v.pending!.fields).toEqual([{ name: "amount", value: "10" }, { name: "n", value: "v" }]); expect(v.pending!.element!.tag).toBe("my-button");
+    for (const fields of ["x", ["x"], Array.from({ length: 14 }, () => ({ name: "a", value: "b" }))]) expect(parseTaskView(withP({ fields }), { sessionUrlOk: shape })).toBeNull();
+    expect(parseTaskView(sview({ actions: [{ seq: 1, tool: "click", status: "denied", summary: "x", error: "unsupported_enctype" }] }), { sessionUrlOk: shape })!.actions![0].error).toBe("unsupported_enctype");
+  });
   it("collapses unknown action errors to a fixed code", () => {
     expect(parseTaskView(sview({ actions: [{ seq: 1, tool: "click", status: "failed", summary: "x", error: "Traceback /srv/x" }] }), { sessionUrlOk: shape })!.actions![0].error).toBe("action_failed");
   });

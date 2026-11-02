@@ -7,16 +7,23 @@ import { isSensitiveWord } from "../actions.mjs";
 
 const dir = new URL("../../../labs/browser-lab/", import.meta.url);
 const pages = ["index.html", "page2.html"].map((f) => [f, fs.readFileSync(new URL(f, dir), "utf8")]);
+const script = fs.readFileSync(new URL("lab.js", dir), "utf8");
 
 test("the lab pages make no network requests and open no windows", () => {
   for (const [f, html] of pages) {
     assert.equal(/https?:\/\//i.test(html.replace(/<meta[^>]*>/gi, "")), false, `${f}: no absolute URL`);
-    for (const bad of [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /window\.open/, /location\s*(\.|=)/, /<iframe/i, /<script[^>]+src=/i, /<link[^>]+href=/i, /<img[^>]+src=/i, /\saction=/i, /<form[^>]+method=/i, /navigator\./]) {
+    for (const bad of [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /window\.open/, /location\s*(\.|=)/, /<iframe/i, /<link[^>]+href=/i, /<img[^>]+src=/i, /\saction=/i, /<form[^>]+method=/i, /navigator\./]) {
       assert.equal(bad.test(html), false, `${f}: ${bad}`);
     }
     assert.match(html, /name="robots" content="noindex,nofollow"/);
-    if (f === "index.html") assert.match(html, /http-equiv="Content-Security-Policy" content="default-src 'none'; [^"]*form-action 'none'; base-uri 'none'/, "the lab carries its own CSP (review F1/F2/F11)");
+    assert.equal(/<script(?![^>]*\ssrc="\/browser-lab\/lab\.js")[^>]*>/i.test(html), false, `${f}: only the same-origin lab.js may be a script (no inline script: the session CSP would block it)`);
+    assert.equal(/\son[a-z]+\s*=/i.test(html), false, `${f}: no inline event-handler attributes`);
+    if (f === "index.html") assert.match(html, /http-equiv="Content-Security-Policy" content="default-src 'none'; [^"]*script-src 'self'; [^"]*form-action 'none'; base-uri 'none'/, "the lab carries its own CSP (review F1/F2/F11)");
   }
+});
+
+test("lab.js makes no network requests either", () => {
+  for (const bad of [/\bfetch\s*\(/, /XMLHttpRequest/, /WebSocket/, /sendBeacon/, /window\.open/, /location\s*(\.|=)/, /\bWorker\b/, /importScripts/, /eval\s*\(/, /document\.cookie/, /localStorage|sessionStorage/]) assert.equal(bad.test(script), false, String(bad));
 });
 
 test("every control name on the lab pages is allowed by the hard-denial rules (so the session can be demonstrated)", () => {
@@ -28,8 +35,7 @@ test("every control name on the lab pages is allowed by the hard-denial rules (s
 });
 
 test("the demo form submits nowhere: the handler cancels the submission", () => {
-  const html = pages[0][1];
-  assert.match(html, /addEventListener\("submit", function \(e\) \{ e\.preventDefault\(\)/);
+  assert.match(script, /addEventListener\("submit", function \(e\) \{ e\.preventDefault\(\)/);
 });
 
 test("isolation: the lab is its own project; nothing of it ships inside the assistant's web app", () => {

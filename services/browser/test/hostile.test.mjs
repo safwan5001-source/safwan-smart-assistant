@@ -45,6 +45,10 @@ const PAGES = {
   "/browser-lab/pseudo.html": PAGE(`<style>#x::before{content:"Pay now"}</style><button id="x" type="button"></button><button type="button" aria-labelledby="lbl"></button><span id="lbl" hidden>Delete account</span>`),
   "/browser-lab/cookies.html": PAGE(`<p id="o"></p><script>document.getElementById("o").textContent="cookies=["+document.cookie+"] storage="+localStorage.length;</script>`),
   "/browser-lab/offscope.html": PAGE(`<a href="/browser-lab/go-evil">Leave the lab</a>`),
+  "/browser-lab/payload.html": PAGE(`<form id="f" action="/browser-lab/submit" method="post"><input type="hidden" name="amount" value="10"><input name="note" aria-label="Note" value="hello"><input type="password" name="pin" value="1234"><button type="submit">Send record</button></form>
+    <script>document.getElementById("f").addEventListener("submit",()=>{ if (location.hash === "#tamper") document.querySelector("[name=amount]").value = "9999999"; });</script>`),
+  "/browser-lab/shadow.html": PAGE(`<my-box id="b"></my-box><script>const r = document.getElementById("b").attachShadow({ mode: "open" }); r.innerHTML = '<input aria-label="Inner field"><button type="button">Inner go</button>';</script>`),
+  "/browser-lab/pixel-page.html": PAGE(`<img src="/browser-lab/pixel" alt="" width="1" height="1">`),
   "/browser-lab/page2.html": PAGE(`<h1>Second page</h1>`),
   "/browser-lab/submit": PAGE(`<h1>Submitted</h1>`),
 };
@@ -60,6 +64,7 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     if (req.method !== "GET" && req.method !== "HEAD") { req.resume(); }
     if (req.url === "/browser-lab/redir" && req.method === "POST") { res.writeHead(307, { location: "/browser-lab/api/transfer-after-redirect" }); return res.end(); }
     if (req.url === "/browser-lab/go-evil") { res.writeHead(302, { location: "https://evil.test/stolen" }); return res.end(); }
+    if (req.url === "/browser-lab/pixel") { res.writeHead(302, { location: "/browser-lab/api/event?id=1" }); return res.end(); }
     if (req.url === "/browser-lab/file.bin") { res.writeHead(200, { "content-type": "application/octet-stream", "content-disposition": 'attachment; filename="x.bin"' }); return res.end("BINARY"); }
     if (req.url === "/browser-lab/file.txt") { res.writeHead(200, { "content-type": "text/plain", "content-disposition": "attachment; filename=x.txt" }); return res.end("text"); }
     if (req.url.startsWith("/browser-lab/api/")) { res.writeHead(200, { "content-type": "text/plain", "set-cookie": "leak=1; Path=/" }); return res.end("ok"); }
@@ -72,7 +77,7 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
   const noProxyEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/proxy/i.test(k)));
   const mock = await startMock({ chromium, launchOptions: { env: noProxyEnv, args: [`--host-resolver-rules=MAP example.com 127.0.0.1:${sitePort}, MAP lab.test 127.0.0.1:${sitePort}, MAP evil.test 127.0.0.1:${sitePort}`, "--ignore-certificate-errors"] } });
   const limits = { ...LIMITS, idleMs: 60_000, approvalMs: 30_000 };
-  const { server, manager } = createApp({ token: TOKEN, policy: createPolicy(["example.com"], ["lab.test/browser-lab/"]), projectId: "p", log: () => {}, limits, client: createClient({ apiKey: MOCK_KEY, base: mock.base }) });
+  const { server, manager } = createApp({ token: TOKEN, policy: createPolicy(["example.com"], ["lab.test/browser-lab/"]), projectId: "p", log: () => {}, limits, sessionCsp: null, client: createClient({ apiKey: MOCK_KEY, base: mock.base }) });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
   t.after(async () => { await manager.shutdown(); server.closeAllConnections(); await new Promise((r) => server.close(r)); await mock.stop(); site.closeAllConnections(); await new Promise((r) => site.close(r)); fs.rmSync(dir, { recursive: true, force: true }); });
@@ -97,6 +102,7 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     }
     throw new Error("action never settled");
   };
+  const mutate = async (fn) => { const sess = [...mock.sessions.values()].at(-1); const b = await chromium.connectOverCDP(sess.connectUrl); try { await b.contexts()[0].pages()[0].evaluate(fn); } finally { await b.close(); } };
   const role = (r, value) => ({ by: "role", role: r, value });
   const posts = () => hits.filter((h) => h.method !== "GET" && h.method !== "HEAD");
   const effect = (v) => `${last(v).status}/${last(v).error ?? "-"}`;
@@ -182,6 +188,53 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     assert.deepEqual([f.status, f.error, f.sessionReleased], ["failed", "disallowed_final_url", true]);
     assert.equal(hits.some((h) => h.host === "evil.test"), false, JSON.stringify(hits));
     assert.equal(manager.isBusy(), false);
+  });
+
+  await t.test("the owner sees WHAT a form will send (hidden fields included, passwords masked); changing it after approval refuses the step", async () => {
+    hits = [];
+    const v = await start("payload.html");
+    const n = (await get(v.id)).actions.length;
+    await api("POST", `/v1/jobs/${v.id}/actions`, { tool: "click", target: role("button", "Send record") });
+    const w = await until(v.id, (x) => x.pending, "pending payload");
+    assert.deepEqual(w.pending.fields, [{ name: "amount", value: "10" }, { name: "note", value: "hello" }, { name: "pin", value: "••••" }]);
+    assert.equal(w.pending.method, "POST");
+    await mutate(() => { document.querySelector("[name=amount]").value = "1000000"; });
+    await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);
+    const r = await until(v.id, (x) => !x.pending && x.actions.length > n && final(x.actions[n]), "after tamper");
+    assert.deepEqual([last(r).status, last(r).error], ["rejected", "element_changed"]);
+    assert.deepEqual(posts(), []);
+    await stop(v.id);
+  });
+
+  await t.test("a submit handler that edits the fields at submit time cannot send different data than approved (body compared at the network)", async () => {
+    hits = [];
+    const v = await start("payload.html");
+    await mutate(() => { location.hash = "#tamper"; });
+    const r = await doApproved(v.id, { tool: "click", target: role("button", "Send record") });
+    await tick(400);
+    assert.deepEqual(posts(), [], "no POST: the body differed from what was approved");
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "effect_blocked"]);
+    await stop(v.id);
+  });
+
+  await t.test("open shadow roots: the REAL inner control is typed into / classified (not its host)", async () => {
+    const v = await start("shadow.html");
+    let r = await doApproved(v.id, { tool: "type", target: { by: "label", value: "Inner field" }, text: "abc" });
+    assert.equal(last(r).status, "done", effect(r));
+    const n = r.actions.length;
+    await api("POST", `/v1/jobs/${v.id}/actions`, { tool: "click", target: role("button", "Inner go") });
+    const w = await until(v.id, (x) => x.pending && x.pending.seq === n + 1, "pending inner");
+    assert.equal(w.pending.element.tag, "button"); assert.equal(w.pending.element.text, "Inner go");
+    await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/reject`);
+    await stop(v.id);
+  });
+
+  await t.test("a redirect from a query-free image to a URL WITH a query is not followed", async () => {
+    hits = [];
+    const v = await start("pixel-page.html");
+    await tick(800);
+    assert.equal(hits.some((h) => h.path.startsWith("/browser-lab/api/")), false, JSON.stringify(hits));
+    await stop(v.id);
   });
 
   await t.test("accessible-name tricks: CSS ::before text and aria-labelledby are what the denial rules see", async () => {

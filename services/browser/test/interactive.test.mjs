@@ -80,7 +80,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
   const limits = { ...LIMITS, idleMs: 30_000, approvalMs: 20_000 };
   const logs = [];
   const { server, manager } = createApp({
-    token: TOKEN, policy: createPolicy(["example.com"], ["lab.test/browser-lab/"]), projectId: "p", log: (m) => logs.push(String(m)), limits,
+    token: TOKEN, policy: createPolicy(["example.com"], ["lab.test/browser-lab/"]), projectId: "p", log: (m) => logs.push(String(m)), limits, sessionCsp: null,
     client: createClient({ apiKey: MOCK_KEY, base: mock.base }),
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));

@@ -16,6 +16,8 @@ const SAFE = new Set(["GET", "HEAD"]);
 const STATIC_TYPES = new Set(["stylesheet", "script", "image", "font", "media", "manifest", "texttrack"]);
 const RENDERABLE = /^(text\/html|application\/xhtml\+xml|text\/plain)(;|$)/i;
 
+const nl = (v) => String(v).replace(/\r\n?/g, "\n");
+const sameEntries = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((e, i) => e[0] === b[i][0] && nl(e[1]) === nl(b[i][1]));
 const parts = (raw) => { try { const u = new URL(raw); return { origin: u.origin, path: u.pathname, search: u.search }; } catch { return null; } };
 
 export function createEffectGate({ onViolation = () => {} } = {}) {
@@ -39,10 +41,12 @@ export function createEffectGate({ onViolation = () => {} } = {}) {
     isOpen: () => windowOpen,
 
     /** Judge one outgoing request. `type` is Playwright's resourceType(); `navigation` its isNavigationRequest(). */
-    decide({ method, type, url, navigation }) {
+    decide({ method, type, url, navigation, postData = null }) {
       const m = String(method).toUpperCase();
       if (!SAFE.has(m)) {
-        const a = auth.find((x) => x.method === m && x.uses < 1 && matches(x, m, url));
+        // an approved POST must also carry exactly the fields the owner was shown (urlencoded only): the page may not edit them after approval
+        const a = auth.find((x) => x.method === m && x.uses < 1 && matches(x, m, url)
+          && (!x.entries || (postData !== null && sameEntries([...new URLSearchParams(postData)], x.entries))));
         if (windowOpen && a && navigation && type === "document") { a.uses++; return { allow: true }; }
         note("unauthorized_effect"); return { allow: false, reason: "unauthorized_effect" };
       }
@@ -59,9 +63,14 @@ export function createEffectGate({ onViolation = () => {} } = {}) {
     },
 
     /** Judge a RESPONSE (or a redirect) before the browser acts on it. `request.method` is the method of the request that produced it. */
-    responseVerdict({ method, type, status, headers = {} }) {
+    responseVerdict({ method, type, status, headers = {}, url = "" }) {
       const m = String(method).toUpperCase();
       if (status >= 300 && status < 400 && !SAFE.has(m)) { note("redirected_effect"); return { allow: false, reason: "redirected_effect" }; } // 307/308 would replay the POST elsewhere
+      // redirect hops never pass through the request judge: a query-free static URL must not bounce to one WITH a query (the shape of a GET "API call")
+      if (status >= 300 && status < 400 && STATIC_TYPES.has(String(type)) && headers.location) {
+        const next = (() => { try { return new URL(headers.location, url); } catch { return null; } })();
+        if (!next || next.search) { note("subresource_query"); return { allow: false, reason: "subresource_query" }; }
+      }
       const disposition = String(headers["content-disposition"] ?? "").toLowerCase();
       if (/^\s*attachment/.test(disposition)) { note("download_blocked"); return { allow: false, reason: "download_blocked" }; }
       if (type === "document" && status < 300 && status >= 200 && !RENDERABLE.test(String(headers["content-type"] ?? "text/html"))) { note("download_blocked"); return { allow: false, reason: "download_blocked" }; }

@@ -57,8 +57,8 @@ try {
   const site = createHttpsServer({ key: readFileSync(join(tmp, "k.pem")), cert: readFileSync(join(tmp, "c.pem")) }, (req, res) => {
     const host = (req.headers.host ?? "").split(":")[0];
     hits.push({ host, method: req.method, path: req.url });
-    if (host === "lab.test" && /^\/browser-lab\/(index|page2)\.html$/.test(req.url) && req.method === "GET") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (host === "lab.test" && /^\/browser-lab\/(index\.html|page2\.html|lab\.js)$/.test(req.url) && req.method === "GET") {
+      res.writeHead(200, { "content-type": req.url.endsWith(".js") ? "text/javascript" : "text/html; charset=utf-8" });
       return res.end(readFileSync(join(LABDIR, req.url.split("/").pop())));
     }
     if (host === "example.com" && req.url === "/") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(`<!doctype html><title>Example Domain</title><body><h1>Example Domain</h1><button type="button">Hello</button>`); }

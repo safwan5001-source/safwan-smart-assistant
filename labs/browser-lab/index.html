@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <!-- This page may not talk to any network: scripted requests, images, frames and form posts are all blocked by the policy below. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'">
 <meta name="color-scheme" content="light dark">
 <title>مختبر المتصفح</title>
 <style>
@@ -60,16 +60,6 @@
     <p>النتيجة: <output id="result">لم يُرسَل شيء</output></p>
   </section>
 </main>
-<script>
-  (function () {
-    var $ = function (id) { return document.getElementById(id); };
-    var showEcho = function () { $("echo").textContent = $("fullname").value + (($("notes").value) ? " / " + $("notes").value : ""); };
-    $("fullname").addEventListener("input", showEcho);
-    $("notes").addEventListener("input", showEcho);
-    $("inc").addEventListener("click", function () { $("count").textContent = String(Number($("count").textContent) + 1); });
-    // The demo form never leaves the page: the "submission" is local text only.
-    $("demo-form").addEventListener("submit", function (e) { e.preventDefault(); $("result").textContent = "تم الإرسال محلياً: " + $("term").value; });
-  })();
-</script>
+<script src="/browser-lab/lab.js"></script>
 </body>
 </html>

@@ -70,7 +70,7 @@ export function windowFor(action, facts) {
   if (facts.isSubmit) {
     if (facts.formMethod === "dialog") return [];
     const post = facts.formMethod === "post";
-    return [{ method: post ? "POST" : "GET", url: facts.formTarget, query: post }];
+    return [{ method: post ? "POST" : "GET", url: facts.formTarget, query: post, ...(post ? { entries: facts.formEntries } : {}) }];
   }
   return []; // typing, plain buttons, toggles: the approval covers on-page effects only; no network effect is authorised
 }
@@ -150,7 +150,7 @@ export async function runInteractive({ page, context, gate, raced, signal, inter
       // What the owner is asked to approve is what the browser says the control IS (accessible name, tag, role), and where it really sends.
       const w = windowFor(action, first.facts)[0];
       const el = { tag: first.facts.tag, role: first.facts.axRole || first.facts.role || undefined, text: cleanText(first.facts.axName || first.facts.text || first.facts.value || first.facts.ariaLabel || first.facts.name, 120) };
-      const answer = await askApproval(seq, verdict.kind, describe(action), { element: el, submitsTo: first.facts.formAction || undefined, method: w && w.method !== "GET" ? w.method : undefined });
+      const answer = await askApproval(seq, verdict.kind, describe(action), { element: el, submitsTo: first.facts.formAction || undefined, method: w && w.method !== "GET" ? w.method : undefined, fields: first.facts.isSubmit && first.facts.formFields?.length ? first.facts.formFields : undefined });
       if (answer !== true) throw fail(answer === "timeout" ? "approval_timeout" : "approval_rejected", "rejected");
       interactive.update(seq, { status: "running" });               // approved: it is executing now
     }

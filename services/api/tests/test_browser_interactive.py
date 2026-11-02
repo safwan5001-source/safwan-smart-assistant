@@ -276,6 +276,19 @@ def test_pending_method_and_the_new_outcome_codes_pass_and_anything_else_is_refu
     assert view(client, worker, ijob(actions=acts + [{"seq": 2, "tool": "click", "status": "awaiting_approval", "summary": "y"}], pending={**pend, "seq": 2, "method": "DELETE"})).status_code == 502
 
 
+def test_form_fields_of_a_pending_submit_are_passed_on_cleaned_and_bounded(client, worker):
+    pend = {"seq": 1, "kind": "submit", "summary": "x", "method": "POST", "element": {"tag": "my-button", "text": "Send"},
+            "fields": [{"name": "amount", "value": "10"}, {"name": "pin", "value": "••••"}, {"name": "n\u202e", "value": "v\x00", "extra": 1}]}
+    acts = [{"seq": 1, "tool": "click", "status": "awaiting_approval", "summary": "x"}]
+    t = view(client, worker, ijob(actions=acts, pending=pend)).json()["task"]
+    assert t["pending"]["fields"] == [{"name": "amount", "value": "10"}, {"name": "pin", "value": "••••"}, {"name": "n", "value": "v"}]
+    assert t["pending"]["element"]["tag"] == "my-button"
+    for bad in ([{"name": "a", "value": "b"}] * 14, "x", ["x"]):
+        assert view(client, worker, ijob(actions=acts, pending={**pend, "fields": bad})).status_code == 502
+    for code in ("unsupported_enctype", "payload_too_large"):
+        assert view(client, worker, ijob(actions=[{"seq": 1, "tool": "click", "status": "denied", "summary": "x", "error": code}])).json()["task"]["actions"][0]["error"] == code
+
+
 def test_the_resolved_element_in_a_pending_approval_is_passed_on_cleaned(client, worker):
     pend = {"seq": 1, "kind": "button", "summary": "x", "element": {"tag": "button", "role": "switch", "text": "Share\u202e my profile", "html": "<b>", "x": 1}}
     worker.reply = Resp({"job": ijob(actions=[{"seq": 1, "tool": "click", "status": "awaiting_approval", "summary": "x"}], pending=pend)}, 200)

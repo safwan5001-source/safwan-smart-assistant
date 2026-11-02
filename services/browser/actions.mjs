@@ -115,7 +115,7 @@ export const looksLikeCardNumber = (text) => {
 
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
-  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler, facts.axName, facts.axRole, facts.pageUrl,
+  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler, facts.axName, facts.axRole, facts.pageUrl, facts.formEnctype, JSON.stringify(facts.formEntries ?? []),
 ])).digest("hex").slice(0, 16);
 
 /**
@@ -140,6 +140,11 @@ export function classify(action, facts, { allowUrl }) {
     return { decision: "allow" };
   }
 
+  // A POST must carry exactly what the owner is shown, and the gate can only compare urlencoded fields: anything else is not approvable.
+  if (action.tool === "click" && facts.isSubmit && facts.formMethod === "post") {
+    if (facts.formEnctype && facts.formEnctype !== "application/x-www-form-urlencoded") return { decision: "deny", code: "unsupported_enctype" };
+    if (facts.formBodyTooLarge) return { decision: "deny", code: "payload_too_large" };
+  }
   // click. `allow` is deliberately narrow: only things whose native behaviour is navigation or local UI state AND that carry no script handler
   // attribute. Anything else (buttons, role=switch, aria-controls buttons, checkboxes inside a form or with onchange...) needs the owner's approval.
   if (facts.tag === "a") {

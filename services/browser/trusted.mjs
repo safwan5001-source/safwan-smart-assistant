@@ -27,6 +27,18 @@ function FACTS() {
     } catch { formAction = "?"; formTarget = "?"; }
     formMethod = cut(el.getAttribute("formmethod") || (form && form.getAttribute("method")) || "get", 10).toLowerCase();
   }
+  // What a submit would SEND (urlencoded form data incl. the submitter), as the page's own DOM states it right now: shown to the owner and bound by the gate.
+  let formEnctype = "", entries = [], fields = [], formBodyTooLarge = false;
+  if (form && isSubmit) {
+    formEnctype = cut(el.getAttribute("formenctype") || form.getAttribute("enctype") || "application/x-www-form-urlencoded", 60).toLowerCase();
+    try {
+      entries = [...new FormData(form, el).entries()].map(([k, v]) => [String(k), typeof v === "string" ? v : "[file:" + cut(v && v.name, 40) + "]"]);
+      formBodyTooLarge = JSON.stringify(entries).length > 8000;
+      const secret = new Set([...form.elements].filter((c) => c.type === "password").map((c) => c.name));
+      fields = entries.slice(0, 12).map(([k, v]) => ({ name: cut(k, 40), value: secret.has(k) ? "••••" : cut(v, 60) }));
+      if (entries.length > 12) fields.push({ name: "…", value: "+" + (entries.length - 12) });
+    } catch { entries = []; }
+  }
   let href = "";
   if (tag === "a") { try { href = new URL(str(el.getAttribute("href")), document.baseURI).href.slice(0, 2048); } catch { href = "?"; } }
   const byId = (ids) => String(ids ?? "").split(/\s+/).filter(Boolean).slice(0, 5).map((i) => { const n = document.getElementById(i); return n ? cut(n.textContent, 80) : ""; }).join(" ");
@@ -39,7 +51,7 @@ function FACTS() {
     autocomplete: cut(el.getAttribute("autocomplete"), 40), fieldName: cut(el.getAttribute("name"), 80),
     href, hasDownload: el.hasAttribute("download"), target: cut(el.getAttribute("target"), 20),
     readOnly: el.readOnly === true, contentEditable: el.isContentEditable === true,
-    inForm: !!form, formAction: cut(formAction, 160), formTarget, formMethod, isSubmit,
+    inForm: !!form, formAction: cut(formAction, 160), formTarget, formMethod, isSubmit, formEnctype, formBodyTooLarge, formEntries: formBodyTooLarge ? [] : entries, formFields: fields,
     hasHandler: [...el.attributes].some((a) => /^on/i.test(a.name)),
     hasDisclosureAttr: el.hasAttribute("aria-expanded") || el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-controls"),
     pageUrl: location.origin + location.pathname,
@@ -47,8 +59,16 @@ function FACTS() {
 }
 
 // Picks the control the user's pointer / focus really lands on (a <label> stands for the control it activates).
-const PICK_POINT = `(function (x, y) { var e = document.elementFromPoint(x, y); if (!e) return null; var c = e.closest(${JSON.stringify(CONTROL)}) || e; if (c.localName === "label" && c.control) c = c.control; return c; })`;
-const PICK_FOCUS = `(function () { var e = document.activeElement; return e && e !== document.body && e !== document.documentElement ? e : null; })`;
+// Both descend into OPEN shadow roots (elementFromPoint/activeElement stop at the host) and climb out of them again to find the control.
+const PICK_POINT = `(function (x, y) {
+  var e = document.elementFromPoint(x, y); if (!e) return null;
+  for (var i = 0; i < 8; i++) { var r = e.shadowRoot; if (!r) break; var n = r.elementFromPoint(x, y); if (!n || n === e) break; e = n; }
+  function up(n) { for (var i = 0; i < 12 && n; i++) { var c = n.closest(${JSON.stringify(CONTROL)}); if (c) return c; var root = n.getRootNode(); n = root && root.host; } return null; }
+  var c = up(e) || e; if (c.localName === "label" && c.control) c = c.control; return c; })`;
+const PICK_FOCUS = `(function () {
+  var e = document.activeElement; if (!e || e === document.body || e === document.documentElement) return null;
+  for (var i = 0; i < 8; i++) { var r = e.shadowRoot; if (!r || !r.activeElement) break; e = r.activeElement; }
+  return e; })`;
 
 export function createTrustedReader(context, page) {
   let cdp;

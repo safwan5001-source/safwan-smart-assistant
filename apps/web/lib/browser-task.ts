@@ -23,14 +23,14 @@ export type ActionStatus = "queued" | "running" | "awaiting_approval" | "done" |
 export type ActionError =
   | "element_not_found" | "element_ambiguous" | "element_hidden" | "element_disabled" | "not_in_lab" | "sensitive_field" | "sensitive_action" | "sensitive_value"
   | "file_upload_blocked" | "download_blocked" | "leaves_scope" | "not_editable" | "element_changed" | "approval_rejected" | "approval_timeout" | "action_timeout"
-  | "action_failed" | "navigation_failed" | "effect_blocked" | "element_unstable" | "unsupported_target";
+  | "action_failed" | "navigation_failed" | "effect_blocked" | "element_unstable" | "unsupported_target" | "unsupported_enctype" | "payload_too_large";
 export type EndReason = "finished" | "idle" | "limit";
 export type Locator = { by: "role"; role: Role; value: string; exact?: boolean } | { by: "label" | "placeholder" | "text"; value: string; exact?: boolean };
 /** One action as the caller states it. Structured on purpose: there is no selector string, so nothing executable can be expressed. */
 export type ActionRequest =
   | { tool: "navigate"; url: string } | { tool: "click"; target: Locator } | { tool: "type"; target: Locator; text: string } | { tool: "observe" };
 export type SessionAction = { seq: number; tool: Tool; status: ActionStatus; summary: string; error?: ActionError };
-export type Pending = { seq: number; kind: "submit" | "button"; summary: string; expiresAt?: number; submitsTo?: string; method?: "GET" | "POST"; element?: { tag: string; role?: string; text: string } };
+export type Pending = { seq: number; kind: "submit" | "button"; summary: string; expiresAt?: number; submitsTo?: string; method?: "GET" | "POST"; element?: { tag: string; role?: string; text: string }; fields?: { name: string; value: string }[] };
 export type SessionExtras = {
   mode: "interactive"; ready: boolean; limits: { maxActions: number; deadlineMs: number; idleMs: number; approvalMs: number }; deadlineAt?: number;
   blockedRequests: number; actions: SessionAction[]; endReason?: EndReason; pending?: Pending;
@@ -63,7 +63,7 @@ const SESSION_URL_SHAPE = /^https:\/\/[a-z0-9.-]{3,100}\/[\x21-\x7e]{0,300}$/;
 export type ParseOptions = { sessionUrlOk?: (url: string) => boolean };
 const ACTION_STATUSES = new Set<string>(["queued", "running", "awaiting_approval", "done", "failed", "denied", "rejected", "cancelled"]);
 const ACTION_ERRORS = new Set<string>(["element_not_found", "element_ambiguous", "element_hidden", "element_disabled", "not_in_lab", "sensitive_field", "sensitive_action", "sensitive_value",
-  "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected", "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target"]);
+  "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected", "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target", "unsupported_enctype", "payload_too_large"]);
 const END_REASONS = new Set<string>(["finished", "idle", "limit"]);
 const int = (v: unknown, lo: number, hi: number): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= lo && v <= hi ? v : null);
 
@@ -124,8 +124,14 @@ export function parseTaskView(raw: unknown, opts: ParseOptions = {}): TaskView |
     const exp = int(p.expiresAt, 1, 1e14); if (exp !== null) pending.expiresAt = exp;
     if (p.element !== undefined && p.element !== null) {
       const e = p.element as Record<string, unknown>;
-      if (typeof e !== "object" || typeof e.tag !== "string" || !/^[a-z][a-z0-9]{0,19}$/.test(e.tag)) return null;
+      if (typeof e !== "object" || typeof e.tag !== "string" || !/^[a-z][a-z0-9-]{0,39}$/.test(e.tag)) return null;
       pending.element = { tag: e.tag, text: cleanText(e.text, 120), ...(typeof e.role === "string" && e.role ? { role: cleanText(e.role, 30) } : {}) };
+    }
+    if (p.fields !== undefined && p.fields !== null) {
+      if (!Array.isArray(p.fields) || p.fields.length > 13) return null;
+      const fields: { name: string; value: string }[] = [];
+      for (const f of p.fields as unknown[]) { const o2 = f as Record<string, unknown> | null; if (!o2 || typeof o2 !== "object") return null; fields.push({ name: cleanText(o2.name, 40), value: cleanText(o2.value, 60) }); }
+      pending.fields = fields;
     }
     if (p.method !== undefined && p.method !== null) { if (p.method !== "GET" && p.method !== "POST") return null; pending.method = p.method; }
     if (p.submitsTo !== undefined && p.submitsTo !== null) { if (typeof p.submitsTo !== "string" || !urlOk(p.submitsTo)) return null; pending.submitsTo = p.submitsTo; }
@@ -158,7 +164,7 @@ export const ACTION_ERROR_LABEL: Record<ActionError, string> = {
   not_in_lab: "هذه الصفحة للقراءة فقط؛ النقر والكتابة متاحان في صفحة المختبر.", sensitive_field: "حقل حسّاس (كلمة مرور/بطاقة/رمز تحقق): محظور.",
   sensitive_action: "إجراء محظور في هذه المرحلة: دفع أو حذف أو تسجيل دخول أو حساب.", sensitive_value: "القيمة تشبه رقم بطاقة: محظورة.", file_upload_blocked: "رفع الملفات محظور.",
   download_blocked: "التنزيل محظور.", leaves_scope: "الرابط يخرج عن النطاق المسموح.", not_editable: "العنصر لا يقبل الكتابة.", element_changed: "تغيّر العنصر بعد الموافقة؛ أُلغي الإجراء.",
-  effect_blocked: "حُجب طلب لم توافق عليه أثناء الخطوة (سكربت الصفحة حاول إرسال/تنقّل/طلب إضافي).", element_unstable: "العنصر يتحرك؛ أعد المحاولة بعد استقراره.",
+  effect_blocked: "حُجب أثناء الخطوة ما لم توافق عليه (طلب أو تنقّل أو بيانات مختلفة عمّا عُرض). يُحجب ما تراه البوابة فقط؛ لا تعتبر هذا إثباتًا بعدم خروج أي شيء آخر.", unsupported_enctype: "نوع ترميز النموذج غير مدعوم (يُدعم الافتراضي فقط).", payload_too_large: "بيانات النموذج أكبر من الحد المسموح للموافقة.", element_unstable: "العنصر يتحرك؛ أعد المحاولة بعد استقراره.",
   unsupported_target: "الهدف إطار/كائن مضمّن؛ غير مدعوم.", approval_rejected: "رفضتَ هذه الخطوة.", approval_timeout: "انتهت مهلة الموافقة.", action_timeout: "انتهت مهلة الإجراء.", action_failed: "تعذر تنفيذ الإجراء.", navigation_failed: "تعذر فتح الصفحة.",
 };
 export const END_LABEL: Record<EndReason, string> = { finished: "أنهيتَ الجلسة.", idle: "انتهت الجلسة لعدم النشاط.", limit: "بلغت الجلسة حد عدد الخطوات." };
