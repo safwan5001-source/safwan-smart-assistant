@@ -28,12 +28,15 @@ try {
   const title = await page.title();
   const excerpt = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim().slice(0, 4000);
   const shot = await page.screenshot({ type: "jpeg", quality: 55 });
-  if (title !== "Example Domain" || !excerpt.includes("Example Domain") ||
-      shot.byteLength < 1000 || shot.byteLength > 250000) throw new Error("Read V1 assertions failed");
+  const titleOk = title === "Example Domain";
+  const textOk = excerpt.includes("Example Domain");
+  const jpegOk = shot.byteLength >= 1000 && shot.byteLength <= 250000;
+  console.log(`BROWSER_READ_V1_ASSERTIONS title=${titleOk} text=${textOk} jpeg=${jpegOk} chars=${excerpt.length} bytes=${shot.byteLength}`);
+  if (!titleOk || !textOk || !jpegOk) throw new Error("Read V1 assertions failed");
   console.log("BROWSER_READ_V1_PASS title=Example Domain excerpt_chars=" + excerpt.length + " jpeg_bytes=" + shot.byteLength);
 } catch (error) {
   process.exitCode = 1;
-  console.error("SMOKE_FAILED " + (error?.name || "error")); // Never log full errors/URLs/secrets
+  console.error("SMOKE_FAILED " + (error?.message === "Read V1 assertions failed" ? "assertion" : (error?.name || "error"))); // Never log full errors/URLs/secrets
 } finally {
   try { await browser?.close(); } catch {}
   if (session?.id) {
