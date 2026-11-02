@@ -109,7 +109,7 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
              ON CONFLICT (device_id, id) DO UPDATE SET rev = EXCLUDED.rev, alert_at = EXCLUDED.alert_at, body = EXCLUDED.body
              WHERE EXCLUDED.rev > notify.reminders.rev OR (EXCLUDED.rev = notify.reminders.rev AND EXCLUDED.body IS DISTINCT FROM notify.reminders.body)`,
             [deviceId, r.id, r.rev, alertAt(r), JSON.stringify(r)]);
-          if (up.rowCount && (r.status === "completed" || r.status === "paused")) await cancelPending([r.id], `reminder_${r.status}`);
+          if (up.rowCount) await cancelPending([r.id], "reminder_changed"); // the user acted/rescheduled: a queued push for the old occurrence is stale
         }
         await c.query("UPDATE notify.devices SET last_seen_at = $2 WHERE id = $1", [deviceId, now]);
         const res = await c.query("SELECT body FROM notify.reminders WHERE device_id = $1 ORDER BY id", [deviceId]);

@@ -154,6 +154,7 @@ export async function disablePush(): Promise<PushState> {
 
 /** Full erase: server rows (device, reminders, deliveries), browser subscription and local credentials. Returns true when nothing remains. */
 export async function eraseRemoteDevice(): Promise<boolean> {
+  epoch++;
   const device = pushDeviceStore.getSnapshot();
   let ok = true;
   if (device) {
@@ -184,6 +185,7 @@ export async function sendTestPush(): Promise<TestResult> {
   return "failed";
 }
 
+let epoch = 0; // bumped by every wipe: responses of syncs started before it are discarded
 let inflight: Promise<boolean> | null = null;
 /** Serialised: a call made while another sync is running waits for it, then runs with the freshest data. */
 export async function syncReminders(): Promise<boolean> {
@@ -195,7 +197,9 @@ async function doSync(): Promise<boolean> {
   const device = pushDeviceStore.getSnapshot();
   if (!device?.subscribed || device.erasePending) return false; // never re-import server rows of a device whose erasure is pending
   const sentTombs = tombstonesStore.getSnapshot();
+  const ep = epoch, did = device.deviceId;
   const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs, prefs: toServerPrefs(prefsStore.getSnapshot()) }, device);
+  if (ep !== epoch || pushDeviceStore.getSnapshot()?.deviceId !== did) return false; // a wipe/re-registration happened meanwhile: never import this stale answer
   if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)
   if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
   if (!r.ok || !r.json) return false;

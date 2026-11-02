@@ -6,9 +6,9 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStore } from "@/server/notify/memory-store";
 import { createPgStore } from "@/server/notify/pg-store";
 import { parseServerPrefs } from "@/lib/notify-prefs";
-import { createReminder, fire, updateReminder } from "@/lib/reminders";
+import { createReminder, fire, parseReminderValue, updateReminder } from "@/lib/reminders";
 import { parseReminderText } from "@/lib/reminder-parser";
-import { runQuickCommand } from "@/lib/commands";
+import { runCommand, runQuickCommand } from "@/lib/commands";
 import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { handleNotify } from "@/server/notify/api";
@@ -82,6 +82,30 @@ describe.each(impls)("review fixes on the store — %s", (_n, make) => {
     await store.commitFire(id, next, r.rev, [del("k-c", "p2c")]);
     await store.syncReminders(id, [{ ...next, status: "completed", rev: next.rev + 1, completedAt: NOW }], [], NOW + 30);
     expect((await store.listDeliveries(id, 10)).find((x) => x.key === "k-c")).toMatchObject({ status: "cancelled" });
+  });
+});
+
+describe.each(impls)("review fixes on the store (round 5) — %s", (_n, make) => {
+  let store: NotifyStore;
+  beforeAll(() => { store = make(); });
+  afterAll(async () => { await store.close(); });
+  const device = async () => {
+    const id = randomUUID();
+    await store.createDevice({ id, tokenHash: "ab".repeat(32), prefs: parseServerPrefs({}), now: NOW });
+    await store.setSubscription(id, makeSubscription().sub, NOW);
+    return id;
+  };
+  it("rescheduling a reminder cancels the queued push for the OLD occurrence; an identical echo does not", async () => {
+    const id = await device();
+    const r = mkReminder({}, NOW, "rs1");
+    await store.syncReminders(id, [r], [], NOW);
+    const { reminder: next } = fire(r, r.dueAt + 1);
+    await store.commitFire(id, next, r.rev, [del("k-rs", "rs1")]);
+    await store.syncReminders(id, [next], [], NOW + 5);                                    // client echoes the server's own state
+    expect((await store.listDeliveries(id, 5))[0]).toMatchObject({ key: "k-rs", status: "pending" });
+    const moved = { ...next, rev: next.rev + 1, status: "active" as const, dueAt: r.dueAt + 86_400_000 };
+    await store.syncReminders(id, [moved], [], NOW + 10);                                  // user moved it to tomorrow
+    expect((await store.listDeliveries(id, 5))[0]).toMatchObject({ key: "k-rs", status: "cancelled" });
   });
 });
 
@@ -278,5 +302,68 @@ describe("P2: chat reminders use the configured time zone", () => {
     expect(q.handled).toBe(true);
     expect(q.reminderCreated?.tz).toBe("America/New_York");
     expect(remindersStore.getSnapshot()[0].tz).toBe("America/New_York");
+  });
+});
+
+describe("P1: one malformed reminder cannot stop the dispatcher", () => {
+  it("timestamps outside the supported range are rejected by the parser", () => {
+    const ok = mkReminder({}, NOW, "ts");
+    expect(parseReminderValue(ok)).not.toBeNull();
+    for (const bad of [-8_640_000_000_000_001, 8_640_000_000_000_001, 1e14, -1, Number.MAX_SAFE_INTEGER]) {
+      expect(parseReminderValue({ ...ok, dueAt: bad })).toBeNull();
+      expect(parseReminderValue({ ...ok, created: bad })).toBeNull();
+    }
+    expect(parseReminderValue({ ...ok, anchor: "9999-01-01" })).toBeNull();
+    expect(parseReminderValue({ ...ok, rev: 9e15 })!.rev).toBeLessThanOrEqual(1_000_000_000);
+  });
+  it("a poisoned row that slipped past validation is parked; healthy reminders (this device and others) still fire", async () => {
+    const now = NOW;
+    const s = fakeSender();
+    const rt = makeRuntime({ send: s.send, now: () => now });
+    const evil = await registerDevice(rt, makeSubscription().sub, {});
+    const good = await registerDevice(rt, makeSubscription().sub, {});
+    const poison = { ...mkReminder({}, NOW, "poison"), dueAt: -8_640_000_000_000_001 };
+    const fine = mkReminder({}, NOW, "fine");
+    await rt.store!.syncReminders(evil.deviceId, [poison], [], now);
+    await rt.store!.syncReminders(good.deviceId, [fine], [], now);
+    const t = fine.dueAt + 1000;
+    const rep = await dispatchTick(rt.store!, rt.send!, t);
+    expect(rep.errors).toBe(1);
+    expect(rep).toMatchObject({ fired: 1, sent: 1 });
+    expect((await dispatchTick(rt.store!, rt.send!, t + 1000)).errors).toBe(0);            // parked, not retried every tick
+  });
+});
+
+describe("P2: a sync response that arrives after a wipe is discarded", () => {
+  const g = globalThis as unknown as Record<string, unknown>;
+  const saved: Record<string, PropertyDescriptor | undefined> = {};
+  const stub = (k: string, v: unknown) => { saved[k] ??= Object.getOwnPropertyDescriptor(globalThis, k); Object.defineProperty(globalThis, k, { value: v, configurable: true, writable: true }); };
+  afterEach(() => { for (const [k, d] of Object.entries(saved)) { if (d) Object.defineProperty(globalThis, k, d); else delete g[k]; } vi.restoreAllMocks(); });
+  it("deleted reminders do not reappear when the old in-flight answer lands after «مسح كل البيانات»", async () => {
+    installBrowser();
+    const rt = makeRuntime({ send: fakeSender().send, now: () => NOW });
+    for (const st of [remindersStore, tombstonesStore, pushDeviceStore, prefsStore]) st.reset();
+    const sub = makeSubscription().sub; let existing: unknown = null;
+    const subscription = () => ({ endpoint: sub.endpoint, toJSON: () => sub, options: { applicationServerKey: urlBase64ToUint8Array(vapid.publicKey).buffer }, unsubscribe: async () => true });
+    const pushManager = { getSubscription: async () => existing, subscribe: async () => (existing = subscription()) };
+    stub("navigator", { userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/126", platform: "Linux", maxTouchPoints: 0, serviceWorker: { register: async () => ({ pushManager }), ready: Promise.resolve({}), getRegistration: async () => ({ pushManager }) } });
+    stub("Notification", { permission: "granted", requestPermission: async () => "granted" });
+    stub("PushManager", class {});
+    const w = g.window as Record<string, unknown>;
+    w.navigator = g.navigator; w.PushManager = g.PushManager; w.Notification = g.Notification; w.matchMedia = () => ({ matches: false }); w.isSecureContext = true;
+    const online = async (url: string, init: RequestInit = {}) => handleNotify(new Request(`http://localhost${url}`, init), url.replace("/api/notify", "").split("/").filter(Boolean), rt);
+    stub("fetch", online);
+    await enablePush();
+    remindersStore.set([mkReminder({}, NOW, "inflight1")]); await syncReminders();
+    let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+    stub("fetch", async (url: string, init: RequestInit = {}) => { const res = await online(url, init); if (url.includes("/reminders/sync")) await gate; return res; });
+    const pending = syncReminders();                                              // the server already answered with the reminder, the answer is held back
+    await new Promise((r) => setTimeout(r, 10));
+    stub("fetch", online);
+    const wipe = await runCommand("data.erase_all", {}, { approved: true });
+    expect(wipe).toMatchObject({ status: "executed", data: { serverErased: true } });
+    release(); await pending;
+    expect(remindersStore.getSnapshot()).toEqual([]);
+    expect(pushDeviceStore.getSnapshot()).toBeNull();
   });
 });

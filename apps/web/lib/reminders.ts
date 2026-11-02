@@ -61,6 +61,10 @@ const bad = (m: string): never => { throw new ReminderError(m); };
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+/** Every instant must be a sane date (1970–2100): values outside JS's Date range (or far outside any real schedule) used to make
+ *  formatting/scheduling throw inside the dispatcher. rev is bounded so it always fits a PostgreSQL integer. */
+export const MAX_TS = 4_102_444_800_000;
+const isTs = (v: unknown): v is number => isNum(v) && v >= 0 && v <= MAX_TS;
 const isStr = (v: unknown): v is string => typeof v === "string";
 
 /** Sanitising parser for stored / synced data. Returns null for anything that is not a valid reminder. */
@@ -72,20 +76,21 @@ export function parseReminderValue(v: unknown): Reminder | null {
   if (!isStr(v.anchor) || !parseDateKey(v.anchor)) return null;
   if (!PRIORITIES.includes(v.priority as ReminderPriority)) return null;
   if (!["active", "fired", "paused", "completed"].includes(v.status as string)) return null;
-  if (!isNum(v.dueAt) || !isNum(v.created) || !isNum(v.updated)) return null;
+  if (!isTs(v.dueAt) || !isTs(v.created) || !isTs(v.updated)) return null;
+  if (Number(v.anchor.slice(0, 4)) > 2100) return null;
   const lead = isNum(v.leadMinutes) ? Math.round(v.leadMinutes) : 0;
   if (lead < 0 || lead > REMINDER_LIMITS.maxLeadMinutes) return null;
   const r: Reminder = {
     id: v.id, title: v.title.trim().slice(0, REMINDER_LIMITS.title), tz: v.tz, repeat: v.repeat as RepeatKind,
     time: v.time, anchor: v.anchor, leadMinutes: lead, priority: v.priority as ReminderPriority,
-    status: v.status as ReminderStatus, dueAt: v.dueAt, rev: isNum(v.rev) && v.rev >= 0 ? Math.floor(v.rev) : 0,
+    status: v.status as ReminderStatus, dueAt: v.dueAt, rev: isNum(v.rev) && v.rev >= 0 ? Math.min(Math.floor(v.rev), 1_000_000_000) : 0,
     created: v.created, updated: v.updated,
   };
   if (isStr(v.notes) && v.notes.trim()) r.notes = v.notes.slice(0, REMINDER_LIMITS.notes);
-  if (isNum(v.snoozeUntil) && isNum(v.snoozeFor)) { r.snoozeUntil = v.snoozeUntil; r.snoozeFor = v.snoozeFor; }
-  if (isNum(v.lastFiredAt)) r.lastFiredAt = v.lastFiredAt;
-  if (isNum(v.lastFiredDueAt)) r.lastFiredDueAt = v.lastFiredDueAt;
-  if (isNum(v.completedAt)) r.completedAt = v.completedAt;
+  if (isTs(v.snoozeUntil) && isTs(v.snoozeFor)) { r.snoozeUntil = v.snoozeUntil; r.snoozeFor = v.snoozeFor; }
+  if (isTs(v.lastFiredAt)) r.lastFiredAt = v.lastFiredAt;
+  if (isTs(v.lastFiredDueAt)) r.lastFiredDueAt = v.lastFiredDueAt;
+  if (isTs(v.completedAt)) r.completedAt = v.completedAt;
   return r;
 }
 export function parseReminders(value: unknown): Reminder[] {

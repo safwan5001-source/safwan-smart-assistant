@@ -16,13 +16,14 @@ const BATCH = 200;
 const PURGE_EVERY_MS = 3600_000;
 let lastPurge = 0;
 
-export type TickReport = { fired: number; held: number; sent: number; retried: number; failed: number; gone: number; expired: number; skipped: boolean };
+export type TickReport = { errors: number; fired: number; held: number; sent: number; retried: number; failed: number; gone: number; expired: number; skipped: boolean };
 
 export async function dispatchTick(store: NotifyStore, send: PushSender, now: number): Promise<TickReport> {
-  const rep: TickReport = { fired: 0, held: 0, sent: 0, retried: 0, failed: 0, gone: 0, expired: 0, skipped: false };
+  const rep: TickReport = { errors: 0, fired: 0, held: 0, sent: 0, retried: 0, failed: 0, gone: 0, expired: 0, skipped: false };
   const res = await store.withLock(async () => {
     // 1) reminders → deliveries
     for (const { device, reminder } of await store.dueReminders(now, BATCH)) {
+     try {
       if (shouldHold(now, device.prefs.quiet, device.prefs.tz, reminder.priority)) {
         await store.deferAlert(device.id, reminder.id, quietEnd(now, device.prefs.quiet, device.prefs.tz));
         rep.held++; continue;
@@ -31,9 +32,14 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
       if (!fired.length) { await store.deferAlert(device.id, reminder.id, now + 3_600_000); continue; }
       const ok = await store.commitFire(device.id, next, reminder.rev, fired.map((f) => deliveryOf(reminderPayload(f, device.prefs), now)));
       if (ok) rep.fired += fired.length;
+     } catch {
+      // one malformed/poisoned row must never stop the dispatcher for everybody else: park it for a day and carry on
+      rep.errors++; await store.deferAlert(device.id, reminder.id, now + 24 * 3600_000).catch(() => undefined);
+     }
     }
     // 2) deliveries → push
     for (const { device, delivery } of await store.dueDeliveries(now, BATCH)) {
+     try {
       if (!device.subscription) { await store.markDelivery(device.id, delivery.key, { status: "gone", attempts: delivery.attempts }); rep.gone++; continue; }
       if (now > delivery.expiresAt) { await store.markDelivery(device.id, delivery.key, { status: "expired", attempts: delivery.attempts }); rep.expired++; continue; }
       // quiet hours are evaluated again at SEND time with the device's CURRENT prefs: a retry backing off into the quiet window,
@@ -52,6 +58,10 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
       } else if (r.status === 400 || r.status === 413) { await store.markDelivery(device.id, delivery.key, { status: "failed", attempts, lastError: r.error ?? `http_${r.status}` }); rep.failed++; }
       else if (attempts >= MAX_ATTEMPTS) { await store.markDelivery(device.id, delivery.key, { status: "failed", attempts, lastError: r.error ?? `http_${r.status}` }); rep.failed++; }
       else { await store.markDelivery(device.id, delivery.key, { status: "pending", attempts, nextAttemptAt: now + BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)], lastError: r.error ?? `http_${r.status}` }); rep.retried++; }
+     } catch {
+      rep.errors++; // unparsable payload etc.: give up on this delivery instead of retrying it forever
+      await store.markDelivery(device.id, delivery.key, { status: "failed", attempts: delivery.attempts + 1, lastError: "dispatch_error" }).catch(() => undefined);
+     }
     }
     if (now - lastPurge > PURGE_EVERY_MS) { lastPurge = now; await store.purge(now); }
     return rep;

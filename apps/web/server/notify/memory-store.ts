@@ -44,7 +44,7 @@ export function createMemoryStore(): NotifyStore {
         // server's own schedule advance, otherwise a pause/complete made while the dispatcher fired would be silently lost
         if (!cur || r.rev > cur.r.rev || (r.rev === cur.r.rev && stable(r) !== stable(cur.r))) {
           b.set(r.id, { r: clone(r), alertAt: alertAt(r) });
-          if (r.status === "completed" || r.status === "paused") cancelPending(r.id, `reminder_${r.status}`);
+          cancelPending(r.id, "reminder_changed"); // the user acted/rescheduled: a queued push for the old occurrence is stale
         }
       }
       const d = devices.get(deviceId); if (d) d.lastSeenAt = now;
