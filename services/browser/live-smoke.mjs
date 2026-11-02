@@ -26,9 +26,11 @@ try {
   const page = context.pages()[0] ?? await context.newPage();
   await page.goto("https://example.com/", { waitUntil: "domcontentloaded", timeout: 20000 });
   const title = await page.title();
-  const shot = await page.screenshot();
-  if (title !== "Example Domain" || shot.byteLength < 1000) throw new Error("Smoke assertions failed");
-  console.log("SMOKE_NAVIGATION_PASS title=Example Domain screenshot_bytes=" + shot.byteLength);
+  const excerpt = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim().slice(0, 4000);
+  const shot = await page.screenshot({ type: "jpeg", quality: 55 });
+  if (title !== "Example Domain" || !excerpt.includes("Example Domain") ||
+      shot.byteLength < 1000 || shot.byteLength > 250000) throw new Error("Read V1 assertions failed");
+  console.log("BROWSER_READ_V1_PASS title=Example Domain excerpt_chars=" + excerpt.length + " jpeg_bytes=" + shot.byteLength);
 } catch (error) {
   process.exitCode = 1;
   console.error("SMOKE_FAILED " + (error?.name || "error")); // Never log full errors/URLs/secrets
