@@ -13,6 +13,7 @@ const sameOrigin = (req: Request) => {
   try { return new URL(origin).host === host; } catch { return false; }
 };
 const attempts = new Map<string,{ count:number; reset:number }>();
+const replyAttempts = new Map<string,{ count:number; reset:number }>();
 const canTry = (now:number) => {
   const key = "owner-unlock";
   const v = attempts.get(key);
@@ -46,10 +47,26 @@ async function handler(req: Request, ctx: Context) {
   if (!verifyCookieValue(gate, readCookie(req), now)) return json({error:"unauthorized"},401);
   if (req.method !== "POST" || route !== "respond") return json({error:"not_found"},404);
   if (!sameOrigin(req)) return json({error:"forbidden"},403);
+  const usage = replyAttempts.get("owner");
+  if (usage && usage.reset > now && usage.count >= 10) return json({error:"rate_limited"},429);
+  if (!usage || usage.reset <= now) replyAttempts.set("owner",{count:1,reset:now+60000}); else usage.count++;
   if (!(req.headers.get("content-type") ?? "").startsWith("application/json")) return json({error:"bad_request"},400);
   if (Number(req.headers.get("content-length") ?? 0) > 25000) return json({error:"too_large"},413);
   let data: unknown;
-  try { data = await req.json(); } catch { return json({error:"bad_request"},400); }
+  try {
+    const reader = req.body?.getReader();
+    if (!reader) return json({error:"bad_request"},400);
+    const pieces: Uint8Array[] = [];
+    let total = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > 25000) { await reader.cancel(); return json({error:"too_large"},413); }
+      pieces.push(value);
+    }
+    data = JSON.parse(Buffer.concat(pieces).toString("utf8"));
+  } catch { return json({error:"bad_request"},400); }
   const messages = data && typeof data === "object" && "messages" in data ? (data as {messages:unknown}).messages : undefined;
   if (!Array.isArray(messages) || messages.length < 1 || messages.length > 40 || messages.some(m => !m || typeof m !== "object" || !["user","assistant"].includes(m.role) || typeof m.content !== "string" || !m.content.trim() || m.content.length > 8000) || messages[messages.length - 1].role !== "user") return json({error:"bad_request"},400);
   const result = await callBackend({path:"/internal/v1/assistant/respond",method:"POST",body:{messages},timeoutMs:55000,maxBytes:65536});
