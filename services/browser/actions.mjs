@@ -88,6 +88,8 @@ const DENY_AR = /(ادفع|دفع|الدفع|ادفعي|شراء|اشتر|اشت
 export const isSensitiveWord = (v) => { const n = norm(String(v ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")).replace(/[_\-./:=&?]+/g, " "); return DENY_EN.test(n) || DENY_AR.test(n); };
 
 const SENSITIVE_AUTOCOMPLETE = /^(cc-|current-password|new-password|one-time-code|transaction-)/;
+/** autocomplete is a token list ("billing cc-number"): the field token may follow section/billing/shipping prefixes, so every token is checked. */
+const sensitiveAutocomplete = (v) => String(v ?? "").toLowerCase().split(/\s+/).some((t) => SENSITIVE_AUTOCOMPLETE.test(t));
 const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "tel", "url", "number", ""]);
 
 export const luhn = (digits) => {
@@ -103,7 +105,7 @@ export const looksLikeCardNumber = (text) => {
 
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
-  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.inForm, facts.isSubmit, facts.href,
+  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formMethod, facts.inForm, facts.isSubmit, facts.href,
 ])).digest("hex").slice(0, 16);
 
 /**
@@ -117,7 +119,7 @@ export function classify(action, facts, { allowUrl }) {
   const names = [facts.name, facts.text, facts.value, facts.id, facts.fieldName, facts.placeholder, facts.ariaLabel, facts.title, facts.labelText, facts.href, facts.autocomplete,
     action.target?.value];
   if (facts.type === "file") return { decision: "deny", code: "file_upload_blocked" };
-  if (facts.type === "password" || SENSITIVE_AUTOCOMPLETE.test(String(facts.autocomplete ?? "").toLowerCase())) return { decision: "deny", code: "sensitive_field" };
+  if (facts.type === "password" || sensitiveAutocomplete(facts.autocomplete)) return { decision: "deny", code: "sensitive_field" };
   if (names.some(isSensitiveWord)) return { decision: "deny", code: "sensitive_action" };
 
   if (action.tool === "type") {

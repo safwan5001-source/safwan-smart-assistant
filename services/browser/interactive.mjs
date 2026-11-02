@@ -19,7 +19,10 @@ const FACTS = (el) => {
   const buttonLike = tag === "button" || (tag === "input" && ["submit", "image", "button", "reset"].includes(type));
   const isSubmit = (tag === "input" && (type === "submit" || type === "image")) || (tag === "button" && type === "submit" && !!form) || el.hasAttribute("formaction");
   let formAction = "";
-  if (form) { try { const u = new URL(str(form.getAttribute("action")) || location.href, location.href); formAction = u.origin + u.pathname; } catch { formAction = "?"; } }
+  // The EFFECTIVE destination: a submitter's own `formaction` overrides the form's `action`. It is what the approval shows and what the fingerprint binds.
+  if (form || el.hasAttribute("formaction")) {
+    try { const u = new URL(str(el.getAttribute("formaction")) || str(form && form.getAttribute("action")) || location.href, location.href); formAction = u.origin + u.pathname; } catch { formAction = "?"; }
+  }
   const labels = el.labels ? [...el.labels].map((l) => cut(l.textContent, 80)).join(" ") : "";
   return {
     tag, type, role: cut(el.getAttribute("role"), 30).toLowerCase(), name: cut(el.getAttribute("name"), 80), id: cut(el.id, 80),
@@ -28,7 +31,7 @@ const FACTS = (el) => {
     labelText: labels, autocomplete: cut(el.getAttribute("autocomplete"), 40), fieldName: cut(el.getAttribute("name"), 80),
     href: tag === "a" ? str(el.href) : "", hasDownload: el.hasAttribute("download"),
     readOnly: el.readOnly === true, contentEditable: el.isContentEditable === true,
-    inForm: !!form, formAction: cut(formAction, 160), isSubmit,
+    inForm: !!form, formAction: cut(formAction, 160), isSubmit, formMethod: cut(el.getAttribute("formmethod") || (form && form.getAttribute("method")), 10).toLowerCase(),
     hasDisclosureAttr: el.hasAttribute("aria-expanded") || el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-controls"),
   };
 };
@@ -108,7 +111,7 @@ export async function runInteractive({ page, raced, signal, interactive, policy,
     const verdict = classify(action, first.facts, { allowUrl: (u) => policy.allowRequest(u) });
     if (verdict.decision === "deny") throw fail(verdict.code, "denied");
     if (verdict.decision === "approve") {
-      const answer = await askApproval(seq, verdict.kind, describe(action), first.facts.inForm && first.facts.formAction ? first.facts.formAction : undefined);
+      const answer = await askApproval(seq, verdict.kind, describe(action), first.facts.formAction || undefined);
       if (answer !== true) throw fail(answer === "timeout" ? "approval_timeout" : "approval_rejected", "rejected");
       // The page may have changed while the user was deciding: approval was for THIS element, so look again and compare.
       const again = await verify(page, action, policy, t);

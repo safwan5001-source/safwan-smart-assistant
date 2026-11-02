@@ -33,6 +33,7 @@ const PAGES = {
     <label><input type="checkbox" id="agree"> I agree</label>
     <button type="button" id="count" onclick="o.textContent=Number(o.textContent)+1">Count</button> <span id="o">0</span>
     <form action="/browser-lab/submit" method="post"><input name="q" aria-label="Query"><button type="submit">Send form</button></form>
+    <form action="/browser-lab/submit" method="post"><input name="r" aria-label="Route"><button type="submit" id="fa" formaction="/browser-lab/page2.html">Route form</button></form>
     <button type="button">Pay now</button>
     <button type="button" id="dlg" onclick="alert('hi');document.getElementById('echo').textContent+=' dialog-done'">Show dialog</button>
     <button type="button" id="leave" onclick="location.href='https://evil.test/js-nav'">Go away</button>
@@ -222,6 +223,16 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     const done = await until(v.id, (x) => !x.pending && settled(x), "submitted");
     assert.equal(lastAction(done).status, "done"); assert.match(echo(done), /Submitted/);
     assert.equal(hits.filter((h) => h.method === "POST").length, 1);
+    await stopAndCheck(v.id);
+  });
+
+  await t.test("the approval shows the submitter's own formaction, not the form's action", async () => {
+    const v = await start();
+    await act(v.id, { tool: "click", target: role("button", "Route form") });
+    const w = await until(v.id, (x) => x.pending, "pending formaction");
+    assert.equal(w.pending.submitsTo, "https://lab.test/browser-lab/page2.html");
+    await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/reject`);
+    await until(v.id, (x) => !x.pending && settled(x), "rejected");
     await stopAndCheck(v.id);
   });
 

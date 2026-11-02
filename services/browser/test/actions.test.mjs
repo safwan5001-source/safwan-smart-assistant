@@ -91,6 +91,8 @@ test("classify: deny is final, buttons need approval, plain navigation and plain
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "password" })), { decision: "deny", code: "sensitive_field" });
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "text", autocomplete: "cc-number" })), { decision: "deny", code: "sensitive_field" });
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "text", autocomplete: "one-time-code" })), { decision: "deny", code: "sensitive_field" });
+  for (const ac of ["billing cc-number", "section-a shipping cc-csc", "SECTION-X BILLING CC-EXP", "work new-password"]) assert.deepEqual(c(typing("123"), facts({ tag: "input", type: "text", autocomplete: ac })), { decision: "deny", code: "sensitive_field" }, ac);
+  assert.deepEqual(c(typing(), facts({ tag: "input", type: "text", autocomplete: "billing name" })), { decision: "allow" });
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "text", fieldName: "card_number" })), { decision: "deny", code: "sensitive_action" });
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "text", placeholder: "كلمة المرور" })), { decision: "deny", code: "sensitive_action" });
   assert.deepEqual(c(typing(), facts({ tag: "input", type: "file" })), { decision: "deny", code: "file_upload_blocked" });
@@ -123,7 +125,7 @@ test("classify: deny is final, buttons need approval, plain navigation and plain
 test("fingerprint changes when the element's identity or destination changes", () => {
   const a = facts({ text: "Save", inForm: true, formAction: "https://lab.example.org/browser-lab/save" });
   assert.equal(fingerprint(a), fingerprint({ ...a }));
-  for (const patch of [{ text: "Save all" }, { formAction: "https://lab.example.org/browser-lab/other" }, { id: "x" }, { type: "submit" }, { href: "https://lab.example.org/browser-lab/x" }]) {
+  for (const patch of [{ text: "Save all" }, { formAction: "https://lab.example.org/browser-lab/other" }, { formMethod: "get" }, { id: "x" }, { type: "submit" }, { href: "https://lab.example.org/browser-lab/x" }]) {
     assert.notEqual(fingerprint({ ...a, ...patch }), fingerprint(a), JSON.stringify(patch));
   }
 });
