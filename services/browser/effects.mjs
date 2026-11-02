@@ -29,7 +29,10 @@ export function createEffectGate({ onViolation = () => {} } = {}) {
   function matches(a, method, url) {
     const want = parts(a.url), got = parts(url);
     if (!want || !got || a.method !== method) return false;
-    return want.origin === got.origin && want.path === got.path && (!a.query || want.search === got.search);
+    if (!(want.origin === got.origin && want.path === got.path && (!a.query || want.search === got.search))) return false;
+    // a form submission (GET or POST): the data actually sent must be exactly the data the owner was shown (GET: its query; POST: checked on the body in decide)
+    if (a.entries && method === "GET") { try { return sameEntries([...new URL(url).searchParams], a.entries); } catch { return false; } }
+    return true;
   }
 
   return {

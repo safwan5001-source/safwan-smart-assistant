@@ -85,3 +85,14 @@ test("end() reports what was refused during the window, and clears it", () => {
   assert.deepEqual(g.end(), ["script_request", "unauthorized_effect"]);
   assert.deepEqual(g.end(), []);
 });
+
+test("GET forms: the query must equal the approved fields (any other query on the same path is refused)", () => {
+  const g = createEffectGate();
+  g.begin([{ method: "GET", url: U + "search?old=1", query: false, entries: [["record", "A"], ["q", "x y"]] }]);
+  assert.equal(g.decide(req({ url: U + "search?record=B&q=x+y" })).allow, false, "a field edited after approval");
+  assert.equal(g.decide(req({ url: U + "search?record=A&q=x+y&extra=1" })).allow, false, "a field added");
+  assert.equal(g.decide(req({ url: U + "search?q=x+y&record=A" })).allow, false, "reordered/changed shape is refused too");
+  assert.equal(g.decide(req({ url: U + "search?record=A&q=x+y" })).allow, true, "exactly the shown data (the action's own old query is replaced by the browser)");
+  g.begin([{ method: "GET", url: U + "go", query: false, entries: [] }]);
+  assert.equal(g.decide(req({ url: U + "go?smuggled=1" })).allow, false); assert.equal(g.decide(req({ url: U + "go" })).allow, true);
+});

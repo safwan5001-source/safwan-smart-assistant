@@ -141,8 +141,8 @@ export function classify(action, facts, { allowUrl }) {
   }
 
   // A POST must carry exactly what the owner is shown, and the gate can only compare urlencoded fields: anything else is not approvable.
-  if (action.tool === "click" && facts.isSubmit && facts.formMethod === "post") {
-    if (facts.formEnctype && facts.formEnctype !== "application/x-www-form-urlencoded") return { decision: "deny", code: "unsupported_enctype" };
+  if (action.tool === "click" && facts.isSubmit && facts.formMethod !== "dialog") {
+    if (facts.formMethod === "post" && facts.formEnctype && facts.formEnctype !== "application/x-www-form-urlencoded") return { decision: "deny", code: "unsupported_enctype" };
     if (facts.formBodyTooLarge) return { decision: "deny", code: "payload_too_large" };
   }
   // click. `allow` is deliberately narrow: only things whose native behaviour is navigation or local UI state AND that carry no script handler

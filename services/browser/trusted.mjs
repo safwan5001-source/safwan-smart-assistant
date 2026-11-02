@@ -33,10 +33,10 @@ function FACTS() {
     formEnctype = cut(el.getAttribute("formenctype") || form.getAttribute("enctype") || "application/x-www-form-urlencoded", 60).toLowerCase();
     try {
       entries = [...new FormData(form, el).entries()].map(([k, v]) => [String(k), typeof v === "string" ? v : "[file:" + cut(v && v.name, 40) + "]"]);
-      formBodyTooLarge = JSON.stringify(entries).length > 8000;
+      // Everything that is BOUND must be SHOWN: more fields / longer names or values than the approval card can display are not approvable.
+      formBodyTooLarge = JSON.stringify(entries).length > 8000 || entries.length > 12 || entries.some(([k, v]) => k.length > 40 || String(v).length > 60);
       const secret = new Set([...form.elements].filter((c) => c.type === "password").map((c) => c.name));
       fields = entries.slice(0, 12).map(([k, v]) => ({ name: cut(k, 40), value: secret.has(k) ? "••••" : cut(v, 60) }));
-      if (entries.length > 12) fields.push({ name: "…", value: "+" + (entries.length - 12) });
     } catch { entries = []; }
   }
   let href = "";

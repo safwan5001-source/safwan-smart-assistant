@@ -70,7 +70,7 @@ export function windowFor(action, facts) {
   if (facts.isSubmit) {
     if (facts.formMethod === "dialog") return [];
     const post = facts.formMethod === "post";
-    return [{ method: post ? "POST" : "GET", url: facts.formTarget, query: post, ...(post ? { entries: facts.formEntries } : {}) }];
+    return [{ method: post ? "POST" : "GET", url: facts.formTarget, query: post, entries: facts.formEntries }]; // GET: the query must equal the shown fields too
   }
   return []; // typing, plain buttons, toggles: the approval covers on-page effects only; no network effect is authorised
 }

@@ -47,6 +47,11 @@ const PAGES = {
   "/browser-lab/offscope.html": PAGE(`<a href="/browser-lab/go-evil">Leave the lab</a>`),
   "/browser-lab/payload.html": PAGE(`<form id="f" action="/browser-lab/submit" method="post"><input type="hidden" name="amount" value="10"><input name="note" aria-label="Note" value="hello"><input type="password" name="pin" value="1234"><button type="submit">Send record</button></form>
     <script>document.getElementById("f").addEventListener("submit",()=>{ if (location.hash === "#tamper") document.querySelector("[name=amount]").value = "9999999"; });</script>`),
+  "/browser-lab/get-form.html": PAGE(`<form id="g" action="/browser-lab/search" method="get"><input type="hidden" name="record" value="A"><input name="q" aria-label="Query" value="x"><button type="submit">Search records</button></form>
+    <script>document.getElementById("g").addEventListener("submit",()=>{ if (location.hash === "#tamper") document.querySelector("[name=record]").value = "B"; });</script>`),
+  "/browser-lab/search": PAGE(`<h1>Results</h1>`),
+  "/browser-lab/big-form.html": PAGE(`<form action="/browser-lab/submit" method="post">${Array.from({ length: 14 }, (_, i) => `<input type="hidden" name="f${i}" value="v">`).join("")}<button type="submit">Send many</button></form>
+    <form action="/browser-lab/submit" method="post"><input type="hidden" name="long" value="${"x".repeat(61)}"><button type="submit">Send long</button></form>`),
   "/browser-lab/shadow.html": PAGE(`<my-box id="b"></my-box><script>const r = document.getElementById("b").attachShadow({ mode: "open" }); r.innerHTML = '<input aria-label="Inner field"><button type="button">Inner go</button>';</script>`),
   "/browser-lab/pixel-page.html": PAGE(`<img src="/browser-lab/pixel" alt="" width="1" height="1">`),
   "/browser-lab/page2.html": PAGE(`<h1>Second page</h1>`),
@@ -214,6 +219,33 @@ test("hostile lab page against real Chromium", { skip: !haveChromium && "Chromiu
     await tick(400);
     assert.deepEqual(posts(), [], "no POST: the body differed from what was approved");
     assert.deepEqual([last(r).status, last(r).error], ["denied", "effect_blocked"]);
+    await stop(v.id);
+  });
+
+  await t.test("GET forms bind the shown fields too: a field edited at submit time never reaches the server; the honest submission does", async () => {
+    hits = [];
+    let v = await start("get-form.html");
+    await mutate(() => { location.hash = "#tamper"; });
+    let r = await doApproved(v.id, { tool: "click", target: role("button", "Search records") });
+    await tick(400);
+    assert.equal(hits.some((h) => h.path.startsWith("/browser-lab/search")), false, JSON.stringify(hits));
+    assert.deepEqual([last(r).status, last(r).error], ["denied", "effect_blocked"]);
+    hits = [];
+    v = await start("get-form.html");
+    r = await doApproved(v.id, { tool: "click", target: role("button", "Search records") });
+    await tick(400);
+    assert.deepEqual(hits.filter((h) => h.path.startsWith("/browser-lab/search")).map((h) => h.path), ["/browser-lab/search?record=A&q=x"]);
+    assert.equal(last(r).status, "done", effect(r));
+    await stop(v.id);
+  });
+
+  await t.test("everything that is bound must be shown: forms with more fields / longer values than the card can display are not approvable", async () => {
+    const v = await start("big-form.html");
+    for (const name of ["Send many", "Send long"]) {
+      const r = await doApproved(v.id, { tool: "click", target: role("button", name) });
+      assert.deepEqual([last(r).status, last(r).error], ["denied", "payload_too_large"], name);
+    }
+    assert.deepEqual(posts(), []);
     await stop(v.id);
   });
 
