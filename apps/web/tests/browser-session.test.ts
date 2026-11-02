@@ -7,7 +7,7 @@ import { createBrowserClient } from "@/lib/browser-client";
 import { SESSION_STEP_IDS, parseActionLine, parseActionRequest, parseBrowseCommand, parseLocator, parseTaskView } from "@/lib/browser-task";
 import { handleBrowserChat, resetBrowserChatLimits, type Deps } from "@/server/browser-chat/api";
 import { COOKIE_NAME, issueCookieValue, readGate } from "@/server/browser-chat/gate";
-import { readScopes, sessionResultOk, sessionStartUrl, sessionTargetOk } from "@/server/browser-chat/scopes";
+import { isolateScopes, readScopes, sameSite, sessionResultOk, sessionStartUrl, sessionTargetOk, siteOf } from "@/server/browser-chat/scopes";
 
 const ID = "11111111-1111-4111-8111-111111111111";
 const LAB = "https://lab.example.org/browser-lab/index.html";
@@ -131,6 +131,12 @@ describe("parseTaskView (interactive)", () => {
     expect(parseTaskView(pending({ tag: "button", role: "switch", text: "Share\u202e all", html: "<b>" }), { sessionUrlOk: shape })!.pending!.element).toEqual({ tag: "button", text: "Share all", role: "switch" });
     for (const bad of [{ tag: "BUTTON<x>" }, "button", { text: "no tag" }]) expect(parseTaskView(pending(bad), { sessionUrlOk: shape })).toBeNull();
   });
+  it("accepts the new outcome codes and the pending method; refuses another method", () => {
+    const withPending = (p: unknown) => sview({ actions: [{ seq: 1, tool: "click", status: "denied", summary: "x", error: "effect_blocked" }, { seq: 2, tool: "click", status: "awaiting_approval", summary: "y" }], pending: p });
+    const v = parseTaskView(withPending({ seq: 2, kind: "submit", summary: "s", method: "POST", submitsTo: "https://lab.example.org/browser-lab/submit" }), { sessionUrlOk: shape })!;
+    expect(v.pending!.method).toBe("POST"); expect(v.actions![0].error).toBe("effect_blocked");
+    expect(parseTaskView(withPending({ seq: 2, kind: "submit", summary: "s", method: "DELETE" }), { sessionUrlOk: shape })).toBeNull();
+  });
   it("collapses unknown action errors to a fixed code", () => {
     expect(parseTaskView(sview({ actions: [{ seq: 1, tool: "click", status: "failed", summary: "x", error: "Traceback /srv/x" }] }), { sessionUrlOk: shape })!.actions![0].error).toBe("action_failed");
   });
@@ -156,6 +162,22 @@ describe("scopes (BFF)", () => {
     expect(sessionResultOk("https://lab.example.org/browser-lab/a?x=1#h", s)).toBe(true);
     expect(sessionResultOk("https://lab.example.org/elsewhere", s)).toBe(false);
     expect(sessionStartUrl(s)).toBe(LAB); expect(sessionStartUrl([])).toBeNull();
+  });
+});
+
+describe("isolation: the lab must be a different site from the app and the API", () => {
+  it("siteOf / sameSite (conservative eTLD+1 heuristic)", () => {
+    expect(siteOf("lab.example.org")).toBe("example.org"); expect(siteOf("a.b.example.co.uk")).toBe("example.co.uk"); expect(siteOf("127.0.0.1")).toBe("127.0.0.1"); expect(siteOf("localhost")).toBe("localhost");
+    for (const [a, b] of [["lab.app.com", "app.com"], ["lab.app.com", "www.app.com"], ["app.com", "app.com"], ["x.app.co.uk", "y.app.co.uk"], ["APP.com.", "lab.app.com"]]) expect(sameSite(a, b), `${a} ${b}`).toBe(true);
+    for (const [a, b] of [["lab-owner.net", "app.com"], ["app.com", "app.co"], ["app.com", "notapp.com"], ["lab.test", "127.0.0.1"], ["", "app.com"]]) expect(sameSite(a, b), `${a} ${b}`).toBe(false);
+  });
+  it("refuses (all of) the scopes when any shares a site with the app or the API", () => {
+    const s = readScopes({ BROWSER_INTERACTIVE_SCOPES: "lab.example.org/browser-lab/" });
+    expect(isolateScopes(s, ["app.example.org", null])).toEqual({ scopes: [], refused: true });
+    expect(isolateScopes(s, ["app.other.com", "api.example.org"])).toEqual({ scopes: [], refused: true });
+    expect(isolateScopes(s, ["app.other.com", "api.another.io"])).toEqual({ scopes: s, refused: false });
+    const two = readScopes({ BROWSER_INTERACTIVE_SCOPES: "lab.example.org/a/,lab2.fine.net/b/" });
+    expect(isolateScopes(two, ["app.example.org"]).scopes).toEqual([]);
   });
 });
 
@@ -199,6 +221,20 @@ describe("BFF: starting a session", () => {
     expect((await call("POST", "tasks", { url: "https://example.com/", approved: true }, authed, noScope)).status).toBe(502);
     backend.mockResolvedValue(ok(200, { task: sview({ url: "https://evil.test/" }) }));
     expect((await call("GET", `tasks/${ID}`)).status).toBe(502);
+  });
+});
+
+describe("BFF: isolation of the lab from the app", () => {
+  it("the whole interactive feature is OFF (and says why) when the lab shares a site with this app's host or the API's", async () => {
+    backend.mockResolvedValue(ok(202, { task: sview() }));
+    const sameApp = { ...authed, host: "app.example.org", "x-forwarded-host": "app.example.org", origin: "https://app.example.org" };
+    const st = await (await call("GET", "status", undefined, sameApp, deps({ env: { ...env, BROWSER_INTERACTIVE_SCOPES: "lab.example.org/browser-lab/" } }))).json();
+    expect(st.interactive).toEqual({ enabled: false, reason: "same_site" });
+    expect((await call("POST", "tasks", { mode: "interactive", approved: true }, sameApp, deps({ env: { ...env, BROWSER_INTERACTIVE_SCOPES: "lab.example.org/browser-lab/" } }))).status).toBe(503);
+    expect((await call("POST", `tasks/${ID}/actions`, CLICK, sameApp, deps({ env: { ...env, BROWSER_INTERACTIVE_SCOPES: "lab.example.org/browser-lab/" } }))).status).toBe(503);
+    const sameApi = deps({ env: { ...env, BACKEND_URL: "https://api.example.org", BROWSER_INTERACTIVE_SCOPES: "lab.example.org/browser-lab/" } });
+    expect((await (await call("GET", "status", undefined, authed, sameApi)).json()).interactive.reason).toBe("same_site");
+    expect(backend).not.toHaveBeenCalled();
   });
 });
 

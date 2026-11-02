@@ -34,3 +34,22 @@ export function sessionResultOk(url: unknown, scopes: Scope[]): url is string {
   return READ_ONLY_RESULT.test(url) || scopes.some((s) => new RegExp(`^https://${esc(s.host)}${esc(s.prefix)}[\\x21-\\x7e]{0,250}$`).test(url));
 }
 export const sessionStartUrl = (scopes: Scope[]): string | null => (scopes[0] ? `https://${scopes[0].host}${scopes[0].prefix}index.html` : null);
+
+// ── isolation: the lab must be a different SITE from the assistant (no shared cookies, storage, origin or privileges) ─────────────────────
+const SECOND_LEVEL = new Set(["co", "com", "org", "net", "gov", "edu", "ac", "or", "ne", "go"]);
+const isIp = (h: string) => /^[0-9.]+$/.test(h) || h.includes(":");
+/** Heuristic registrable domain (eTLD+1) without a public-suffix list: last two labels, three for «co.uk»-style endings. Conservative on purpose. */
+export function siteOf(host: string): string {
+  const h = host.toLowerCase().replace(/\.$/, "").split(":")[0];
+  if (!h || isIp(h) || h === "localhost") return h;
+  const l = h.split(".");
+  return (l.length >= 3 && l[l.length - 1].length === 2 && SECOND_LEVEL.has(l[l.length - 2]) ? l.slice(-3) : l.slice(-2)).join(".");
+}
+export const sameSite = (a: string, b: string) => !!a && !!b && siteOf(a) === siteOf(b);
+
+/** Drops (and reports) any scope whose host shares a site with the app (this request's host) or the API (BACKEND_URL). */
+export function isolateScopes(scopes: Scope[], appHosts: (string | null | undefined)[]): { scopes: Scope[]; refused: boolean } {
+  const others = appHosts.filter((h): h is string => !!h);
+  const ok = scopes.filter((s) => !others.some((h) => sameSite(s.host, h)));
+  return { scopes: ok.length === scopes.length ? scopes : [], refused: ok.length !== scopes.length };   // one bad entry turns the feature off: no partial trust
+}

@@ -115,7 +115,7 @@ export const looksLikeCardNumber = (text) => {
 
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
-  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler,
+  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formTarget, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler, facts.axName, facts.axRole, facts.pageUrl,
 ])).digest("hex").slice(0, 16);
 
 /**
@@ -126,8 +126,9 @@ export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify
  *   { decision: "allow" }                    executed (navigation inside the lab, checkbox/radio, disclosure, typing in a plain text field)
  */
 export function classify(action, facts, { allowUrl }) {
-  const names = [facts.name, facts.text, facts.value, facts.id, facts.fieldName, facts.placeholder, facts.ariaLabel, facts.title, facts.labelText, facts.href, facts.autocomplete,
+  const names = [facts.axName, facts.name, facts.text, facts.value, facts.id, facts.fieldName, facts.placeholder, facts.ariaLabel, facts.title, facts.labelText, facts.href, facts.autocomplete,
     action.target?.value];
+  if (["iframe", "frame", "embed", "object"].includes(facts.tag)) return { decision: "deny", code: "unsupported_target" }; // another document: nothing here was read from it
   if (facts.type === "file") return { decision: "deny", code: "file_upload_blocked" };
   if (facts.type === "password" || sensitiveAutocomplete(facts.autocomplete)) return { decision: "deny", code: "sensitive_field" };
   if (names.some(isSensitiveWord)) return { decision: "deny", code: "sensitive_action" };

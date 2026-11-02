@@ -91,7 +91,7 @@ export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, max
       v.actions = job.actions.map(({ seq, tool, status, summary, error }) => (error ? { seq, tool, status, summary, error } : { seq, tool, status, summary }));
       if (job.endReason) v.endReason = job.endReason;
       if (job.result) v.result.version = job.shotVersion;
-      if (job.pending) v.pending = { seq: job.pending.seq, kind: job.pending.kind, summary: job.pending.summary, expiresAt: job.pending.expiresAt, ...(job.pending.submitsTo ? { submitsTo: job.pending.submitsTo } : {}), ...(job.pending.element ? { element: job.pending.element } : {}) };
+      if (job.pending) v.pending = { seq: job.pending.seq, kind: job.pending.kind, summary: job.pending.summary, expiresAt: job.pending.expiresAt, ...(job.pending.submitsTo ? { submitsTo: job.pending.submitsTo } : {}), ...(job.pending.element ? { element: job.pending.element } : {}), ...(job.pending.method ? { method: job.pending.method } : {}) };
     }
     return v;
   }

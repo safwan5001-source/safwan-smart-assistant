@@ -4,7 +4,7 @@
  */
 import { isTaskId, parseActionRequest, parseTaskView, type ActionRequest, type TaskView } from "./browser-task";
 
-export type GateStatus = { enabled: boolean; authenticated: boolean; interactive: { enabled: boolean; startUrl?: string } };
+export type GateStatus = { enabled: boolean; authenticated: boolean; interactive: { enabled: boolean; startUrl?: string; reason?: "same_site" } };
 export type Fail =
   | "disabled" | "unauthorized" | "rate_limited" | "busy" | "not_found" | "url_not_allowed" | "unavailable" | "network" | "interactive_disabled" | "bad_request"
   | "action_in_progress" | "limit_reached" | "not_ready" | "session_ended" | "not_interactive" | "no_pending_approval" | "conflict";
@@ -48,7 +48,7 @@ export function createBrowserClient(fetchImpl: Fetch = (...a) => fetch(...a), ba
         const j = (await res.json()) as Partial<GateStatus>;
         const i = (j.interactive ?? {}) as Partial<GateStatus["interactive"]>;
         const startUrl = typeof i.startUrl === "string" && /^https:\/\/[a-z0-9.-]{3,100}\/[\x21-\x7e]{0,300}$/.test(i.startUrl) ? i.startUrl : undefined;
-        return { ok: true, value: { enabled: j.enabled === true, authenticated: j.authenticated === true, interactive: { enabled: i.enabled === true, ...(startUrl ? { startUrl } : {}) } } };
+        return { ok: true, value: { enabled: j.enabled === true, authenticated: j.authenticated === true, interactive: { enabled: i.enabled === true, ...(i.reason === "same_site" ? { reason: "same_site" as const } : {}), ...(startUrl ? { startUrl } : {}) } } };
       }
       catch { return { ok: false, error: "unavailable" }; }
     },

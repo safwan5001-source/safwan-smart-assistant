@@ -86,7 +86,7 @@ ACTION_STATUSES = {"queued", "running", "awaiting_approval", "done", "failed", "
 ACTION_ERRORS = {
     "element_not_found", "element_ambiguous", "element_hidden", "element_disabled", "not_in_lab", "sensitive_field", "sensitive_action",
     "sensitive_value", "file_upload_blocked", "download_blocked", "leaves_scope", "not_editable", "element_changed", "approval_rejected",
-    "approval_timeout", "action_timeout", "action_failed", "navigation_failed",
+    "approval_timeout", "action_timeout", "action_failed", "navigation_failed", "effect_blocked", "element_unstable", "unsupported_target",
 }
 END_REASONS = {"finished", "idle", "limit"}
 # Errors the worker may answer an action call with -> what the caller learns (all other worker answers are a generic failure).
@@ -312,6 +312,10 @@ def _clean_interactive(raw: dict[str, Any], url_re: re.Pattern[str]) -> dict[str
             pend["element"] = {"tag": tag, "text": _clean_text(el.get("text"), 120)}
             if el.get("role"):
                 pend["element"]["role"] = _clean_text(el.get("role"), 30)
+        if p.get("method") is not None:
+            if p["method"] not in ("POST", "GET"):
+                raise ValueError("pending.method")
+            pend["method"] = p["method"]
         if p.get("submitsTo") is not None:
             if not (isinstance(p["submitsTo"], str) and url_re.fullmatch(p["submitsTo"])):
                 raise ValueError("pending.submitsTo")

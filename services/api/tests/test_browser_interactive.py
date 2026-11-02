@@ -266,6 +266,16 @@ def test_approve_and_reject_refer_to_a_step_and_carry_no_payload(client, worker)
     assert all(e["task"] == TASK and e["seq"] == 1 for e in audit_log.recent())
 
 
+def test_pending_method_and_the_new_outcome_codes_pass_and_anything_else_is_refused(client, worker):
+    pend = {"seq": 1, "kind": "submit", "summary": "x", "method": "POST", "submitsTo": "https://lab.example.org/browser-lab/submit"}
+    acts = [{"seq": 1, "tool": "click", "status": "denied", "summary": "x", "error": "effect_blocked"}]
+    t = view(client, worker, ijob(actions=acts + [{"seq": 2, "tool": "click", "status": "awaiting_approval", "summary": "y"}], pending={**pend, "seq": 2})).json()["task"]
+    assert t["pending"]["method"] == "POST" and t["actions"][0]["error"] == "effect_blocked"
+    for code in ("element_unstable", "unsupported_target"):
+        assert view(client, worker, ijob(actions=[{**acts[0], "error": code}])).json()["task"]["actions"][0]["error"] == code
+    assert view(client, worker, ijob(actions=acts + [{"seq": 2, "tool": "click", "status": "awaiting_approval", "summary": "y"}], pending={**pend, "seq": 2, "method": "DELETE"})).status_code == 502
+
+
 def test_the_resolved_element_in_a_pending_approval_is_passed_on_cleaned(client, worker):
     pend = {"seq": 1, "kind": "button", "summary": "x", "element": {"tag": "button", "role": "switch", "text": "Share\u202e my profile", "html": "<b>", "x": 1}}
     worker.reply = Resp({"job": ijob(actions=[{"seq": 1, "tool": "click", "status": "awaiting_approval", "summary": "x"}], pending=pend)}, 200)

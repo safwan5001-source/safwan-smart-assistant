@@ -10,7 +10,7 @@ import {
 import type { BrowserRef } from "@/lib/domain";
 import { FAIL_TEXT } from "./browser-text";
 
-type Gate = "checking" | "disabled" | "off" | "locked" | "ready" | "offline";
+type Gate = "checking" | "disabled" | "off" | "same_site" | "locked" | "ready" | "offline";
 type Tool = "navigate" | "click" | "type" | "observe";
 type Kind = Role | "label" | "placeholder" | "text";
 const POLL_FAST = 450, POLL_MS = 1000, POLL_MAX_MS = 4000, MAX_FAILURES = 6;
@@ -98,7 +98,7 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
       if (cancelled || !alive.current) return;
       if (!r.ok) { setGate("offline"); return; }
       if (!r.value.enabled) { setGate("disabled"); return; }
-      if (!r.value.interactive.enabled) { setGate("off"); return; }
+      if (!r.value.interactive.enabled) { setGate(r.value.interactive.reason === "same_site" ? "same_site" : "off"); return; }
       setStartUrl(r.value.interactive.startUrl ?? "");
       setGate(r.value.authenticated ? "ready" : "locked");
     });
@@ -229,6 +229,7 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
         </ul>
         {gate === "checking" && <p className="muted" role="status">جارٍ التحقق من جاهزية الخادم…</p>}
         {gate === "disabled" && <Notice tone="warn">التصفح السحابي غير مفعّل على الخادم؛ يفعّله المالك من إعدادات الخدمة.</Notice>}
+        {gate === "same_site" && <Notice tone="danger">رُفض التحكم التفاعلي: نطاق المختبر يشترك مع تطبيق المساعد (أو واجهته) في الموقع نفسه. يجب أن يكون المختبر على نطاق مستقل تمامًا.</Notice>}
         {gate === "off" && <Notice tone="warn">التحكم التفاعلي غير مفعّل: لم تُحدَّد صفحة مختبر على الخادم (يقررها المالك).</Notice>}
         {gate === "offline" && <Notice tone="warn">تعذر الاتصال بالخادم؛ هذه الميزة تحتاج اتصالاً.</Notice>}
         {gate === "locked" && unlockForm}
@@ -314,11 +315,12 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
           {task.pending.element && (
             <p className="bt-el" dir="auto">العنصر الفعلي في الصفحة: <strong>«{task.pending.element.text || "بلا نص"}»</strong> <small className="muted">({task.pending.element.role || task.pending.element.tag})</small></p>
           )}
-          <p className="muted">{APPROVAL_KIND_LABEL[task.pending.kind]}{task.pending.submitsTo && <> الوجهة: <bdi dir="ltr" className="num">{task.pending.submitsTo}</bdi></>}</p>
+          <p className="muted">{APPROVAL_KIND_LABEL[task.pending.kind]}{task.pending.submitsTo && <> الوجهة: <bdi dir="ltr" className="num">{task.pending.method ? task.pending.method + " " : ""}{task.pending.submitsTo}</bdi></>} لن يُسمح إلا بهذا الطلب: أي طلب آخر تُحاول الصفحة إرساله يُحجب.</p>
           {task.pending.expiresAt && <small className="muted">تُرفض تلقائياً بعد <bdi dir="ltr" className="num">{clock(task.pending.expiresAt - now)}</bdi> إن لم تقرر.</small>}
           <div className="row-wrap">
             <button className="btn btn-primary" onClick={() => void decide(task.pending!.seq, true)} disabled={busy}>موافقة</button>
             <button className="btn" onClick={() => void decide(task.pending!.seq, false)} disabled={busy}>رفض</button>
+            <button className="btn btn-danger" onClick={() => void stop()} disabled={busy || task.status === "cancelling"}><Icon name="stop" size={16} />إيقاف الجلسة</button>
           </div>
         </div>
       )}

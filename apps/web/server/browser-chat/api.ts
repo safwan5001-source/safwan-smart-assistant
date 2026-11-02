@@ -11,7 +11,7 @@ import "server-only";
 import { callBackend as realCallBackend, type BackendResult } from "../backend";
 import { createLimiter } from "../notify/api";
 import { isAllowedBrowserUrl, isTaskId, parseActionRequest, parseTaskView } from "@/lib/browser-task";
-import { readScopes, sessionResultOk, sessionStartUrl, sessionTargetOk, type Scope } from "./scopes";
+import { isolateScopes, readScopes, sessionResultOk, sessionStartUrl, sessionTargetOk, type Scope } from "./scopes";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./gate";
 
 const BASE = "/internal/v1/browser/tasks";
@@ -113,11 +113,17 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
   const gate = readGate(deps.env);
   const secure = deps.env.NODE_ENV === "production";
   try {
-    const scopes = readScopes(deps.env);
+    // The lab must be a different SITE from this app and from the API: refused (and reported) otherwise.
+    const appHost = (req.headers.get("x-forwarded-host")?.split(",")[0]?.trim() || req.headers.get("host") || "").split(":")[0];
+    let apiHost: string | null = null;
+    try { apiHost = deps.env.BACKEND_URL ? new URL(deps.env.BACKEND_URL).hostname : null; } catch { /* unconfigured */ }
+    const configured = readScopes(deps.env);
+    const iso = isolateScopes(configured, [appHost, apiHost]);
+    const scopes = iso.scopes;
     if (route === "GET /status") {
       const authenticated = !!gate && verifyCookieValue(gate, readCookie(req), now);
       // the lab address is shown only to the signed-in owner
-      return json({ enabled: !!gate, authenticated, interactive: { enabled: !!gate && scopes.length > 0, ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
+      return json({ enabled: !!gate, authenticated, interactive: { enabled: !!gate && scopes.length > 0, ...(iso.refused ? { reason: "same_site" } : {}), ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
     }
     if (!gate) return err("disabled", 503);                               // feature off: nothing below is reachable
 

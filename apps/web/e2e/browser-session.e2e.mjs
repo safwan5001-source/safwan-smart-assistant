@@ -47,7 +47,7 @@ function start(label, cmd, args, opts) {
 
 try {
   if (!existsSync(join(here, "..", ".next", "BUILD_ID"))) throw new Error("run `pnpm build:web` first");
-  const LABDIR = join(here, "..", "public", "browser-lab");
+  const LABDIR = join(here, "..", "..", "..", "labs", "browser-lab");
   const SCOPE = "lab.test/browser-lab/";
   const CANARY = "كناري-تجريبي-7731";
   // ── fixture "internet": example.com / lab.test / evil.test ⇒ one local HTTPS server (throw-away certificate). lab.test serves the REAL lab page files. ──
@@ -238,7 +238,7 @@ try {
   await card().locator(".bt-log li", { hasText: "index.html" }).first().getByText("تم", { exact: true }).waitFor({ timeout: 20_000 });
   await sendCmd("نقر", { kind: "زر", name: "زيادة العداد" });
   await card().locator(".bt-approval").waitFor({ timeout: 20_000 });
-  const stopBtn = card().getByRole("button", { name: "إيقاف", exact: true });
+  const stopBtn = card().locator(".bt-approval").getByRole("button", { name: "إيقاف الجلسة", exact: true }); // the panel carries its own stop: nothing sticky hides it
   const sb = await stopBtn.boundingBox();
   check("the stop button is a full-size touch target (≥44px) and visible while a step waits", sb.height >= 44 && sb.width >= 44);
   const t0 = Date.now();
@@ -286,7 +286,7 @@ try {
   await tallShot("06-dark-approval-tall", dp);
   await overflow("dark approval", dp);
   check("dark theme paints the page dark (background luminance)", await dp.evaluate(() => { const c = getComputedStyle(document.body).backgroundColor.match(/\d+/g).map(Number); return (c[0] + c[1] + c[2]) / 3 < 80; }));
-  await dc().getByRole("button", { name: "إيقاف", exact: true }).click();
+  await dc().locator(".bt-approval").getByRole("button", { name: "إيقاف الجلسة", exact: true }).click();
   await dc().getByText("أُوقفت", { exact: true }).first().waitFor({ timeout: 15_000 });
   check("the paid browser session of the dark-theme run was released too", [...mock.sessions.values()].every((s) => s.status === "COMPLETED"));
 

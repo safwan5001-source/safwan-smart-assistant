@@ -1,0 +1,18 @@
+# F1 hostile suite — BEFORE (design of 2bd4a80/87eff72: facts read in the page's own JS world, approval from those facts)
+    not ok 1 - F1 PoC: a page that lies about tag/href/text/attributes cannot turn a scripted POST into an unapproved, successful click
+    not ok 2 - a link with a script listener: the allowed click is navigation only, the scripted POST never leaves
+    not ok 3 - an approved form submit sends exactly the approved request: handler fetch/sendBeacon to other endpoints are blocked
+    not ok 4 - a 307 redirect of the approved POST to another in-scope endpoint is not re-POSTed
+    not ok 5 - downloads: attachment / octet-stream responses are blocked by the browser guard itself (not by provider settings)
+    not ok 6 - idle page scripts cannot navigate, fetch, XHR, EventSource, or load query-carrying images
+    ok 7 - popups: scripted and target=_blank opens (even to an in-scope URL) never load
+    not ok 8 - accessible-name tricks: CSS ::before text and aria-labelledby are what the denial rules see
+    ok 9 - isolation: the cloud browser carries no cookies/storage/referrer from anything else, and cookies set by the lab die with the session
+not ok 1 - hostile lab page against real Chromium
+# pass 2
+# fail 8
+
+## key evidence (what actually reached the server / the session)
+error: 'a timer navigation must not move the session'
+no state-changing request may arrive; got [{"host":"lab.test","method":"POST","path":"/browser-lab/api/transfer-all","referer":"https://lab.test/browser-lab/liar.html"}]; action done/-
+only the approved destination: [{"host":"lab.test","method":"POST","path":"/browser-lab/redir","referer":"https://lab.test/browser-lab/redirect-form.html"},{"host":"lab.test","method":"POST","path":"/browser-lab/api/transfer-after-redirect","referer":"https://lab.test/browser-lab/redirect-form.html"}] (done/-)

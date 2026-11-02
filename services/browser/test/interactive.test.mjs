@@ -43,7 +43,6 @@ const PAGES = {
     <a href="/browser-lab/page2.html?q=${"A".repeat(400)}">Long query link</a>
     <button type="button" aria-label="Neutral"><img alt="Delete account" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button>
     <form id="qf" action="/browser-lab/submit?record=A" method="post"><button type="submit">Update record</button></form>
-    <script>setInterval(async()=>{try{if((await (await fetch('/browser-lab/flip')).text())==='1')document.getElementById('qf').setAttribute('action','/browser-lab/submit?record=B')}catch(e){}},100)</script>
     <button type="button">Pay now</button>
     <button type="button" id="dlg" onclick="alert('hi');document.getElementById('echo').textContent+=' dialog-done'">Show dialog</button>
     <button type="button" id="leave" onclick="location.href='https://evil.test/js-nav'">Go away</button>
@@ -51,7 +50,6 @@ const PAGES = {
     <button type="button" id="ls" onclick="localStorage.setItem('k','v1');document.cookie='c=1;path=/';echo.textContent='stored'">Store state</button>
     <button type="button" id="show" onclick="echo.textContent='ls='+localStorage.getItem('k')+' ck='+document.cookie">Show state</button>
     <button type="button" id="grow">Commit</button>
-    <script>setInterval(async()=>{try{if((await (await fetch('/browser-lab/flip')).text())==='1')document.getElementById('grow').textContent='Commit everything'}catch(e){}},100)</script>
     <button type="button">Twin</button><button type="button">Twin</button>
     <button type="button" disabled>Disabled one</button><button type="button" style="display:none">Hidden one</button>
     <p id="echo"></p>`),
@@ -64,11 +62,10 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "browser-it2-"));
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", path.join(dir, "k.pem"), "-out", path.join(dir, "c.pem"),
     "-days", "1", "-subj", "/CN=lab.test", "-addext", "subjectAltName=DNS:example.com,DNS:evil.test,DNS:lab.test"], { stdio: "ignore" });
-  let hits = []; const open = new Set(); let flip = false; // flip: the lab page rewrites a button when the test says so (a bait-and-switch)
+  let hits = []; const open = new Set(); // the test itself plays the hostile page: `mutate` runs a script in the live page over a second CDP connection (a bait-and-switch)
   const site = https.createServer({ key: fs.readFileSync(path.join(dir, "k.pem")), cert: fs.readFileSync(path.join(dir, "c.pem")) }, (req, res) => {
     const host = (req.headers.host ?? "").split(":")[0];
     hits.push({ host, method: req.method, path: req.url });
-    if (req.url === "/browser-lab/flip") { res.writeHead(200, { "content-type": "text/plain" }); return res.end(flip ? "1" : "0"); }
     if (req.url === "/browser-lab/slow") { open.add(res); res.on("close", () => open.delete(res)); return; }
     if (req.method === "POST") { req.resume(); res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(PAGES["/browser-lab/submit"]); }
     const page = host === "lab.test" ? PAGES[req.url] : host === "example.com" ? PAGE(`<h1>Example Domain</h1><button type="button">Hello</button>`) : null;
@@ -107,6 +104,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
   const run = async (id, body) => { const n = (await get(id)).actions.length; const r = await act(id, body); assert.equal(r.status, 202, JSON.stringify(r.body)); return until(id, (v) => v.actions.length > n && settled(v), "action"); };
   const stopAndCheck = async (id) => { const r = await j(await api("POST", `/v1/jobs/${id}/finish`)); assert.equal(r.status, 200); const v = await until(id, ended, "end"); assert.equal(v.status, "succeeded"); assert.equal(v.sessionReleased, true); return v; };
   const sessionStates = () => [...mock.sessions.values()].map((s) => s.status);
+  const mutate = async (fn) => { const sess = [...mock.sessions.values()].at(-1); const b = await chromium.connectOverCDP(sess.connectUrl); try { await b.contexts()[0].pages()[0].evaluate(fn); } finally { await b.close(); } };
   const role = (r, value, extra = {}) => ({ by: "role", role: r, value, ...extra });
   const echo = (v) => v.result.excerpt;
 
@@ -294,11 +292,10 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     const v = await start();
     await act(v.id, { tool: "click", target: role("button", "Commit") });
     const w = await until(v.id, (x) => x.pending, "pending save");
-    flip = true; await tick(500); // the page rewrites the very button the user is looking at (a bait-and-switch)
+    await mutate(() => { document.getElementById("grow").textContent = "Commit everything"; }); // the page rewrites the very button the user is looking at
     await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);
     const r = await until(v.id, (x) => !x.pending && settled(x), "after switch");
     assert.deepEqual([lastAction(r).status, lastAction(r).error], ["rejected", "element_changed"]);
-    flip = false;
     await stopAndCheck(v.id);
   });
 
@@ -308,12 +305,11 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     await act(v.id, { tool: "click", target: role("button", "Update record") });
     const w = await until(v.id, (x) => x.pending, "pending query form");
     assert.equal(w.pending.submitsTo, "https://lab.test/browser-lab/submit", "the view shows origin + path only");
-    flip = true; await tick(500);
+    await mutate(() => { document.getElementById("qf").setAttribute("action", "/browser-lab/submit?record=B"); });
     await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);
     const r = await until(v.id, (x) => !x.pending && settled(x), "after query swap");
     assert.deepEqual([lastAction(r).status, lastAction(r).error], ["rejected", "element_changed"]);
     assert.equal(hits.some((h) => h.method === "POST"), false);
-    flip = false;
     await stopAndCheck(v.id);
   });
 

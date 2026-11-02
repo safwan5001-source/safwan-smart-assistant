@@ -38,7 +38,7 @@ export async function startMock({ bearer = true, badConnect = false, liveBroken 
       const port = 9300 + Math.floor(Math.random() * 500);
       const browser = await (chromium ?? defaultChromium()).launch({ ...launchOptions, args: [`--remote-debugging-port=${port}`, ...(launchOptions.args ?? [])] }); // launchOptions: tests that need e.g. a host-resolver rule
       const ver = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
-      sessions.set(id, { browser, status: "RUNNING" });
+      sessions.set(id, { browser, status: "RUNNING", connectUrl: ver.webSocketDebuggerUrl }); // connectUrl kept for TESTS that act as the "page" (hostile-script timing)
       return json(201, { id, status: "RUNNING", expiresAt: new Date(Date.now() + body.timeout * 1000).toISOString(), connectUrl: ver.webSocketDebuggerUrl, seleniumRemoteUrl: "http://x", signingKey: "mock-signing-key", projectId: "p", region: "us-west-2", keepAlive: false });
     }
     const m = url.pathname.match(/^\/v1\/sessions\/([^/]+)(\/debug)?$/);

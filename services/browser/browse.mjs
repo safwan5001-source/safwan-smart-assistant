@@ -4,6 +4,7 @@ import { chromium } from "playwright-core";
 import { abortError } from "./jobs.mjs";
 import { cleanText } from "./policy.mjs";
 import { runInteractive } from "./interactive.mjs";
+import { createEffectGate } from "./effects.mjs";
 
 export const MAX_SCREENSHOT_BYTES = 250_000;
 const code = (c) => Object.assign(new Error(c), { code: c });
@@ -30,7 +31,7 @@ const HARDEN_PAGE = () => {
   for (const type of ["click", "submit", "auxclick"]) document.addEventListener(type, (e) => { const t = e.target; self(t?.closest?.("a,area,form")); }, true);
 };
 
-export async function installNetworkGuard(context, page, policy, { onBlock = () => {} } = {}) {
+export async function installNetworkGuard(context, page, policy, { onBlock = () => {}, gate = null } = {}) {
   await context.addInitScript(HARDEN_PAGE);
   // A JavaScript dialog would freeze every later Playwright call: answer them all with "cancel" (alert/confirm/prompt/beforeunload).
   page.on("dialog", (d) => { d.dismiss().catch(() => {}); });
@@ -43,7 +44,17 @@ export async function installNetworkGuard(context, page, policy, { onBlock = () 
   await context.route("**/*", (route) => {
     let mine = false;
     try { mine = route.request().frame().page() === page; } catch { /* service worker / detached frame: refuse */ }
-    if (mine && policy.allowRequest(route.request().url())) return route.continue();
+    if (mine && policy.allowRequest(route.request().url())) {
+      // Interactive sessions: the EFFECT GATE judges method / resource type / navigation from values the browser assigns (effects.mjs).
+      const r = route.request();
+      if (!gate) return route.continue();
+      if (gate.decide({ method: r.method(), type: r.resourceType(), url: r.url(), navigation: r.isNavigationRequest() }).allow) return route.continue();
+      // A navigation the gate refuses (script redirect, timer, unapproved form post) becomes "204 No Content": the browser does not navigate, the page
+      // stays where it is. (Aborting it would strand the tab on an error page.) Nothing is sent to the network either way.
+      onBlock();
+      if (r.isNavigationRequest()) return route.fulfill({ status: 204, body: "" });
+      return route.abort("blockedbyclient");
+    }
     onBlock();
     return route.abort("blockedbyclient");
   });
@@ -51,6 +62,16 @@ export async function installNetworkGuard(context, page, policy, { onBlock = () 
   cdp.on("Fetch.requestPaused", async (ev) => {
     try {
       if (ev.responseErrorReason) return await cdp.send("Fetch.failRequest", { requestId: ev.requestId, errorReason: ev.responseErrorReason });
+      if (gate) { // responses and redirects judged by the gate too: 307/308 replays of a POST, attachments, non-renderable documents
+        const headers = Object.fromEntries((ev.responseHeaders ?? []).map((h) => [h.name.toLowerCase(), h.value]));
+        if (!gate.responseVerdict({ method: ev.request.method, type: String(ev.resourceType ?? "").toLowerCase(), status: ev.responseStatusCode, headers }).allow) {
+          onBlock();
+          // an attachment / non-renderable document is replaced by 204: no download, no navigation, no error page. (A redirect cannot be: the browser
+          // follows it whatever replaces the 3xx, so it is failed, and the interactive loop returns the tab to the page it came from.)
+          if (String(ev.resourceType) === "Document" && !(ev.responseStatusCode >= 300 && ev.responseStatusCode < 400)) return await cdp.send("Fetch.fulfillRequest", { requestId: ev.requestId, responseCode: 204, responseHeaders: [] });
+          return await cdp.send("Fetch.failRequest", { requestId: ev.requestId, errorReason: "BlockedByClient" });
+        }
+      }
       if (ev.responseStatusCode >= 300 && ev.responseStatusCode < 400) {
         const location = header(ev.responseHeaders, "location");
         let next = null;
@@ -67,7 +88,7 @@ export async function installNetworkGuard(context, page, policy, { onBlock = () 
 
 export function createBrowse({ client, projectId, policy, connect = (url) => chromium.connectOverCDP(url, { timeout: 20_000 }), log = console.error }) {
   return async function browse(url, { signal, step, sessionReleased, interactive, sessionSeconds }) {
-    let session, browser, creating;
+    let session, browser, creating, gate = null;
 
     // Settles with `p`, or rejects the moment the job is aborted (the underlying work may still finish; cleanup below deals with it).
     const raced = (p) => new Promise((resolve, reject) => {
@@ -98,15 +119,17 @@ export function createBrowse({ client, projectId, policy, connect = (url) => chr
         context = browser.contexts()[0] ?? await browser.newContext();
         page = context.pages()[0] ?? await context.newPage();
         // Installed BEFORE the first navigation. A failure here fails the job: browsing without the guard is never an option.
-        await installNetworkGuard(context, page, policy, { onBlock: interactive?.blocked });
+        gate = interactive ? createEffectGate() : null;
+        await installNetworkGuard(context, page, policy, { onBlock: interactive?.blocked, gate });
       });
       await stage("navigate", "navigation_failed", async () => {
-        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 });
+        gate?.begin([{ method: "GET", url, query: true }]);       // the start page is the one navigation this window allows
+        try { await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20_000 }); } finally { gate?.end(); }
         if (!policy.allowRequest(page.url())) throw code("disallowed_final_url");
       });
       if (interactive) { // the session stays open: one validated action at a time until the user finishes, stops, or a limit is reached
         step("interact", "running");
-        const outcome = await runInteractive({ page, raced, signal, interactive, policy, log });
+        const outcome = await runInteractive({ page, context: page.context(), gate, raced, signal, interactive, policy, log });
         step("interact", "done");
         return outcome;
       }
