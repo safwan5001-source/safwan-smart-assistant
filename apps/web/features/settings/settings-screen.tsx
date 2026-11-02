@@ -68,9 +68,9 @@ export default function SettingsScreen() {
         </div>
         <div className="status-line">
           <span><strong>Anthropic Claude</strong><small>المزود الأساسي المعتمد لمساعد صفوان الذكي</small></span>
-          <Badge>{aiReady(status) ? "جاهز للمحادثة" : "ينتظر تهيئة الخادم"}</Badge>
+          <Badge>{aiReady(status) ? "المزود مهيأ" : "ينتظر تهيئة الخادم"}</Badge>
         </div>
-        <p className="muted" style={{ fontSize: 14 }}>يُدار مفتاح API والنموذج من إعدادات الخادم فقط. لا يُحفظ أي مفتاح على الآيفون. لا يعني اتصال الخادم اكتمال تفعيل الدردشة أو أدوات المتصفح.</p>
+        <p className="muted" style={{ fontSize: 14 }}>يُدار مفتاح API والنموذج من إعدادات الخادم فقط. لا يُحفظ أي مفتاح على الآيفون. تعكس الحالة تهيئة المزود على الخادم فقط، ولا تثبت نجاح اتصال فعلي بـClaude أو اكتمال ربط الدردشة وأدوات المتصفح.</p>
         <button className="btn btn-sm" onClick={refresh} style={{ justifySelf: "start" }}>تحديث حالة الاتصال</button>
       </section>
 
