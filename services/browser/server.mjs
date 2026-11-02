@@ -54,7 +54,7 @@ async function browse(url) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
     if (!allowHosts.includes(new URL(page.url()).hostname.toLowerCase())) throw new Error("Disallowed final URL");
     const title = (await page.title()).slice(0, 200);
-    const excerpt = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\\s+/g, " ").trim().slice(0, 4000);
+    const excerpt = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\s+/g, " ").trim().slice(0, 4000);
     // Screenshots may contain sensitive information. Never log or persist them.
     const screenshot = await page.screenshot({ type: "jpeg", quality: 55, timeout: 10000 });
     if (screenshot.length > 250000) throw new Error("Screenshot exceeds response cap");
