@@ -49,7 +49,6 @@ try {
   if (!existsSync(join(here, "..", ".next", "BUILD_ID"))) throw new Error("run `pnpm build:web` first");
   const LABDIR = join(here, "..", "public", "browser-lab");
   const SCOPE = "lab.test/browser-lab/";
-  const LAB = "https://lab.test/browser-lab/index.html";
   const CANARY = "كناري-تجريبي-7731";
   // ── fixture "internet": example.com / lab.test / evil.test ⇒ one local HTTPS server (throw-away certificate). lab.test serves the REAL lab page files. ──
   const tmp = mkdtempSync(join(tmpdir(), "chat-browser2-e2e-")); cleanups.push(() => rmSync(tmp, { recursive: true, force: true }));
