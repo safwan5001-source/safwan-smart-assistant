@@ -10,7 +10,7 @@ const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(2000, 
 
 async function boot({ hang = false } = {}) {
   const released = [];
-  const page = { goto: () => (hang ? new Promise(() => {}) : Promise.resolve()), url: () => "https://example.com/", title: async () => "Example Domain",
+  const page = { on() {}, goto: () => (hang ? new Promise(() => {}) : Promise.resolve()), url: () => "https://example.com/", title: async () => "Example Domain",
     locator: () => ({ innerText: async () => "Hello" }), screenshot: async () => JPEG };
   const context = { pages: () => [page], route: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {}, on() {}, newCDPSession: async () => ({ on() {}, send: async () => ({}) }) };
   const browser = { contexts: () => [context], close: async () => {} };
