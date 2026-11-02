@@ -1,4 +1,8 @@
 import os
+import hmac
+import json
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
 from typing import Any
 from uuid import uuid4
 
@@ -48,6 +52,32 @@ class AssistantRequest(BaseModel):
 def _integration_summary() -> dict[str, int]:
     statuses = [resolve_status(spec, os.environ).value for spec in CATALOG]
     return {"total": len(statuses), "connected": statuses.count("connected")}
+
+class BrowserSmokeRequest(BaseModel):
+    url: str = Field(default="https://example.com", max_length=200)
+
+
+@app.post("/internal/browser/smoke")
+def browser_smoke(payload: BrowserSmokeRequest, authorization: str | None = __import__("fastapi").Header(default=None)) -> dict[str, Any]:
+    """Owner-controlled diagnostic. Does not change normal production authentication."""
+    expected = os.environ.get("BROWSER_SERVICE_TOKEN", "")
+    if len(expected) < 32 or not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(authorization[7:], expected):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if payload.url != "https://example.com":
+        raise HTTPException(status_code=400, detail="Only example.com may be tested")
+    host = os.environ.get("BROWSER_SERVICE_URL", "").rstrip("/")
+    if host != "http://safwan-browser.railway.internal:8080":
+        raise HTTPException(status_code=503, detail="Browser worker is not configured")
+    body = json.dumps({"url": payload.url}).encode("utf-8")
+    req = urllib_request.Request(host + "/v1/navigate", body, {
+        "Authorization": "Bearer " + expected, "Content-Type": "application/json"
+    }, method="POST")
+    try:
+        with urllib_request.urlopen(req, timeout=35) as response:
+            data = json.load(response)
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        raise HTTPException(status_code=502, detail="Browser worker request failed") from None
+    return {"ok": data.get("ok") is True, "title": str(data.get("title", ""))[:200]}
 
 
 @app.get("/health")
