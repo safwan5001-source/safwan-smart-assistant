@@ -30,7 +30,7 @@ export type Locator = { by: "role"; role: Role; value: string; exact?: boolean }
 export type ActionRequest =
   | { tool: "navigate"; url: string } | { tool: "click"; target: Locator } | { tool: "type"; target: Locator; text: string } | { tool: "observe" };
 export type SessionAction = { seq: number; tool: Tool; status: ActionStatus; summary: string; error?: ActionError };
-export type Pending = { seq: number; kind: "submit" | "button"; summary: string; expiresAt?: number; submitsTo?: string };
+export type Pending = { seq: number; kind: "submit" | "button"; summary: string; expiresAt?: number; submitsTo?: string; element?: { tag: string; role?: string; text: string } };
 export type SessionExtras = {
   mode: "interactive"; ready: boolean; limits: { maxActions: number; deadlineMs: number; idleMs: number; approvalMs: number }; deadlineAt?: number;
   blockedRequests: number; actions: SessionAction[]; endReason?: EndReason; pending?: Pending;
@@ -122,6 +122,11 @@ export function parseTaskView(raw: unknown, opts: ParseOptions = {}): TaskView |
     if (typeof p !== "object" || seq === null || (p.kind !== "submit" && p.kind !== "button")) return null;
     const pending: Pending = { seq, kind: p.kind, summary: cleanText(p.summary, 300) };
     const exp = int(p.expiresAt, 1, 1e14); if (exp !== null) pending.expiresAt = exp;
+    if (p.element !== undefined && p.element !== null) {
+      const e = p.element as Record<string, unknown>;
+      if (typeof e !== "object" || typeof e.tag !== "string" || !/^[a-z][a-z0-9]{0,19}$/.test(e.tag)) return null;
+      pending.element = { tag: e.tag, text: cleanText(e.text, 120), ...(typeof e.role === "string" && e.role ? { role: cleanText(e.role, 30) } : {}) };
+    }
     if (p.submitsTo !== undefined && p.submitsTo !== null) { if (typeof p.submitsTo !== "string" || !urlOk(p.submitsTo)) return null; pending.submitsTo = p.submitsTo; }
     ext.pending = pending;
   }

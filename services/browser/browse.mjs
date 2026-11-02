@@ -112,7 +112,7 @@ export function createBrowse({ client, projectId, policy, connect = (url) => chr
       }
       const text = await stage("read", "browser_execution_failed", async () => ({
         title: cleanText(await page.title(), 200),
-        excerpt: cleanText(await page.locator("body").innerText({ timeout: 5000 }), 4000),
+        excerpt: cleanText(await page.evaluate(() => String(document.body?.innerText ?? "").slice(0, 6000)), 4000),
       }));
       // A screenshot can show anything on the page: kept in memory only, never logged or written to disk.
       const screenshot = await stage("screenshot", "browser_execution_failed", async () => {

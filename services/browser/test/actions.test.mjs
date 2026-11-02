@@ -34,6 +34,10 @@ test("policy: interaction is possible only inside a scope; look-only hosts and t
   assert.equal(policy.canInteract("https://evil.lab.example.org/browser-lab/x"), false);
   assert.equal(policy.canInteract("https://lab.example.org.evil.test/browser-lab/x"), false);
   assert.equal(policy.canInteract("https://u:p@lab.example.org/browser-lab/x"), false);
+  for (const tricky of ["browser-lab/..%2fadmin", "browser-lab/..;/admin", "browser-lab/%5c..%5cadmin", "browser-lab//x", "browser-lab/a%2fb"]) {
+    assert.equal(policy.canInteract(`https://lab.example.org/${tricky}`), false, tricky);
+    assert.equal(policy.allowRequest(`https://lab.example.org/${tricky}`), false, tricky);
+  }
   assert.equal(policy.allowRequest("https://lab.example.org/browser-lab/app.js"), true);
   assert.equal(policy.allowRequest("https://lab.example.org/api/session"), false, "subresources of the lab host outside the prefix are refused");
   assert.equal(policy.allowRequest("https://example.com/anything"), true);
@@ -82,7 +86,8 @@ test("looksLikeCardNumber: Luhn-valid 13-19 digits however grouped", () => {
   assert.equal(looksLikeCardNumber("4111-1111-1111-1111"), true);
   assert.equal(looksLikeCardNumber("4111111111111112"), false);
   assert.equal(looksLikeCardNumber("12345"), false);
-  assert.equal(looksLikeCardNumber("hello 4111111111111111"), false);
+  assert.equal(looksLikeCardNumber("hello 4111111111111111"), true, "embedded numbers count");
+  assert.equal(looksLikeCardNumber("order 1234567890123"), false);
 });
 
 test("classify: deny is final, buttons need approval, plain navigation and plain text fields do not", () => {
@@ -114,11 +119,24 @@ test("classify: deny is final, buttons need approval, plain navigation and plain
   assert.deepEqual(c(click("Next"), facts({ tag: "a", href: "https://lab.example.org/browser-lab/page2.html", text: "Next" })), { decision: "allow" });
   assert.deepEqual(c(click("I agree"), facts({ tag: "input", type: "checkbox", labelText: "I agree" })), { decision: "allow" });
   assert.deepEqual(c(click("More"), facts({ tag: "summary", type: "", text: "More" })), { decision: "allow" });
-  assert.deepEqual(c(click("Menu"), facts({ text: "Menu", hasDisclosureAttr: true })), { decision: "allow" });
+  // review F2: native navigation / local UI state WITHOUT handler attributes only. Everything that might persist something needs approval.
+  for (const f of [{ tag: "input", type: "checkbox", inForm: true }, { tag: "input", type: "checkbox", hasHandler: true }, { tag: "input", type: "radio", hasHandler: true },
+    { tag: "a", href: "https://lab.example.org/browser-lab/p.html", hasHandler: true }, { tag: "summary", type: "", hasHandler: true },
+    { text: "Save changes", hasDisclosureAttr: true }, { tag: "div", type: "", role: "switch", text: "Dark mode" }, { tag: "button", type: "button", role: "switch", text: "Sync" }]) {
+    assert.equal(c(click("x"), facts(f)).decision, "approve", JSON.stringify(f));
+  }
   // approval
   assert.deepEqual(c(click("Count"), facts({ text: "Count" })), { decision: "approve", kind: "button" });
   assert.deepEqual(c(click("Send form"), facts({ type: "submit", isSubmit: true, inForm: true, text: "Send form" })), { decision: "approve", kind: "submit" });
   assert.deepEqual(c(click("Menu"), facts({ text: "Menu", hasDisclosureAttr: true, isSubmit: true })), { decision: "approve", kind: "submit" });
+  // review F4: homoglyphs, soft hyphens, glued words, inflections, more Arabic, accessible-name sources, card numbers in other shapes
+  for (const w of ["Pаy now", "Pa\u00ady", "PAYNOW", "paynow", "deleteall", "Sign out", "signout", "Cancel subscription", "Deleted items", "purchased", "buying", "Send money", "سداد الفاتورة", "تسديد", "فاتورة"]) assert.equal(isSensitiveWord(w), true, w);
+  for (const w of ["Confirm", "Spayed", "Display", "Next", "إرسال النموذج", "Notes", "Count"]) assert.equal(isSensitiveWord(w), false, w);
+  assert.deepEqual(c(click("Go"), facts({ text: "Continue", labelText: "Delete account" })), { decision: "deny", code: "sensitive_action" }, "img alt / aria-labelledby text counts");
+  for (const n of ["4111.1111.1111.1111", "٤١١١ ١١١١ ١١١١ ١١١١", "４１１１１１１１１１１１１１１１", "card 4111 1111 1111 1111 exp 12/30", "4111-1111-1111-1111."]) {
+    assert.deepEqual(c(typing(n), facts({ tag: "input", type: "text" })), { decision: "deny", code: "sensitive_value" }, n);
+  }
+  assert.equal(c(typing("call 0501234567 or 2024-11-02"), facts({ tag: "input", type: "text" })).decision, "allow");
   assert.deepEqual(c(click("Go"), facts({ tag: "div", type: "", role: "button" })), { decision: "approve", kind: "button" });
 });
 

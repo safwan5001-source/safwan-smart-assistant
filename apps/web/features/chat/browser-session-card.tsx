@@ -311,6 +311,9 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
         <div className="bt-approval" role="alertdialog" aria-labelledby={ids + "-ap"} aria-describedby={ids + "-apd"} tabIndex={-1} ref={approvalRef}>
           <strong id={ids + "-ap"}>تنتظر موافقتك — الخطوة {task.pending.seq}</strong>
           <p id={ids + "-apd"} dir="auto">{task.pending.summary}</p>
+          {task.pending.element && (
+            <p className="bt-el" dir="auto">العنصر الفعلي في الصفحة: <strong>«{task.pending.element.text || "بلا نص"}»</strong> <small className="muted">({task.pending.element.role || task.pending.element.tag})</small></p>
+          )}
           <p className="muted">{APPROVAL_KIND_LABEL[task.pending.kind]}{task.pending.submitsTo && <> الوجهة: <bdi dir="ltr" className="num">{task.pending.submitsTo}</bdi></>}</p>
           {task.pending.expiresAt && <small className="muted">تُرفض تلقائياً بعد <bdi dir="ltr" className="num">{clock(task.pending.expiresAt - now)}</bdi> إن لم تقرر.</small>}
           <div className="row-wrap">

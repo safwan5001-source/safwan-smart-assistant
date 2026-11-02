@@ -126,6 +126,11 @@ describe("parseTaskView (interactive)", () => {
     ["bad action status", { actions: [{ seq: 1, tool: "click", status: "weird", summary: "x" }] }], ["bad pending kind", { pending: { seq: 1, kind: "pay", summary: "x" } }],
     ["pending dest off scope", { pending: { seq: 1, kind: "submit", summary: "x", submitsTo: "https://evil.test/c" } }], ["result off scope", { result: { title: "t", url: "https://evil.test/", excerpt: "", hasScreenshot: false } }],
   ])("rejects: %s", (_n, over) => expect(parseTaskView(sview(over), { sessionUrlOk: shape })).toBeNull());
+  it("keeps the resolved element of a pending approval, cleaned; rejects a malformed one", () => {
+    const pending = (element: unknown) => sview({ actions: [{ seq: 1, tool: "click", status: "awaiting_approval", summary: "x" }], pending: { seq: 1, kind: "button", summary: "s", element } });
+    expect(parseTaskView(pending({ tag: "button", role: "switch", text: "Share\u202e all", html: "<b>" }), { sessionUrlOk: shape })!.pending!.element).toEqual({ tag: "button", text: "Share all", role: "switch" });
+    for (const bad of [{ tag: "BUTTON<x>" }, "button", { text: "no tag" }]) expect(parseTaskView(pending(bad), { sessionUrlOk: shape })).toBeNull();
+  });
   it("collapses unknown action errors to a fixed code", () => {
     expect(parseTaskView(sview({ actions: [{ seq: 1, tool: "click", status: "failed", summary: "x", error: "Traceback /srv/x" }] }), { sessionUrlOk: shape })!.actions![0].error).toBe("action_failed");
   });

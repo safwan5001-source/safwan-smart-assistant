@@ -15,6 +15,7 @@ test("the lab pages make no network requests and open no windows", () => {
       assert.equal(bad.test(html), false, `${f}: ${bad}`);
     }
     assert.match(html, /name="robots" content="noindex,nofollow"/);
+    if (f === "index.html") assert.match(html, /http-equiv="Content-Security-Policy" content="default-src 'none'; [^"]*form-action 'none'; base-uri 'none'/, "the lab carries its own CSP (review F1/F2/F11)");
   }
 });
 

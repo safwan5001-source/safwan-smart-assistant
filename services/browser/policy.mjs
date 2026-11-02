@@ -36,6 +36,7 @@ export function createPolicy(allowHosts, labScopes = []) {
   const hostAllowed = (hostname) => hosts.has(String(hostname).toLowerCase());
   const scopes = parseScopes(labScopes.map((s) => (typeof s === "string" ? s : `${s.host}${s.prefix}`)));
   const inScope = (u) => u.protocol === "https:" && !u.port && !u.username && !u.password
+    && !/[%;\\]|\/\//.test(u.pathname) // no encoded/parameter/backslash/double-slash path tricks inside a scope (a lab server might decode them)
     && scopes.some((s) => u.hostname.toLowerCase() === s.host && u.pathname.startsWith(s.prefix));
   /** May the session click/type on this page? Look-only hosts (example.com) never qualify. */
   const canInteract = (rawUrl) => { try { return inScope(new URL(rawUrl)); } catch { return false; } };

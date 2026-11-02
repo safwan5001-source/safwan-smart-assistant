@@ -76,16 +76,24 @@ export function describe(action) {
 
 // ── sensitivity ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 /** Lower-case, strip Arabic diacritics/tatweel, unify alef/ya/ta-marbuta and drop invisible characters, so «الدفع» / «الدَّفْع» / «ادفع» compare alike. */
+const CONFUSABLES = { а: "a", е: "e", о: "o", р: "p", с: "c", х: "x", у: "y", і: "i", ј: "j", ѕ: "s", к: "k", м: "m", н: "h", т: "t", в: "b", ο: "o", α: "a", ν: "v", ρ: "p", ι: "i", κ: "k", τ: "t", Ι: "i", Ο: "o", Α: "a" };
 export function norm(value) {
-  return String(value ?? "").normalize("NFKC").toLowerCase()
-    .replace(/[ً-ٰٟـ​-‏‪-‮⁠-⁩﻿]/g, "")
+  return String(value ?? "").normalize("NFKC")
+    .replace(/\p{Cf}/gu, "")                                 // zero-width, bidi, soft hyphen, joiners: all invisible
+    .toLowerCase().replace(/[а-яёa-zα-ω]/gu, (c) => CONFUSABLES[c] ?? c)
+    .replace(/[\u064b-\u065f\u0670\u0640]/g, "")
     .replace(/[إأآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/\s+/g, " ").trim();
 }
 // Payments, deletion, authentication, account creation, secrets. Matched against EVERY name the element has (label, text, value, id, name,
 // placeholder, aria-label, title, href) and against what the caller asked for. Hard deny: this phase does not touch real accounts or money.
-const DENY_EN = /\b(pay|payment|payments|checkout|purchase|buy|order|delete|remove|erase|destroy|drop|unsubscribe|subscribe|log ?in|login|log ?out|logout|sign ?in|signin|sign ?up|signup|register|password|passwd|passcode|credit|debit|card|cvv|cvc|iban|otp|2fa|pin|transfer|withdraw|donate|account|wallet|bank|ssn)\b/;
-const DENY_AR = /(ادفع|دفع|الدفع|ادفعي|شراء|اشتر|اشتري|احذف|حذف|ازاله|ازل|مسح|تسجيل ?(ال)?دخول|تسجيل ?خروج|دخول|خروج|انشاء ?حساب|حساب|سجل ?(الان|حساب)|كلمه ?(ال)?(سر|مرور)|بطاقه|رمز ?(ال)?(تحقق|امان)|تحويل|سحب|اشتراك|اشترك|تبرع|محفظه|بنك|رقم ?(ال)?(حساب|هويه))/;
-export const isSensitiveWord = (v) => { const n = norm(String(v ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")).replace(/[_\-./:=&?]+/g, " "); return DENY_EN.test(n) || DENY_AR.test(n); };
+const DENY_EN = /\b(pay|pays|paid|paying|payment|payments|checkout|purchase[sd]?|purchasing|buy|buys|buying|bought|order|orders|delete[sd]?|deleting|remove[sd]?|removing|erase[sd]?|destroy|drop|unsubscribe|subscribe|subscription|log ?in|login|log ?out|logout|sign ?in|signin|sign ?out|signout|sign ?up|signup|register|password|passwd|passcode|credit|debit|card|cvv|cvc|iban|otp|2fa|pin|transfer|withdraw|donate|account|wallet|bank|ssn|send money|cancel subscription)\b/;
+// Compound / glued forms ("PAYNOW", "deleteall") have no word boundary: for the unambiguous stems the whitespace-free string is searched too.
+const SQUASHED = /(payment|paynow|checkout|purchase|buynow|delete|password|passcode|signin|signup|signout|login|logout|unsubscribe|subscription|withdraw|creditcard|cardnumber|cvv)/;
+const DENY_AR = /(ادفع|دفع|الدفع|ادفعي|سداد|تسديد|شراء|اشتر|اشتري|احذف|حذف|ازاله|ازل|مسح|تسجيل ?(ال)?دخول|تسجيل ?خروج|دخول|خروج|انشاء ?حساب|حساب|سجل ?(الان|حساب)|كلمه ?(ال)?(سر|مرور)|بطاقه|رمز ?(ال)?(تحقق|امان)|تحويل|سحب|اشتراك|اشترك|تبرع|محفظه|بنك|رقم ?(ال)?(حساب|هويه)|فاتوره)/;
+export const isSensitiveWord = (v) => {
+  const n = norm(String(v ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")).replace(/[_\-./:=&?]+/g, " ");
+  return DENY_EN.test(n) || DENY_AR.test(n) || SQUASHED.test(n.replace(/\s+/g, ""));
+};
 
 const SENSITIVE_AUTOCOMPLETE = /^(cc-|current-password|new-password|one-time-code|transaction-)/;
 /** autocomplete is a token list ("billing cc-number"): the field token may follow section/billing/shipping prefixes, so every token is checked. */
@@ -97,15 +105,17 @@ export const luhn = (digits) => {
   for (let i = digits.length - 1; i >= 0; i--) { let d = digits.charCodeAt(i) - 48; if (alt) { d *= 2; if (d > 9) d -= 9; } sum += d; alt = !alt; }
   return sum % 10 === 0;
 };
-/** Text that looks like a payment card number (13-19 digits, Luhn-valid), however it is grouped. */
+const toAsciiDigits = (t) => String(t).normalize("NFKC").replace(/[\u0660-\u0669]/g, (c) => String(c.charCodeAt(0) - 0x660)).replace(/[\u06f0-\u06f9]/g, (c) => String(c.charCodeAt(0) - 0x6f0));
+/** Text containing a payment-card-looking number: any run of 13-19 digits (spaces, dots, dashes allowed between them), Luhn-valid. Arabic-Indic and fullwidth digits count. */
 export const looksLikeCardNumber = (text) => {
-  const compact = String(text).replace(/[\s-]/g, "");
-  return /^\d{13,19}$/.test(compact) && luhn(compact);
+  const t = toAsciiDigits(text);
+  for (const m of t.matchAll(/\d(?:[ .\-]?\d){12,18}/g)) { const d = m[0].replace(/\D/g, ""); if (d.length >= 13 && d.length <= 19 && luhn(d)) return true; }
+  return false;
 };
 
 /** Stable identity of a verified element: the approval is for THIS element, and it is checked again right before the action runs. */
 export const fingerprint = (facts) => createHash("sha256").update(JSON.stringify([
-  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formMethod, facts.inForm, facts.isSubmit, facts.href,
+  facts.tag, facts.type, facts.role, facts.name, facts.text, facts.id, facts.formAction, facts.formMethod, facts.inForm, facts.isSubmit, facts.href, facts.hasHandler,
 ])).digest("hex").slice(0, 16);
 
 /**
@@ -129,15 +139,16 @@ export function classify(action, facts, { allowUrl }) {
     return { decision: "allow" };
   }
 
-  // click
+  // click. `allow` is deliberately narrow: only things whose native behaviour is navigation or local UI state AND that carry no script handler
+  // attribute. Anything else (buttons, role=switch, aria-controls buttons, checkboxes inside a form or with onchange...) needs the owner's approval.
   if (facts.tag === "a") {
     if (facts.hasDownload) return { decision: "deny", code: "download_blocked" };
     if (!facts.href || !allowUrl(facts.href)) return { decision: "deny", code: "leaves_scope" };
-    return { decision: "allow" }; // a plain link to a page the policy already permits: just navigation
+    return facts.hasHandler ? { decision: "approve", kind: "button" } : { decision: "allow" };
   }
-  if ((facts.tag === "input" && (facts.type === "checkbox" || facts.type === "radio")) || facts.role === "checkbox" || facts.role === "radio" || facts.role === "switch") {
-    return facts.isSubmit ? { decision: "approve", kind: "submit" } : { decision: "allow" };
+  if (facts.tag === "input" && (facts.type === "checkbox" || facts.type === "radio")) {
+    return facts.inForm || facts.hasHandler || facts.isSubmit ? { decision: "approve", kind: "button" } : { decision: "allow" };
   }
-  if (facts.tag === "summary" || (facts.hasDisclosureAttr && !facts.isSubmit)) return { decision: "allow" };
+  if (facts.tag === "summary" && !facts.hasHandler) return { decision: "allow" };
   return { decision: "approve", kind: facts.isSubmit ? "submit" : "button" };
 }

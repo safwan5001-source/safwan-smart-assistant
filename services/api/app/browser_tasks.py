@@ -302,6 +302,16 @@ def _clean_interactive(raw: dict[str, Any], url_re: re.Pattern[str]) -> dict[str
         pend = {"seq": seq, "kind": p["kind"], "summary": _clean_text(p.get("summary"), 300)}
         if (e := _bounded_int(p.get("expiresAt"), 1, 10**14)) is not None:
             pend["expiresAt"] = e
+        el = p.get("element")
+        if el is not None:
+            if not isinstance(el, dict):
+                raise ValueError("pending.element")
+            tag = _clean_text(el.get("tag"), 20)
+            if not re.fullmatch(r"[a-z][a-z0-9]{0,19}", tag):
+                raise ValueError("pending.element.tag")
+            pend["element"] = {"tag": tag, "text": _clean_text(el.get("text"), 120)}
+            if el.get("role"):
+                pend["element"]["role"] = _clean_text(el.get("role"), 30)
         if p.get("submitsTo") is not None:
             if not (isinstance(p["submitsTo"], str) and url_re.fullmatch(p["submitsTo"])):
                 raise ValueError("pending.submitsTo")

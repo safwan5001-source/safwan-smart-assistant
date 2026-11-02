@@ -13,7 +13,7 @@ function fakes({ guardFails = false, createDelay = 0, createFails = false, conne
   const page = {
     on() {}, goto: () => (gotoHang ? new Promise(() => {}) : Promise.resolve()),
     url: () => URL1, title: async () => "Example Domain",
-    locator: () => ({ innerText: async () => "Example Domain  text" }),
+    evaluate: async () => "Example Domain  text",
     screenshot: async () => shot,
   };
   const context = { pages: () => [page], newPage: async () => page, route: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {}, on() {}, newCDPSession: async () => { if (guardFails) throw new Error("cdp unavailable"); return { on() {}, send: async () => ({}) }; } };
