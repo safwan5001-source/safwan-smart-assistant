@@ -48,6 +48,9 @@ export type Reminder = {
   updated: number;
 };
 
+/** Date-picker lower bound: a one-off must be today or later; a series may keep a PAST anchor (it carries the weekday / day-of-month,
+ *  e.g. «كل شهر يوم 31» seeded in February as January 31) — the scheduler already yields the next future occurrence. */
+export const minDateFor = (repeat: RepeatKind, today: string): string | undefined => (repeat === "none" ? today : undefined);
 export const REMINDER_LIMITS = { title: 200, notes: 2000, maxLeadMinutes: 7 * 24 * 60, maxSnoozeMinutes: 7 * 24 * 60, perDevice: 500 } as const;
 export const LEAD_OPTIONS = [0, 5, 10, 15, 30, 60, 120, 1440];
 export const SNOOZE_OPTIONS = [5, 10, 30, 60];

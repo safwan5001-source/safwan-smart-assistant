@@ -7,7 +7,7 @@ import { useStore } from "@/lib/hooks";
 import { prefsStore } from "@/lib/stores";
 import { runCommand } from "@/lib/commands";
 import {
-  LEAD_OPTIONS, PRIORITIES, PRIORITY_LABEL, REPEATS, REPEAT_LABEL, REMINDER_LIMITS, leadLabel,
+  LEAD_OPTIONS, PRIORITIES, PRIORITY_LABEL, REPEATS, REPEAT_LABEL, REMINDER_LIMITS, leadLabel, minDateFor,
   type Reminder, type ReminderInput, type ReminderPriority, type RepeatKind,
 } from "@/lib/reminders";
 import type { Clarification } from "@/lib/reminder-parser";
@@ -95,7 +95,7 @@ function Form({ onClose, reminder, seed, clarification, notes }: Omit<ReminderDi
       <div className="field"><label htmlFor="r-title">ما الذي تريد أن أذكّرك به؟</label>
         <input id="r-title" className="input" autoFocus={!d.title} maxLength={REMINDER_LIMITS.title} value={d.title} onChange={(e) => set("title", e.target.value)} placeholder="مثال: مراجعة الفواتير" enterKeyHint="done" /></div>
       <div className="grid grid-2">
-        <div className="field"><label htmlFor="r-date">التاريخ</label><input id="r-date" className="input" type="date" value={d.date} min={reminder && d.repeat !== "none" ? undefined : todayKey(tz)} onChange={(e) => set("date", e.target.value)} /></div>
+        <div className="field"><label htmlFor="r-date">التاريخ</label><input id="r-date" className="input" type="date" value={d.date} min={minDateFor(d.repeat, todayKey(tz))} onChange={(e) => set("date", e.target.value)} /></div>
         <div className="field"><label htmlFor="r-time">الوقت</label><input id="r-time" className="input" type="time" value={d.time} onChange={(e) => set("time", e.target.value)} /></div>
       </div>
       <div className="grid grid-2">

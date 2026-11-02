@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createMemoryStore } from "@/server/notify/memory-store";
 import { createPgStore } from "@/server/notify/pg-store";
 import { parseServerPrefs } from "@/lib/notify-prefs";
-import { createReminder, fire, parseReminderValue, updateReminder } from "@/lib/reminders";
+import { createReminder, fire, minDateFor, parseReminderValue, updateReminder } from "@/lib/reminders";
 import { parseReminderText } from "@/lib/reminder-parser";
 import { runCommand, runQuickCommand } from "@/lib/commands";
 import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
@@ -365,5 +365,17 @@ describe("P2: a sync response that arrives after a wipe is discarded", () => {
     release(); await pending;
     expect(remindersStore.getSnapshot()).toEqual([]);
     expect(pushDeviceStore.getSnapshot()).toBeNull();
+  });
+});
+
+describe("P2: the date picker never blocks a recurring draft whose anchor is in the past", () => {
+  it("one-offs need today or later; daily/weekly/monthly (new or edited) accept the past anchor the parser seeds", () => {
+    expect(minDateFor("none", "2026-02-02")).toBe("2026-02-02");
+    for (const k of ["daily", "weekly", "monthly"] as const) expect(minDateFor(k, "2026-02-02")).toBeUndefined();
+    // the very draft that triggered the review comment: «كل شهر يوم 31» without a time, asked in February
+    const out = parseReminderText("ذكرني كل شهر يوم 31 بدفع الإيجار", riyadh(2026, 2, 2, 9, 0));
+    if (out.kind !== "clarify") throw new Error(`expected clarify, got ${out.kind}`);
+    expect(out.draft.date).toBe("2026-01-31");
+    expect(out.draft.date! < "2026-02-02" && minDateFor(out.draft.repeat ?? "monthly", "2026-02-02") === undefined).toBe(true);
   });
 });
