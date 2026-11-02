@@ -1,6 +1,7 @@
 import { alertAt, type Reminder } from "@/lib/reminders";
 import type { ServerPrefs } from "@/lib/notify-prefs";
-import type { DeliveryRec, DeliveryStatus, DeviceRec, NewDelivery, NotifyStore, PushSub } from "./types";
+import { REMINDER_LIMITS } from "@/lib/reminders";
+import { ReminderLimitError, type DeliveryRec, type DeliveryStatus, type DeviceRec, type NewDelivery, type NotifyStore, type PushSub } from "./types";
 
 /** key-order independent serialisation, used to detect real content differences */
 const stable = (v: unknown): string => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x as object).sort(([a], [b]) => (a < b ? -1 : 1))) : x));
@@ -33,6 +34,9 @@ export function createMemoryStore(): NotifyStore {
     async deleteDevice(id) { devices.delete(id); reminders.delete(id); deliveries.delete(id); },
     async syncReminders(deviceId, incoming, deleted, now) {
       const b = bucket(deviceId);
+      // the stored collection (not just this request) is capped: repeated batches with fresh ids must not grow a device without bound
+      const resulting = new Set(b.keys()); for (const id of deleted) resulting.delete(id); for (const r of incoming) if (!deleted.includes(r.id)) resulting.add(r.id);
+      if (resulting.size > REMINDER_LIMITS.perDevice) throw new ReminderLimitError("reminder_limit");
       const cancelPending = (reminderId: string, why: string) => {
         for (const dl of deliveries.get(deviceId)?.values() ?? []) if (dl.reminderId === reminderId && dl.status === "pending") { dl.status = "cancelled"; dl.lastError = why; }
       };

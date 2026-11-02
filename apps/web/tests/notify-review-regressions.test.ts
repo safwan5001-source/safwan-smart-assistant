@@ -12,9 +12,9 @@ import { runCommand, runQuickCommand } from "@/lib/commands";
 import { applyPrivacy, GENERIC_BODY, GENERIC_TITLE } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { handleNotify } from "@/server/notify/api";
-import { enablePush, schedulePrefsSync, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
+import { enablePush, schedulePrefsSync, syncReminders, syncRetry, urlBase64ToUint8Array } from "@/lib/push-client";
 import { prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
-import type { NotifyStore, NewDelivery } from "@/server/notify/types";
+import { ReminderLimitError, type NotifyStore, type NewDelivery } from "@/server/notify/types";
 import { installBrowser } from "./setup";
 import { fakeSender, makeRuntime, makeSubscription, mkReminder, req, riyadh, registerDevice, vapid } from "./notify-helpers";
 
@@ -95,6 +95,17 @@ describe.each(impls)("review fixes on the store (round 5) — %s", (_n, make) =>
     await store.setSubscription(id, makeSubscription().sub, NOW);
     return id;
   };
+  it("the STORED collection is capped (repeated batches with fresh ids cannot grow a device); nothing is written on refusal", async () => {
+    const id = await device();
+    const batch = (tag: string, n: number) => Array.from({ length: n }, (_, i) => mkReminder({}, NOW, `${tag}${i}`));
+    expect(await store.syncReminders(id, batch("a", 500), [], NOW)).toHaveLength(500);
+    await expect(store.syncReminders(id, batch("b", 1), [], NOW + 1)).rejects.toBeInstanceOf(ReminderLimitError);
+    await expect(store.syncReminders(id, batch("c", 500), [], NOW + 2)).rejects.toBeInstanceOf(ReminderLimitError);
+    expect(await store.listReminders(id)).toHaveLength(500);                       // rolled back, not partially applied
+    expect(await store.syncReminders(id, batch("b", 1), ["a0"], NOW + 3)).toHaveLength(500); // freeing a slot in the same request is fine
+    expect(await store.syncReminders(id, batch("a", 500).slice(1), [], NOW + 4)).toHaveLength(500); // re-sending known ids is not growth
+    await store.deleteDevice(id);                                                  // leave no due rows behind for the other contract tests
+  });
   it("rescheduling a reminder cancels the queued push for the OLD occurrence; an identical echo does not", async () => {
     const id = await device();
     const r = mkReminder({}, NOW, "rs1");
@@ -195,6 +206,31 @@ describe("P2: an idle device does not sync forever", () => {
     stub("fetch", online);
     expect(await syncReminders()).toBe(true);                                    // reconnect / startup / focus → plain reminder sync
     expect((await rt.store!.getDevice(d.deviceId))!.prefs).toMatchObject({ lockScreenContent: false, quiet: { enabled: true } });
+  });
+  it("a transient failure (503 / network) is retried with backoff until the edit reaches the server; a permanent one is not", async () => {
+    await enablePush();
+    const d = pushDeviceStore.getSnapshot()!;
+    const base = syncRetry.baseMs; syncRetry.baseMs = 15;
+    try {
+      const online = g.fetch as (u: string, i?: RequestInit) => Promise<Response>;
+      let n = 0;
+      stub("fetch", async (u: string, i?: RequestInit) => {
+        if (String(u).includes("/reminders/sync") && n++ < 2) return n === 1 ? new Response("{}", { status: 503 }) : Promise.reject(new Error("timeout"));
+        return online(u, i);
+      });
+      remindersStore.set([mkReminder({}, NOW, "retry1")]);
+      expect(await syncReminders()).toBe(false);                                   // 503 → armed, nothing on the server yet
+      expect(await rt.store!.listReminders(d.deviceId)).toHaveLength(0);
+      for (let i = 0; i < 100 && (await rt.store!.listReminders(d.deviceId)).length === 0; i++) await new Promise((r) => setTimeout(r, 20));
+      expect(await rt.store!.listReminders(d.deviceId)).toHaveLength(1);           // retried (503, network error, then success)
+      expect(n).toBe(3);
+      let m = 0;
+      stub("fetch", async (u: string, i?: RequestInit) => { if (String(u).includes("/reminders/sync")) { m++; return new Response("{}", { status: 413 }); } return online(u, i); });
+      remindersStore.set((r) => [...r, mkReminder({}, NOW, "retry2")]);
+      expect(await syncReminders()).toBe(false);
+      await new Promise((r) => setTimeout(r, 150));
+      expect(m).toBe(1);                                                           // 413 is permanent → no retry storm
+    } finally { syncRetry.baseMs = base; }
   });
   it("a sync that DOES bring changes still adopts them", async () => {
     await enablePush();
@@ -377,5 +413,18 @@ describe("P2: the date picker never blocks a recurring draft whose anchor is in 
     if (out.kind !== "clarify") throw new Error(`expected clarify, got ${out.kind}`);
     expect(out.draft.date).toBe("2026-01-31");
     expect(out.draft.date! < "2026-02-02" && minDateFor(out.draft.repeat ?? "monthly", "2026-02-02") === undefined).toBe(true);
+  });
+});
+
+describe("P2: the HTTP layer answers 413 reminder_limit", () => {
+  it("a second 500-reminder batch with new ids is refused", async () => {
+    const rt = makeRuntime({ send: fakeSender().send, now: () => NOW });
+    const dev = await registerDevice(rt, makeSubscription().sub, {});
+    const mk = (tag: string) => Array.from({ length: 500 }, (_, i) => mkReminder({}, NOW, `${tag}${i}`));
+    const put = (reminders: unknown[]) => handleNotify(req("PUT", { reminders, deleted: [] }, dev.auth), ["reminders", "sync"], rt);
+    expect((await put(mk("x"))).status).toBe(200);
+    const r = await put(mk("y"));
+    expect(r.status).toBe(413);
+    expect(await r.json()).toEqual({ error: "reminder_limit" });
   });
 });

@@ -8,6 +8,7 @@ import { authenticate, bearerMatches, hashToken, newDeviceId, newToken } from ".
 import { dispatchTick } from "./dispatch";
 import { deliveryOf, testPayload, topicOf, ttlOf, urgencyOf } from "./push";
 import { isReady, type Runtime } from "./runtime";
+import { ReminderLimitError } from "./types";
 import { parseSubscription, parseSyncBody, readJson, SYNC_MAX_BYTES } from "./validate";
 
 const HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } as const;
@@ -99,7 +100,8 @@ export async function handleNotify(req: Request, path: string[], rt: Runtime): P
           const p = parseServerPrefs(rawPrefs);
           if (JSON.stringify(p) !== JSON.stringify(dev.prefs)) await store.setPrefs(dev.id, p);
         }
-        return json({ reminders: await store.syncReminders(dev.id, body.reminders, body.deleted, now), serverTime: now });
+        try { return json({ reminders: await store.syncReminders(dev.id, body.reminders, body.deleted, now), serverTime: now }); }
+        catch (e) { if (e instanceof ReminderLimitError) return err("reminder_limit", 413); throw e; }
       }
       case "POST /devices/me/test": {
         if (!dev.subscription) return err("push_not_enabled", 409);

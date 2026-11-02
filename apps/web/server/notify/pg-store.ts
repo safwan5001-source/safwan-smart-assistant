@@ -1,7 +1,7 @@
 import { Pool } from "pg";
-import { alertAt, parseReminderValue, type Reminder } from "@/lib/reminders";
+import { alertAt, parseReminderValue, REMINDER_LIMITS, type Reminder } from "@/lib/reminders";
 import { parseServerPrefs, type ServerPrefs } from "@/lib/notify-prefs";
-import type { DeliveryRec, DeviceRec, NewDelivery, NotifyStore, PushSub } from "./types";
+import { ReminderLimitError, type DeliveryRec, type DeviceRec, type NewDelivery, type NotifyStore, type PushSub } from "./types";
 
 const RETENTION_DELIVERIES = 14 * 24 * 3600_000;
 const RETENTION_DEVICES = 180 * 24 * 3600_000;
@@ -113,6 +113,7 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
         }
         await c.query("UPDATE notify.devices SET last_seen_at = $2 WHERE id = $1", [deviceId, now]);
         const res = await c.query("SELECT body FROM notify.reminders WHERE device_id = $1 ORDER BY id", [deviceId]);
+        if (res.rows.length > REMINDER_LIMITS.perDevice) throw new ReminderLimitError("reminder_limit"); // rolled back below: nothing is kept
         await c.query("COMMIT");
         return res.rows.map((x) => parseReminderValue(x.body)).filter((x): x is Reminder => !!x);
       } catch (e) { await c.query("ROLLBACK").catch(() => undefined); throw e; } finally { c.release(); }

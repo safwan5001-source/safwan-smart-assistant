@@ -11,6 +11,8 @@ export type DeviceRec = {
   createdAt: number;
   lastSeenAt: number;
 };
+/** Thrown by syncReminders when the resulting collection would exceed REMINDER_LIMITS.perDevice (nothing is written). */
+export class ReminderLimitError extends Error {}
 export type DeliveryStatus = "pending" | "sent" | "failed" | "gone" | "expired" | "cancelled";
 export type NewDelivery = {
   key: string; reminderId: string | null; kind: "reminder" | "test"; payload: string; priority: ReminderPriority; createdAt: number; expiresAt: number;

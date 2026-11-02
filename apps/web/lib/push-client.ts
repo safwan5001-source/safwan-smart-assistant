@@ -154,7 +154,7 @@ export async function disablePush(): Promise<PushState> {
 
 /** Full erase: server rows (device, reminders, deliveries), browser subscription and local credentials. Returns true when nothing remains. */
 export async function eraseRemoteDevice(): Promise<boolean> {
-  epoch++;
+  epoch++; clearRetry();
   const device = pushDeviceStore.getSnapshot();
   let ok = true;
   if (device) {
@@ -186,6 +186,18 @@ export async function sendTestPush(): Promise<TestResult> {
 }
 
 let epoch = 0; // bumped by every wipe: responses of syncs started before it are discarded
+/** A sync that failed for a TRANSIENT reason (network, 429, 5xx) is retried with a bounded exponential backoff until it succeeds, so a
+ *  saved edit/deletion can never stay unapplied on the push server (where the old notification would still fire). */
+export const syncRetry = { baseMs: 5_000, maxMs: 300_000 };
+let retryMs = 0;
+let retryTimer: ReturnType<typeof setTimeout> | undefined;
+function clearRetry() { clearTimeout(retryTimer); retryTimer = undefined; retryMs = 0; }
+function armRetry() {
+  retryMs = Math.min(retryMs ? retryMs * 3 : syncRetry.baseMs, syncRetry.maxMs);
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => void syncReminders(), retryMs);
+  (retryTimer as { unref?: () => void }).unref?.();
+}
 let inflight: Promise<boolean> | null = null;
 /** Serialised: a call made while another sync is running waits for it, then runs with the freshest data. */
 export async function syncReminders(): Promise<boolean> {
@@ -195,14 +207,16 @@ export async function syncReminders(): Promise<boolean> {
 }
 async function doSync(): Promise<boolean> {
   const device = pushDeviceStore.getSnapshot();
-  if (!device?.subscribed || device.erasePending) return false; // never re-import server rows of a device whose erasure is pending
+  if (!device?.subscribed || device.erasePending) { clearRetry(); return false; } // never re-import server rows of a device whose erasure is pending
   const sentTombs = tombstonesStore.getSnapshot();
   const ep = epoch, did = device.deviceId;
   const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs, prefs: toServerPrefs(prefsStore.getSnapshot()) }, device);
   if (ep !== epoch || pushDeviceStore.getSnapshot()?.deviceId !== did) return false; // a wipe/re-registration happened meanwhile: never import this stale answer
-  if (r.status === 401) { pushDeviceStore.reset(); return false; }               // server forgot us (erased / expired)
-  if (r.status === 409) { setSubscribed(false); return false; }                    // subscription removed server-side
-  if (!r.ok || !r.json) return false;
+  if (r.status === 401) { clearRetry(); pushDeviceStore.reset(); return false; }   // server forgot us (erased / expired)
+  if (r.status === 409) { clearRetry(); setSubscribed(false); return false; }      // subscription removed server-side
+  if (r.status === 0 || r.status === 429 || r.status >= 500) { armRetry(); return false; } // transient: try again later
+  if (!r.ok || !r.json) { clearRetry(); return false; }                            // permanent (400/413…): retrying cannot help
+  clearRetry();
   const remote = parseReminders(r.json.reminders);
   // Only write when the merge really changed something: store writes notify subscribers, and the runtime re-syncs on every write,
   // so an unconditional set() would make an idle device ping the server forever.
