@@ -35,6 +35,11 @@ SIGNED_ROUTES = {
     ("GET", "/internal/v1/browser/tasks/{task_id}"),
     ("POST", "/internal/v1/browser/tasks/{task_id}/cancel"),
     ("GET", "/internal/v1/browser/tasks/{task_id}/screenshot"),
+    # CHAT-BROWSER-2 interactive control (tests/test_browser_interactive.py): same signature, plus the lab-scope opt-in
+    ("POST", "/internal/v1/browser/tasks/{task_id}/actions"),
+    ("POST", "/internal/v1/browser/tasks/{task_id}/actions/{seq}/approve"),
+    ("POST", "/internal/v1/browser/tasks/{task_id}/actions/{seq}/reject"),
+    ("POST", "/internal/v1/browser/tasks/{task_id}/finish"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
 
