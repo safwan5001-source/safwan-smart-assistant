@@ -64,7 +64,7 @@ try {
   const chromiumPath = process.env.PW_CHROMIUM_PATH || (existsSync(chromium.executablePath()) ? chromium.executablePath() : "/opt/pw-browsers/chromium-1243/chrome-linux64/chrome");
 
   // ── worker (in-process) behind a mock Browserbase REST API that drives a real local Chromium ──
-  const mock = await startMock({ launchOptions: { executablePath: chromiumPath, env: noProxyEnv, args: [`--host-resolver-rules=MAP example.com 127.0.0.1:${sitePort}, MAP evil.test 127.0.0.1:${sitePort}`, "--ignore-certificate-errors", "--no-sandbox"] } });
+  const mock = await startMock({ chromium, launchOptions: { executablePath: chromiumPath, env: noProxyEnv, args: [`--host-resolver-rules=MAP example.com 127.0.0.1:${sitePort}, MAP evil.test 127.0.0.1:${sitePort}`, "--ignore-certificate-errors", "--no-sandbox"] } });
   const { server: workerServer, manager } = createApp({ token: WORKER_TOKEN, policy: createPolicy(["example.com"]), projectId: "p", log: () => {}, client: createClient({ apiKey: MOCK_KEY, base: mock.base }) });
   await new Promise((r) => workerServer.listen(0, "127.0.0.1", r));
   const workerPort = workerServer.address().port;

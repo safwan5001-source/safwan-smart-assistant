@@ -52,7 +52,7 @@ test("end to end against real Chromium", { skip: !haveChromium && "Chromium not 
 
   // The sandbox/CI egress proxy (HTTPS_PROXY) would make Chromium resolve names remotely and ignore the host-resolver rule: drop it for the browser only.
   const noProxyEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/proxy/i.test(k)));
-  const mock = await startMock({ launchOptions: { env: noProxyEnv, args: [`--host-resolver-rules=MAP example.com 127.0.0.1:${sitePort}, MAP evil.test 127.0.0.1:${sitePort}, MAP 169.254.169.254 127.0.0.1:${sitePort}`, "--ignore-certificate-errors"] } });
+  const mock = await startMock({ chromium, launchOptions: { env: noProxyEnv, args: [`--host-resolver-rules=MAP example.com 127.0.0.1:${sitePort}, MAP evil.test 127.0.0.1:${sitePort}, MAP 169.254.169.254 127.0.0.1:${sitePort}`, "--ignore-certificate-errors"] } });
   const { server, manager } = createApp({
     token: TOKEN, policy: createPolicy(["example.com"]), projectId: "p", log: () => {},
     client: createClient({ apiKey: MOCK_KEY, base: mock.base }),
