@@ -61,6 +61,19 @@ export default function SettingsScreen() {
         <Link href="/integrations#policy-h" className="btn btn-sm" style={{ justifySelf: "start" }}>عرض مصفوفة الصلاحيات<Icon name="forward" size={16} /></Link>
       </section>
 
+      <section className="card card-pad stack" aria-labelledby="ai-provider-h">
+        <div className="section-head">
+          <h2 id="ai-provider-h">مزود الذكاء الاصطناعي</h2>
+          <Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "متصل" : "غير مفعّل"}</Badge>
+        </div>
+        <div className="status-line">
+          <span><strong>Anthropic Claude</strong><small>المزود الأساسي المعتمد لمساعد صفوان الذكي</small></span>
+          <Badge>{aiReady(status) ? "جاهز للمحادثة" : "ينتظر تهيئة الخادم"}</Badge>
+        </div>
+        <p className="muted" style={{ fontSize: 14 }}>يُدار مفتاح API والنموذج من إعدادات الخادم فقط. لا يُحفظ أي مفتاح على الآيفون. لا يعني اتصال الخادم اكتمال تفعيل الدردشة أو أدوات المتصفح.</p>
+        <button className="btn btn-sm" onClick={refresh} style={{ justifySelf: "start" }}>تحديث حالة الاتصال</button>
+      </section>
+
       <section className="card card-pad" aria-labelledby="sys-h">
         <div className="section-head"><h2 id="sys-h">حالة النظام</h2><button className="btn btn-sm" onClick={refresh}>إعادة الفحص</button></div>
         <div style={{ marginBlockStart: 6 }}>
