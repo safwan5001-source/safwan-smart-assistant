@@ -17,7 +17,7 @@ export class BusyError extends Error {
 }
 export const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError", code: "aborted" });
 
-export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, maxJobs = 20, deadlineMs = 90_000 }) {
+export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, maxJobs = 20, deadlineMs = 90_000, sweepMs = 30_000 }) {
   const jobs = new Map();
   let active = null;
 
@@ -35,6 +35,13 @@ export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, max
       jobs.delete(oldest.id);
     }
   }
+
+  const expired = (j) => !ACTIVE.has(j.status) && now() - j.finishedAt > ttlMs;
+  /** Reads enforce the TTL themselves (a finished job and its screenshot are gone after ttlMs even if nobody creates another job). */
+  const live = (id) => { const j = jobs.get(id); if (!j) return null; if (expired(j)) { jobs.delete(id); return null; } return j; };
+  // ...and a background sweep frees the memory too. unref(): never keeps the process (or a test run) alive.
+  const sweeper = sweepMs > 0 ? setInterval(() => { for (const [id, j] of jobs) if (expired(j)) jobs.delete(id); }, sweepMs) : null;
+  sweeper?.unref?.();
 
   /** Public, whitelisted shape. Never contains the screenshot bytes, session identifiers or connection URLs. */
   function view(job) {
@@ -92,10 +99,10 @@ export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, max
   return {
     create,
     view,
-    get: (id) => jobs.get(id) ?? null,
-    screenshot: (id) => jobs.get(id)?.result?.screenshot ?? null,
+    get: (id) => live(id),
+    screenshot: (id) => live(id)?.result?.screenshot ?? null,
     cancel(id) {
-      const job = jobs.get(id);
+      const job = live(id);
       if (!job) return null;
       if (job.status === "running") {
         job.abortReason = "cancel";
@@ -112,6 +119,7 @@ export function createJobManager({ run, now = Date.now, ttlMs = 10 * 60_000, max
       await Promise.race([job.done, new Promise((r) => setTimeout(r, maxWaitMs))]);
     },
     isBusy: () => active !== null,
+    stop: () => { if (sweeper) clearInterval(sweeper); },
     size: () => jobs.size,
   };
 }

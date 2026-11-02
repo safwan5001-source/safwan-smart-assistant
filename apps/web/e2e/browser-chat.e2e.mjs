@@ -180,6 +180,15 @@ try {
   for (let i = 0; i < 100 && !hits.some((x) => x.path === "/slow"); i++) await tick(50);
   check("the hung page request really started in the cloud browser", hits.some((x) => x.path === "/slow"));
   await shot("04-running-hung-page");
+  // the owner cookie disappears while the task is running (expiry / rotated code): the card must offer sign-in and then RESUME (Codex P2)
+  await ctx.clearCookies();
+  await card().getByText("انتهت صلاحية الدخول").first().waitFor({ timeout: 20_000 });
+  check("cookie expiry mid-run: the running card offers sign-in instead of going dead", await card().getByLabel("رمز المالك").isVisible());
+  await shot("04b-reauth-mid-run");
+  await card().getByLabel("رمز المالك").fill(CODE);
+  await card().getByRole("button", { name: "فتح", exact: true }).click();
+  await card().getByLabel("رمز المالك").waitFor({ state: "detached" });
+  check("after signing in again the same task is followed and can be controlled", (await card().locator('.badge[role="status"]').innerText()) === "قيد التنفيذ" && (await card().getByRole("button", { name: "إيقاف", exact: true }).isEnabled()));
   const stopBtn = card().getByRole("button", { name: "إيقاف", exact: true });
   const box = await stopBtn.boundingBox();
   check("the stop button is a full-size touch target (≥44px)", !!box && box.height >= 44 && box.width >= 44, JSON.stringify(box));

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import { Notice } from "@/components/ui";
 import { browserClient, type Fail } from "@/lib/browser-client";
@@ -28,6 +28,8 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [stalled, setStalled] = useState(false);
+  const codeId = useId();
+  const hasTask = task !== null;
   const root = useRef<HTMLDivElement>(null);
   const alive = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -64,7 +66,8 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
   // Decide what the card can do right now.
   useEffect(() => {
     if (browser.state === "dismissed") return;
-    if (browser.state === "done" && !task) return;
+    if (browser.state === "done" && !hasTask) return;
+    if (hasTask) return;                                 // a running card learns about expiry from its own polling, not from /status
     let cancelled = false;
     void browserClient.status().then((r) => {
       if (cancelled || !alive.current) return;
@@ -72,7 +75,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
       setGate(!r.value.enabled ? "disabled" : r.value.authenticated ? "ready" : "locked");
     });
     return () => { cancelled = true; };
-  }, [browser.state, task]);
+  }, [browser.state, hasTask]);
 
   // Resume a task that was running when the page was reloaded.
   const resumed = useRef(false);
@@ -87,7 +90,11 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
     setBusy(true); setError("");
     const r = await browserClient.unlock(code);
     setBusy(false);
-    if (r.ok) { setCode(""); setGate("ready"); } else setError(FAIL_TEXT[r.error]);
+    if (!r.ok) { setError(FAIL_TEXT[r.error]); return; }
+    setCode(""); setGate("ready");
+    // a task that was running when the cookie expired (or the page was reloaded) must be picked up again, not abandoned (Codex P2)
+    const tid = task?.id ?? (browser.state === "started" ? browser.taskId : undefined);
+    if (tid && (!task || !isFinished(task.status))) { if (timer.current) clearTimeout(timer.current); setStalled(false); poll(tid, 0, 200); }
   };
   const run = async () => {
     if (busy) return;
@@ -105,7 +112,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
     setBusy(true); setError("");
     const r = await browserClient.cancel(task.id);
     setBusy(false);
-    if (!r.ok) { setError(FAIL_TEXT[r.error]); return; }
+    if (!r.ok) { setError(FAIL_TEXT[r.error]); if (r.error === "unauthorized") setGate("locked"); return; }
     finish(r.value);                                      // «cancelling» until the server confirms the clean-up
     if (!isFinished(r.value.status)) { if (timer.current) clearTimeout(timer.current); poll(r.value.id, 0, 500); }
   };
@@ -117,6 +124,15 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
       <span className="badge info">قراءة فقط</span>
       <span className="badge">ليست رد مساعد ذكي</span>
     </div>
+  );
+  const unlockForm = (
+    <form className="stack" onSubmit={(e) => { e.preventDefault(); void unlock(); }}>
+      <label className="bt-label" htmlFor={codeId}>رمز المالك</label>
+      <input id={codeId} className="input" type="password" dir="ltr" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
+        value={code} onChange={(e) => setCode(e.target.value)} placeholder="يُحفظ في الخادم فقط" aria-describedby={codeId + "-hint"} />
+      <small id={codeId + "-hint"} className="muted">لا يُخزَّن الرمز في هذا الجهاز؛ تُمنح جلسة قصيرة (8 ساعات) بملف تعريف مشفّر.</small>
+      <button className="btn btn-primary btn-block" type="submit" disabled={busy || !code}>{busy ? "جارٍ التحقق…" : "فتح"}</button>
+    </form>
   );
   const target = <p className="bt-url">الهدف: <bdi dir="ltr" className="num">{browser.url}</bdi></p>;
 
@@ -131,15 +147,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
         {gate === "checking" && <p className="muted" role="status">جارٍ التحقق من جاهزية الخادم…</p>}
         {gate === "disabled" && <Notice tone="warn">التصفح السحابي غير مفعّل على الخادم؛ يفعّله المالك من إعدادات الخدمة.</Notice>}
         {gate === "offline" && <Notice tone="warn">تعذر الاتصال بالخادم؛ هذه الميزة تحتاج اتصالاً.</Notice>}
-        {gate === "locked" && (
-          <form className="stack" onSubmit={(e) => { e.preventDefault(); void unlock(); }}>
-            <label className="bt-label" htmlFor={"bt-code-" + browser.url}>رمز المالك</label>
-            <input id={"bt-code-" + browser.url} className="input" type="password" dir="ltr" autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false}
-              value={code} onChange={(e) => setCode(e.target.value)} placeholder="يُحفظ في الخادم فقط" aria-describedby="bt-code-hint" />
-            <small id="bt-code-hint" className="muted">لا يُخزَّن الرمز في هذا الجهاز؛ تُمنح جلسة قصيرة (8 ساعات) بملف تعريف مشفّر.</small>
-            <button className="btn btn-primary btn-block" type="submit" disabled={busy || !code}>{busy ? "جارٍ التحقق…" : "فتح"}</button>
-          </form>
-        )}
+        {gate === "locked" && unlockForm}
         {gate === "ready" && (
           <div className="row-wrap">
             <button className="btn btn-primary" onClick={() => void run()} disabled={busy}><Icon name="play" size={18} />{busy ? "جارٍ البدء…" : "السماح وتشغيل"}</button>
@@ -147,6 +155,20 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
           </div>
         )}
         {error && <small role="alert" className="bt-error">{error}</small>}
+      </div>
+    );
+  }
+
+  // ── reloaded while a task was running: restore it, or ask to sign in again so it can be followed / cancelled ──
+  if (!task && browser.state === "started" && browser.taskId) {
+    return (
+      <div className="bt-card" aria-live="polite" ref={root}>
+        {header}{target}
+        {gate === "locked"
+          ? <><Notice tone="warn" role="alert">انتهت صلاحية الدخول أثناء تشغيل المهمة. أدخل الرمز لمتابعتها أو إيقافها.</Notice>{unlockForm}</>
+          : <p className="muted" role="status">جارٍ استعادة حالة المهمة…</p>}
+        {stalled && <Notice tone="warn" role="alert">انقطعت متابعة الحالة. <button className="btn" style={{ marginInlineStart: 8 }} onClick={() => { setStalled(false); poll(browser.taskId!, 0, 300); }}>إعادة المحاولة</button></Notice>}
+        {error && gate !== "locked" && <small role="alert" className="bt-error">{error}</small>}
       </div>
     );
   }
@@ -175,6 +197,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
           </li>
         ))}
       </ol>
+      {live && gate === "locked" && <><Notice tone="warn" role="alert">انتهت صلاحية الدخول؛ المهمة ما زالت تعمل على الخادم. أدخل الرمز لمتابعتها أو إيقافها.</Notice>{unlockForm}</>}
       {task.status === "failed" && <Notice tone="danger" role="alert">{ERROR_LABEL[task.error ?? "browser_execution_failed"]}</Notice>}
       {task.status === "cancelled" && <Notice tone="info">{task.sessionReleased ? "أُوقفت المهمة وأُنهيت جلسة المتصفح السحابي." : "أُوقفت المهمة، لكن تعذر تأكيد إنهاء الجلسة؛ ستنتهي تلقائياً خلال دقيقتين."}</Notice>}
       {task.status === "succeeded" && task.result && (

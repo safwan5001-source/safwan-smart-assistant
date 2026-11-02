@@ -105,3 +105,19 @@ test("shutdown cancels the active job and waits for its clean-up", async () => {
   assert.equal(cleaned, true);
   await m.shutdown(); // nothing active: returns at once
 });
+
+test("expiry is enforced on reads and by the sweeper, with no new job needed (Codex P2)", async () => {
+  let t = 1_000;
+  const m = createJobManager({ run: good, now: () => t, ttlMs: 100, sweepMs: 0 });
+  const j = m.create(URL1); await j.done;
+  assert.ok(m.get(j.id)); assert.ok(m.screenshot(j.id));
+  t += 50; assert.ok(m.get(j.id) && m.screenshot(j.id));            // still inside the TTL
+  t += 100;                                                          // past it, nobody created anything
+  assert.equal(m.screenshot(j.id), null); assert.equal(m.get(j.id), null); assert.equal(m.cancel(j.id), null);
+  assert.equal(m.size(), 0);
+  // the background sweep frees memory without any read
+  const real = createJobManager({ run: good, ttlMs: 20, sweepMs: 15 });
+  const r = real.create(URL1); await r.done;
+  for (let i = 0; i < 40 && real.size() > 0; i++) await tick(20);
+  assert.equal(real.size(), 0); real.stop();
+});

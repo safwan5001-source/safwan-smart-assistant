@@ -1,6 +1,6 @@
 {
-  "at": "2026-11-02T06:39:31.698Z",
-  "total": 36,
+  "at": "2026-11-02T06:45:56.204Z",
+  "total": 38,
   "failed": 0,
   "results": [
     {
@@ -125,6 +125,16 @@
     },
     {
       "name": "the hung page request really started in the cloud browser",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cookie expiry mid-run: the running card offers sign-in instead of going dead",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after signing in again the same task is followed and can be controlled",
       "ok": true,
       "detail": ""
     },
