@@ -1,0 +1,187 @@
+{
+  "at": "2026-11-02T06:21:50.804Z",
+  "total": 36,
+  "failed": 0,
+  "results": [
+    {
+      "name": "BFF → API signed hop is healthy (real HMAC, nonce, freshness)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "task creation without the owner cookie → 401",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "unlock with a wrong code → 401 and no cookie",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cross-site unlock attempt is refused (403) even with the right code",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "right code → HttpOnly + SameSite=Strict cookie, code never echoed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "starting without explicit approval → 400 approval_required",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "SSRF target refused before any browser starts: https://169.254.169.254/latest/meta-data/",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "SSRF target refused before any browser starts: https://example.com@evil.test/",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no browser session was created by any refused request",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "polling without the cookie → 401",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "page is RTL Arabic",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "disallowed address and action requests are refused in the chat; no card, no session",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "card states it is read-only and NOT an AI assistant reply",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "wrong owner code shows an error and nothing runs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "nothing has run before the explicit approval click",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cookie is HttpOnly + SameSite=Strict and invisible to page JavaScript",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: card ready",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "result card shows title, text excerpt and a decoded screenshot",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "all six steps shown as done, session reported released",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the off-list <img> on the page never reached the network",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "Browserbase session was released (mock status COMPLETED)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: result card",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "localStorage holds the small reference only: no page text, no image, no code, no cookie",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the chat message kept only {url,state,taskId,outcome}",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the hung page request really started in the cloud browser",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the stop button is a full-size touch target (≥44px)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cancel finished in seconds, not at the 20 s navigation timeout",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "cancel released the cloud session and the card says so",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "the worker slot is free again after cancel",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no horizontal overflow @390px: cancelled card",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "after reload no result text or image is re-created from device storage",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "every button on the cards is ≥44px tall",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no secret appears in the HTML or any of the 15 JS bundles",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no NEXT_PUBLIC_* variable is used for these features",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "none of the three secrets appears in the API or web process logs",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors in the browser console",
+      "ok": true,
+      "detail": ""
+    }
+  ]
+}

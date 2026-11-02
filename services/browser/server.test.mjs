@@ -38,4 +38,10 @@ test("permanent worker safeguards do not require a real Browserbase session", as
     assert.equal((await post(url)).status, 400, url);
   }
   assert.equal((await fetch(base + "/does-not-exist")).status, 404);
+  // job routes (chat): no credential, no access, and nothing is started by a rejected call
+  const id = "11111111-1111-4111-8111-111111111111";
+  for (const [method, path] of [["POST", "/v1/jobs"], ["GET", "/v1/jobs/" + id], ["GET", "/v1/jobs/" + id + "/screenshot"], ["POST", "/v1/jobs/" + id + "/cancel"]]) {
+    assert.equal((await fetch(base + path, { method, headers: { "content-type": "application/json" }, body: method === "POST" ? "{}" : undefined })).status, 401, path);
+  }
+  assert.equal((await fetch(base + "/v1/jobs", { method: "POST", headers: { authorization: "Bearer " + token, "content-type": "application/json" }, body: JSON.stringify({ url: "https://169.254.169.254/" }) })).status, 400);
 });

@@ -1,5 +1,7 @@
 /** Shared data shapes + sanitising parsers. Shapes are backward compatible with data
  *  saved by earlier versions (keys safwan-local-tasks-v1 / safwan-local-chats-v1). */
+import { isAllowedBrowserUrl, isTaskId } from "./browser-task";
+
 export type Priority = "high" | "normal" | "low";
 export type Task = {
   id: string; title: string; done: boolean; created: number;
@@ -7,7 +9,9 @@ export type Task = {
 };
 export type Attachment = { id: string; name: string };
 export type Role = "user" | "system" | "assistant";
-export type Message = { id: string; text: string; created: number; role?: Role; attachments?: Attachment[]; edited?: boolean };
+/** A browser-task card inside the conversation. Only the reference is stored locally: never the page text, the screenshot or any session data. */
+export type BrowserRef = { url: string; state: "offer" | "started" | "done" | "dismissed"; taskId?: string; outcome?: "succeeded" | "failed" | "cancelled" };
+export type Message = { id: string; text: string; created: number; role?: Role; attachments?: Attachment[]; edited?: boolean; browser?: BrowserRef };
 export type Thread = { id: string; title: string; created: number; messages: Message[]; archived?: boolean; updated?: number };
 
 export const LIMITS = { tasks: 1000, threads: 500, title: 200, threadTitle: 80, notes: 2000, messageText: 20000 } as const;
@@ -33,11 +37,24 @@ export function parseTasks(value: unknown): Task[] {
   return out;
 }
 
+const BROWSER_STATES = new Set(["offer", "started", "done", "dismissed"]);
+const OUTCOMES = new Set(["succeeded", "failed", "cancelled"]);
+export function parseBrowserRef(v: unknown): BrowserRef | null {
+  if (!isObj(v) || !isStr(v.url) || !isAllowedBrowserUrl(v.url) || !isStr(v.state) || !BROWSER_STATES.has(v.state)) return null;
+  const ref: BrowserRef = { url: v.url, state: v.state as BrowserRef["state"] };
+  if (isStr(v.taskId) && isTaskId(v.taskId)) ref.taskId = v.taskId;
+  if (isStr(v.outcome) && OUTCOMES.has(v.outcome)) ref.outcome = v.outcome as BrowserRef["outcome"];
+  if (ref.state === "started" && !ref.taskId) ref.state = "dismissed"; // a "started" card with no task id can never be resumed
+  return ref;
+}
+
 function parseMessage(v: unknown): Message | null {
   if (!isObj(v) || !isStr(v.id) || !isStr(v.text) || !isNum(v.created)) return null;
   const m: Message = { id: v.id, text: v.text.slice(0, LIMITS.messageText), created: v.created };
   if (v.role === "user" || v.role === "system" || v.role === "assistant") m.role = v.role;
   if (v.edited === true) m.edited = true;
+  const browser = parseBrowserRef(v.browser);
+  if (browser) m.browser = browser;
   if (Array.isArray(v.attachments)) {
     const att = v.attachments.filter((a): a is Attachment => isObj(a) && isStr(a.id) && isStr(a.name)).map((a) => ({ id: a.id, name: a.name }));
     if (att.length) m.attachments = att;

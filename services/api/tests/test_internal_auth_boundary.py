@@ -28,7 +28,14 @@ BROWSER_TOKEN = "t" * 40
 WORKER = "http://safwan-browser.railway.internal:8080"
 
 # The ONLY approved surfaces. Adding a route under /internal requires adding it here deliberately, with its guard.
-SIGNED_ROUTES = {("GET", "/internal/v1/ping")}
+SIGNED_ROUTES = {
+    ("GET", "/internal/v1/ping"),
+    # chat -> browser worker bridge (tests/test_browser_tasks.py): signed like /ping, plus its own opt-in flag
+    ("POST", "/internal/v1/browser/tasks"),
+    ("GET", "/internal/v1/browser/tasks/{task_id}"),
+    ("POST", "/internal/v1/browser/tasks/{task_id}/cancel"),
+    ("GET", "/internal/v1/browser/tasks/{task_id}/screenshot"),
+}
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
 
 

@@ -9,7 +9,8 @@
  * - `sensitive` commands (bulk deletion) always need that explicit approval.
  */
 import { evaluate, type PermissionMode, type Risk } from "./permissions";
-import { LIMITS, type Priority, type Task, type Thread, type Message, type Attachment, type Role } from "./domain";
+import { LIMITS, parseBrowserRef, type Priority, type Task, type Thread, type Message, type Attachment, type Role, type BrowserRef } from "./domain";
+import { parseBrowseCommand } from "./browser-task";
 import { activityStore, firedStore, noticesStore, prefsStore, remindersStore, tasksStore, threadsStore, tombstonesStore, pushDeviceStore } from "./stores";
 import { clearFiles } from "./files-db";
 import { parseSlash } from "./slash";
@@ -78,12 +79,13 @@ const taskCommands = {
 };
 
 // ── chat ────────────────────────────────────────────────────────────────
-type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role };
+type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role; browser?: BrowserRef };
 const titleFrom = (text: string, att?: Attachment[]) => (text.trim() || att?.[0]?.name || "مرفقات").slice(0, 48);
-const mkMessage = (text: string, attachments?: Attachment[], role?: Role): Message => {
+const mkMessage = (text: string, attachments?: Attachment[], role?: Role, browser?: BrowserRef): Message => {
   const m: Message = { id: uid(), text: text.trim().slice(0, LIMITS.messageText), created: Date.now() };
   if (role && role !== "user") m.role = role;
   if (attachments?.length) m.attachments = attachments;
+  if (browser) { const ref = parseBrowserRef(browser) ?? invalid("طلب التصفح غير صالح."); m.browser = ref; }
   return m;
 };
 const patchThread = (id: string, fn: (t: Thread) => Thread) => threadsStore.set((old) => old.map((t) => (t.id === id ? fn(t) : t)));
@@ -98,7 +100,7 @@ const chatCommands = {
     return t.id;
   } } satisfies Def<object, string>,
   "chat.send": { id: "chat.send", title: "إرسال رسالة", risk: "write", run: (p: Send): string => {
-    const m = mkMessage(p.text, p.attachments, p.role);
+    const m = mkMessage(p.text, p.attachments, p.role, p.browser);
     if (!m.text && !m.attachments?.length) invalid("الرسالة فارغة.");
     if (!p.threadId) {
       assertRoomForThread();
@@ -110,6 +112,14 @@ const chatCommands = {
     patchThread(p.threadId, (t) => ({ ...t, title: t.messages.length ? t.title : titleFrom(m.text, m.attachments), messages: [...t.messages, m], updated: Date.now() }));
     return p.threadId;
   } } satisfies Def<Send, string>,
+  // Updates the small reference kept on a browser card (offer -> started -> done). Never carries page content.
+  "chat.browser.update": { id: "chat.browser.update", title: "تحديث بطاقة التصفح", risk: "write", run: (p: { threadId: string; id: string; patch: Partial<BrowserRef> }) => {
+    const t = mustThread(p.threadId);
+    const msg = t.messages.find((m) => m.id === p.id) ?? invalid("الرسالة غير موجودة.");
+    if (!msg.browser) invalid("ليست بطاقة تصفح.");
+    const next = parseBrowserRef({ ...msg.browser, ...p.patch, url: msg.browser!.url }) ?? invalid("طلب التصفح غير صالح.");
+    patchThread(p.threadId, (x) => ({ ...x, messages: x.messages.map((m) => (m.id === p.id ? { ...m, browser: next } : m)) }));
+  } } satisfies Def<{ threadId: string; id: string; patch: Partial<BrowserRef> }, void>,
   "chat.rename": { id: "chat.rename", title: "إعادة تسمية", risk: "write", run: (p: { id: string; title: string }) => {
     const title = cleanTitle(p.title, LIMITS.threadTitle);
     mustThread(p.id);
@@ -185,7 +195,7 @@ export async function runCommand<K extends CommandId>(id: K, payload: PayloadOf<
 
 // ── chat quick commands (deterministic, no AI) ───────────────────────────
 export type ReminderOffer = { draft: Partial<ReminderInput>; clarification: Clarification; notes: string[] };
-export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer };
+export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer; browserOffer?: { url: string } };
 export async function runQuickCommand(text: string): Promise<QuickReply> {
   // «ذكرني بكرة الساعة 9 …» — typed or dictated. Ambiguity is asked about BEFORE anything is saved.
   if (isReminderIntent(text)) {
@@ -197,10 +207,13 @@ export async function runQuickCommand(text: string): Promise<QuickReply> {
     }
     if (out.kind === "clarify") return { handled: true, reply: out.clarification.question, reminderOffer: { draft: out.draft, clarification: out.clarification, notes: out.notes } };
   }
+  // «/متصفح» — read-only test browsing. Only OFFERS a card; nothing is sent anywhere until the user presses «تشغيل» on it.
+  const browse = parseBrowseCommand(text);
+  if (browse) return browse.kind === "offer" ? { handled: true, browserOffer: { url: browse.url } } : { handled: true, reply: browse.reason };
   const slash = parseSlash(text);
   if (!slash) return { handled: false };
   if (slash.name === "help") {
-    return { handled: true, reply: "الأوامر السريعة المتاحة:\n/مهمة <العنوان> — إضافة مهمة\nذكرني بكرة الساعة 9 صباحاً <ما تريد> — ضبط تذكير (يمكنك أيضاً: بعد 30 دقيقة، كل يوم، قبل الموعد بنصف ساعة)\n/مساعدة — عرض هذه القائمة\nهذه أوامر محلية ثابتة وليست ذكاءً اصطناعياً." };
+    return { handled: true, reply: "الأوامر السريعة المتاحة:\n/مهمة <العنوان> — إضافة مهمة\nذكرني بكرة الساعة 9 صباحاً <ما تريد> — ضبط تذكير (يمكنك أيضاً: بعد 30 دقيقة، كل يوم، قبل الموعد بنصف ساعة)\n/متصفح — تجربة قراءة صفحة اختبار (example.com) من متصفح سحابي؛ قراءة فقط وتحتاج موافقتك وإعداد المالك\n/مساعدة — عرض هذه القائمة\nهذه أوامر محلية ثابتة وليست ذكاءً اصطناعياً." };
   }
   const res = await runCommand("tasks.add", { title: slash.arg });
   return { handled: true, reply: res.status === "executed" ? `تمت إضافة المهمة: «${res.data.title}».` : res.status === "invalid" ? "اكتب عنوان المهمة بعد الأمر، مثل: /مهمة مراجعة الفواتير" : "تعذر تنفيذ الأمر." };

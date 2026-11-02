@@ -377,3 +377,23 @@ tr:last-child td { border-bottom: 0; }
 @media print { .sidebar, .bottom-nav, .topbar { display: none; } }
 
 @media (hover: none) { .kbd-hint { display: none; } }
+
+/* ── chat browser card (CHAT-BROWSER-1): logical properties only, so it mirrors correctly in RTL ── */
+.bt-card { display: grid; gap: 10px; min-width: min(100%, 260px); max-width: 100%; white-space: normal; }
+.bt-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.bt-head svg { color: var(--accent); flex-shrink: 0; }
+.bt-url, .bt-card p { margin: 0; overflow-wrap: anywhere; }
+.bt-label { font-weight: 650; font-size: 13.5px; }
+.bt-error { color: var(--danger); }
+.bt-steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 2px 10px; }
+.bt-steps li { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 13.5px; color: var(--muted); }
+.bt-steps li[data-status="running"] { color: var(--text); font-weight: 650; }
+.bt-steps li[data-status="done"] { color: var(--text); }
+.bt-steps li[data-status="failed"] { color: var(--danger); font-weight: 650; }
+.bt-dot { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface); font-size: 12px; flex-shrink: 0; }
+.bt-steps li[data-status="done"] .bt-dot { background: var(--ok-soft); border-color: transparent; color: var(--ok); }
+.bt-steps li[data-status="failed"] .bt-dot { background: var(--danger-soft); border-color: transparent; color: var(--danger); }
+.bt-excerpt { max-block-size: 160px; overflow: auto; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface); border: 1px solid var(--border); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.bt-shot { display: block; inline-size: 100%; max-inline-size: 560px; block-size: auto; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); }
+.bubble.system:has(.bt-card), .bubble:has(.bt-card) { max-width: min(96%, 640px); align-self: stretch; }
+@media (prefers-reduced-motion: reduce) { .bt-card .spinner { animation: none; } }

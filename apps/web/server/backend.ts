@@ -19,6 +19,8 @@ export type BackendResult =
 export type Env = Record<string, string | undefined>;
 export const MIN_SECRET_BYTES = 32;
 const MAX_RESPONSE_BYTES = 64 * 1024;
+/** Hard ceiling for callers that raise the per-call limit (e.g. a base64 JPEG): never unbounded. */
+export const MAX_RESPONSE_BYTES_CEILING = 512 * 1024;
 const PATH = /^\/internal\/v1\/[a-z0-9][a-z0-9/_-]*$/;
 
 export function readConfig(env: Env = process.env): { base: URL; secret: string } | null {
@@ -60,7 +62,7 @@ const discard = (res: Response): Promise<void> => (res.body ? res.body.cancel().
 
 export type CallOptions = {
   path: string; method?: "GET" | "POST"; body?: unknown; account?: string | null;
-  timeoutMs?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number;
+  timeoutMs?: number; maxBytes?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number;
 };
 
 export async function callBackend(opts: CallOptions): Promise<BackendResult> {
@@ -81,7 +83,7 @@ export async function callBackend(opts: CallOptions): Promise<BackendResult> {
     if (res.status >= 300 && res.status < 400) { await discard(res); return { kind: "rejected", status: res.status }; }
     if (res.status === 401 || res.status === 403) { await discard(res); return { kind: "rejected", status: res.status }; }
     if (res.status >= 500 || res.status === 429) { await discard(res); return { kind: "unavailable", status: res.status }; }
-    const text = await readCapped(res, MAX_RESPONSE_BYTES);
+    const text = await readCapped(res, Math.min(Math.max(opts.maxBytes ?? MAX_RESPONSE_BYTES, 1), MAX_RESPONSE_BYTES_CEILING));
     if (text === null) return { kind: "invalid_response" };
     try { return { kind: "ok", status: res.status, json: text ? JSON.parse(text) : null }; } catch { return { kind: "invalid_response" }; }
   } catch {
