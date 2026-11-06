@@ -9,6 +9,7 @@ import { OPEN_SEARCH_EVENT } from "@/components/app-shell";
 import { useHydrated, useStore } from "@/lib/hooks";
 import { activityStore, noticesStore, remindersStore, tasksStore, threadsStore } from "@/lib/stores";
 import { alertAt, describeSchedule, type Reminder } from "@/lib/reminders";
+import { remindersDueToday } from "@/lib/command-center";
 import { unreadCount } from "@/lib/notifications";
 import { INTEGRATIONS } from "@/lib/integrations";
 import { listFiles } from "@/lib/files-db";
@@ -53,8 +54,7 @@ export default function DashboardScreen() {
   const dueToday = pending.filter((t) => dueState(t.due, today) === "today");
   const fired = reminders.filter((r) => r.status === "fired");
   const unread = unreadCount(notices);
-  const endOfDay = now ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() : 0;
-  const remindersToday = reminders.filter((r) => r.status === "active" && (alertAt(r) ?? r.dueAt) < endOfDay).length;
+  const remindersToday = now ? remindersDueToday(reminders, now.getTime()).length : 0;
   const upcomingTasks = [...pending].filter((t) => dueState(t.due, today) !== "overdue")
     .sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || b.created - a.created).slice(0, 4);
   const upcomingReminders = reminders.filter((r: Reminder) => r.status === "active").sort((a, b) => (alertAt(a) ?? a.dueAt) - (alertAt(b) ?? b.dueAt)).slice(0, 3);
@@ -119,7 +119,7 @@ export default function DashboardScreen() {
           {!hydrated ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={96} />) : (<>
             <Link href="/tasks" className="stat"><span><Icon name="target" size={15} />مستحقة اليوم</span><strong>{dueToday.length}</strong><small>من {pending.length} مهمة مفتوحة</small></Link>
             <Link href="/tasks" className={"stat" + (overdue.length ? " alert" : "")}><span><Icon name="alert" size={15} />متأخرة</span><strong>{overdue.length}</strong><small>{overdue.length ? "تحتاج اهتمامك" : "لا شيء متأخر"}</small></Link>
-            <Link href="/reminders" className="stat"><span><Icon name="clock" size={15} />تذكيرات اليوم</span><strong>{remindersToday}</strong><small>{fired.length ? `${fired.length} بانتظار إجراء` : "مجدولة حتى منتصف الليل"}</small></Link>
+            <Link href="/reminders" className="stat"><span><Icon name="clock" size={15} />تذكيرات اليوم</span><strong>{remindersToday}</strong><small>{fired.length ? `${fired.length} بانتظار إجراء` : "موعدها اليوم حتى منتصف الليل"}</small></Link>
             <Link href="/files" className="stat"><span><Icon name="files" size={15} />الملفات</span><strong>{fileCount ?? "—"}</strong><small>{threads.filter((t) => !t.archived).length} محادثة على هذا الجهاز</small></Link>
           </>)}
         </div>
@@ -157,7 +157,7 @@ export default function DashboardScreen() {
       </section>
 
       <div className="grid grid-lg-3" style={{ alignItems: "start" }}>
-        <section className="card card-pad" style={{ gridColumn: "span 2" }} aria-labelledby="next-h">
+        <section className="card card-pad span-lg-2" aria-labelledby="next-h">
           <div className="section-head"><h2 id="next-h"><Icon name="activity" size={18} />التالي في جدولك</h2><Link href="/tasks" className="btn-link">كل المهام<Icon name="forward" size={16} /></Link></div>
           {!hydrated ? <div className="stack" style={{ marginBlockStart: 12 }}><Skeleton h={44} /><Skeleton h={44} /></div>
             : upcomingTasks.length || upcomingReminders.length ? (

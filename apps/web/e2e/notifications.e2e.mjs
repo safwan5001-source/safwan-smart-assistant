@@ -234,6 +234,12 @@ try {
   await ip.goto(BASE + "/");
   await ip.waitForSelector("#today-h"); // Command Center: «ملخص اليوم»
   await overflow(ip, "/ (dashboard)");
+  // the schedule card's 2-column span applies only on the ≥1000px grid: on a phone both cards are one full-width column
+  const cc = await ip.evaluate(() => {
+    const s = document.querySelector('[aria-labelledby="next-h"]'), c = document.querySelector('[aria-labelledby="conn-h"]');
+    return { cols: getComputedStyle(s.parentElement).gridTemplateColumns.split(" ").length, s: Math.round(s.getBoundingClientRect().width), c: Math.round(c.getBoundingClientRect().width) };
+  });
+  check("iPhone: Command Center cards are a single full-width column (no implicit grid column)", cc.cols === 1 && cc.s === cc.c, JSON.stringify(cc));
   await shot(ip, "11-dashboard-dark");
   await ictx.close();
 

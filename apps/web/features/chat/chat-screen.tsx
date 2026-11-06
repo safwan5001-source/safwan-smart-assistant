@@ -19,7 +19,8 @@ import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/f
 import { formatTime } from "@/lib/format";
 import { matches } from "@/lib/search";
 import type { Attachment, Message, Thread } from "@/lib/domain";
-import { AGENT_STATE_TEXT, agentState, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
+import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
+import type { BrowserRef } from "@/lib/domain";
 
 /** Tap-to-fill starters: they only put text in the composer; nothing is sent until the user presses send. */
 const STARTERS: { label: string; text: string }[] = [
@@ -95,6 +96,8 @@ export default function ChatScreen() {
       const id = sent.data;
       setSelected(id); syncUrl(id); setDraft(""); setAttachments([]); setNotice("");
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
+      const executed = phaseForQuick(quick); // a local command that really ran (or failed) — distinct from a Claude reply
+      if (executed) setAgentPhase(executed);
       if (quick.reminderOffer) setOffer(quick.reminderOffer);
       // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
       if (quick.browserOffer) {
@@ -124,10 +127,10 @@ export default function ChatScreen() {
           setStreaming({ threadId: id, text: "" });
           const out = await assistantService.chat(id, text, { signal: ctl.signal, onDelta: (_d, all) => { if (first) { first = false; setAgentPhase("responding"); } setStreaming({ threadId: id, text: all }); } });
           await keep(out.text);
-          setAgentPhase(out.stopped ? "stopped" : "done");
+          setAgentPhase(out.stopped ? "stopped" : "replied");
           if (out.stopped) await runCommand("chat.send", { threadId: id, text: "أُوقف الرد بناءً على طلبك.", role: "system" });
         } catch (e) {
-          setAgentPhase("failed");
+          setAgentPhase("reply_failed");
           await keep((e as { partial?: string }).partial ?? "");
           await runCommand("chat.send", { threadId: id, text: e instanceof AssistantRequestError ? e.message : e instanceof Error ? e.message : "تعذر الحصول على رد.", role: "system" });
         } finally { setStreaming(null); abortRef.current = null; }
@@ -167,6 +170,12 @@ export default function ChatScreen() {
     // the Claude copy of this conversation lives on the server: remove it too (best effort; a 404 just means it never reached Claude)
     const gone = await assistantService.removeConversation(t.id).then(() => true, (e: unknown) => e instanceof AssistantRequestError && (e.code === "not_found" || e.code === "unauthorized" || e.code === "disabled"));
     toast(gone ? "حُذفت المحادثة" : "حُذفت محليًا، لكن تعذر حذف نسختها على الخادم. أعد المحاولة لاحقًا.", gone ? "ok" : "error");
+  };
+  // browser task cards: persist the patch as before; a real started → done transition is an executed-task outcome
+  const updateBrowser = (threadId: string, m: Message, patch: Partial<BrowserRef>) => {
+    const phase = phaseForBrowser(m.browser, patch);
+    if (phase) setAgentPhase(phase);
+    void runCommand("chat.browser.update", { threadId, id: m.id, patch });
   };
   const copy = async (m: Message) => {
     try { await navigator.clipboard.writeText(m.text); toast("تم النسخ"); } catch { toast("تعذر النسخ. حدّد النص وانسخه يدوياً.", "error"); }
@@ -239,8 +248,8 @@ export default function ChatScreen() {
                 {m.role && m.role !== "user" && <span className="who">{m.role === "system" ? <><Icon name="info" size={14} />النظام</> : <><BrandMark size="xs" />باشت</>}</span>}
                 {m.browser && current
                   ? (m.browser.mode === "interactive"
-                    ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />
-                    : <BrowserCard browser={m.browser} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />)
+                    ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => updateBrowser(current.id, m, patch)} />
+                    : <BrowserCard browser={m.browser} onChange={(patch) => updateBrowser(current.id, m, patch)} />)
                   : m.text}
                 {m.attachments?.map((a) => (
                   <div key={a.id} style={{ marginBlockStart: 6 }}>

@@ -88,10 +88,64 @@ def fit(img: Image.Image, w: int | None = None, h: int | None = None) -> Image.I
     return img.resize((w, h), Image.LANCZOS)
 
 
-def mono_white(img: Image.Image) -> Image.Image:
-    out = Image.new("RGBA", img.size, (255, 255, 255, 0))
-    out.putalpha(img.getchannel("A"))
+def ink_alpha(img: Image.Image) -> np.ndarray:
+    """Alpha of the coloured ink only (0..1). The glossy light rims around letters and dots are left out: in the
+    artwork they are what separates the detached ب dot from its letter, so whitening them would merge the dot."""
+    px = np.asarray(img.convert("RGBA")).astype(np.float32) / 255
+    lum = 0.2126 * px[..., 0] + 0.7152 * px[..., 1] + 0.0722 * px[..., 2]
+    ink = np.clip((0.6 - lum) / 0.25, 0, 1) * px[..., 3]
+    solid = ink > 0.5
+    lab, n = ndimage.label(solid)
+    sizes = ndimage.sum(np.ones_like(ink), lab, range(1, n + 1))
+    keep = np.isin(lab, [i + 1 for i, sz in enumerate(sizes) if sz >= solid.size * 0.002])  # drop thin rim fragments
+    keep = ndimage.binary_fill_holes(keep)  # the glossy highlight inside a dot is part of the shape
+    near = ndimage.binary_dilation(keep, iterations=2)
+    out = np.where(near, ink, 0)
+    out[ndimage.binary_erosion(keep, iterations=2)] = 1
     return out
+
+
+def mono_white(img: Image.Image) -> Image.Image:
+    """Same treatment as the pack's bsht-mono-white: the drawing's shapes in white, nothing redrawn."""
+    out = Image.new("RGBA", img.size, (255, 255, 255, 0))
+    out.putalpha(Image.fromarray((ink_alpha(img) * 255).astype(np.uint8), "L"))
+    return out
+
+
+def shapes(alpha: np.ndarray, min_frac: float = 0.002) -> list[tuple[int, int, int, int, int]]:
+    """Connected shapes (size, top, bottom, left, right) above a minimum size, largest first."""
+    lab, n = ndimage.label(alpha > 0.5)
+    objs = ndimage.find_objects(lab)
+    sizes = ndimage.sum(np.ones_like(alpha), lab, range(1, n + 1))
+    out = [(int(sz), o[0].start, o[0].stop, o[1].start, o[1].stop) for sz, o in zip(sizes, objs) if sz >= alpha.size * min_frac]
+    return sorted(out, reverse=True)
+
+
+# «باشت» drawing = «با» + «شت» + the detached ب dot + 2 ت dots + 3 ش dots
+WORDMARK_SHAPES = 8
+
+
+def check_wordmark(name: str, img: Image.Image, mono: bool) -> None:
+    """Fail the build if the separated dots (above all the ب dot) have merged, e.g. after resizing."""
+    a = np.asarray(img.getchannel("A")).astype(np.float32) / 255 if mono else ink_alpha(img)
+    found = shapes(a)
+    if len(found) != WORDMARK_SHAPES:
+        raise SystemExit(f"{name}: expected {WORDMARK_SHAPES} separate shapes in the wordmark, found {len(found)} — a dot merged or split")
+    h = a.shape[0]
+    low = [s for s in found if s[1] > h * 0.6]  # the ب dot is the only shape that starts in the bottom 40 %
+    if len(low) != 1:
+        raise SystemExit(f"{name}: the detached ب dot is not a separate shape")
+
+
+def check_untouched(src: Path, cut: Image.Image) -> None:
+    """Every fully opaque pixel of the cut-out must equal the official file exactly (nothing recoloured or redrawn)."""
+    a = np.asarray(cut)
+    o = np.asarray(Image.open(src).convert("RGB"))
+    if a.shape[:2] != o.shape[:2]:
+        raise SystemExit("cut-out size differs from the source")
+    opaque = a[..., 3] == 255
+    if not np.array_equal(a[..., :3][opaque], o[opaque]):
+        raise SystemExit("opaque pixels differ from the official source")
 
 
 def radial(size: tuple[int, int], inner: tuple[int, int, int], outer: tuple[int, int, int], center=(0.5, 0.42), reach=0.85) -> Image.Image:
@@ -131,31 +185,48 @@ def save_quantized(img: Image.Image, path: Path) -> None:
     img.convert("RGB").quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.FLOYDSTEINBERG).save(path, "PNG", optimize=True)
 
 
-def save_webp(img: Image.Image, path: Path) -> None:
+def save_webp(img: Image.Image, path: Path, lossless: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(path, "WEBP", quality=90, method=6)
+    if lossless:
+        img.save(path, "WEBP", lossless=True, quality=100, method=6)
+    else:
+        img.save(path, "WEBP", quality=92, alpha_quality=100, method=6)
+
+
+def small_icon(mark: Image.Image, s: int) -> Image.Image:
+    """Tiny sizes: Lanczos then a gentle unsharp mask on colour only (alpha untouched) so the face and dasmal stay legible."""
+    m = fit(mark, h=s) if mark.height >= mark.width else fit(mark, w=s)
+    rgb = m.convert("RGB").filter(ImageFilter.UnsharpMask(radius=0.6, percent=90, threshold=0))
+    rgb.putalpha(m.getchannel("A"))
+    canvas = Image.new("RGBA", (s, s), (0, 0, 0, 0))
+    canvas.alpha_composite(rgb, ((s - m.width) // 2, (s - m.height) // 2))
+    return canvas
 
 
 def main() -> None:
-    full = trim(cutout(SRC))
+    raw = cutout(SRC)
+    check_untouched(SRC, raw)
+    full = trim(raw)
     cut, word_top = split_rows(full)
     mark = trim(full.crop((0, 0, full.width, cut)))
     word = trim(full.crop((0, word_top, full.width, full.height)))
     white_word = mono_white(word)
+    check_wordmark("wordmark (source size)", word, mono=False)
+    check_wordmark("mono-white wordmark (source size)", white_word, mono=True)
 
     # UI assets (transparent)
     save_webp(fit(full, w=640), BRAND / "basht-logo.webp")
     save_webp(fit(mark, h=480), BRAND / "basht-mark.webp")
-    save_webp(fit(mark, h=144), BRAND / "basht-mark-sm.webp")
-    save_webp(fit(word, h=144), BRAND / "basht-wordmark.webp")
-    save_webp(fit(white_word, h=144), BRAND / "basht-wordmark-white.webp")
+    save_webp(fit(mark, h=144), BRAND / "basht-mark-sm.webp", lossless=True)
+    word_ui, white_ui = fit(word, h=144), fit(white_word, h=144)
+    check_wordmark("basht-wordmark.webp", word_ui, mono=False)
+    check_wordmark("basht-wordmark-white.webp", white_ui, mono=True)
+    save_webp(word_ui, BRAND / "basht-wordmark.webp", lossless=True)
+    save_webp(white_ui, BRAND / "basht-wordmark-white.webp", lossless=True)
 
     # favicons (transparent mark)
     for s in (16, 32, 48):
-        canvas = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-        m = fit(mark, h=s) if mark.height >= mark.width else fit(mark, w=s)
-        canvas.alpha_composite(m, ((s - m.width) // 2, (s - m.height) // 2))
-        save_png(canvas, ICONS / f"favicon-{s}.png")
+        save_png(small_icon(mark, s), ICONS / f"favicon-{s}.png")
 
     # app icons: the mark on a light lavender tile (iOS needs opaque squares; the OS applies its own mask)
     save_png(tile(180, mark, 0.74), ICONS / "apple-touch-icon.png")
@@ -185,6 +256,7 @@ def main() -> None:
     og.alpha_composite(glow((ow, oh), (ow * 0.5, oh * 0.5), 120, CYAN, 45))
     m = fit(mark, h=360)
     wm = fit(white_word, h=110)
+    check_wordmark("opengraph wordmark", wm, mono=True)
     total = m.width + 56 + wm.width
     x0 = (ow - total) // 2
     og.alpha_composite(wm, (x0, (oh - wm.height) // 2 + 20))

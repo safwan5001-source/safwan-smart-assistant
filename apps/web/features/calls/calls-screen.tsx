@@ -2,24 +2,17 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/icon";
-import { AgentOrb, Badge, Notice, PageHeader } from "@/components/ui";
+import { Badge, Notice, PageHeader, VoiceOrb } from "@/components/ui";
+import { VOICE_TEXT, voiceState } from "@/lib/voice-state";
 import { useDictation } from "@/lib/speech";
 import { useStore } from "@/lib/hooks";
 import { earcon, voiceFxStore } from "@/lib/earcons";
-
-type VoiceState = "unsupported" | "ready" | "listening" | "error";
-const LABEL: Record<VoiceState, { title: string; sub: string }> = {
-  unsupported: { title: "الصوت غير مدعوم هنا", sub: "هذا المتصفح لا يوفّر التعرف على الكلام. استخدم Safari محدّثًا أو إملاء لوحة المفاتيح." },
-  ready: { title: "جاهز للاستماع", sub: "اضغط الميكروفون وتحدّث بالعربية، ثم راجع النص وأرسله لباشت." },
-  listening: { title: "يستمع الآن…", sub: "تحدّث بهدوء. اضغط الزر مرة أخرى للإيقاف." },
-  error: { title: "توقّف الاستماع", sub: "راجع الرسالة أدناه ثم حاول مرة أخرى." },
-};
 
 export default function CallsScreen() {
   const d = useDictation();
   const [text, setText] = useState("");
   const fx = useStore(voiceFxStore);
-  const state: VoiceState = !d.supported ? "unsupported" : d.listening ? "listening" : d.error ? "error" : "ready";
+  const state = voiceState(d);
   const wasListening = useRef(false);
   // the engine can end on its own (silence): play the stop cue for that too
   useEffect(() => { if (wasListening.current && !d.listening && fx) earcon("stop"); wasListening.current = d.listening; }, [d.listening, fx]);
@@ -37,17 +30,17 @@ export default function CallsScreen() {
       <section className="voice" data-state={state} aria-labelledby="voice-h">
         <div className="voice-orb">
           <span className="voice-halo" aria-hidden="true" /><span className="voice-halo" aria-hidden="true" />
-          <AgentOrb state={state === "listening" ? "responding" : state === "unsupported" ? "offline" : state === "error" ? "failed" : "ready"} />
+          <VoiceOrb state={state} />
         </div>
         <div className="voice-bars" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
         <div className="stack" style={{ gap: 4, justifyItems: "center" }}>
-          <h2 id="voice-h" className="voice-label" role="status">{LABEL[state].title}</h2>
-          <p className="voice-sub">{LABEL[state].sub}</p>
+          <h2 id="voice-h" className="voice-label" role="status">{VOICE_TEXT[state].title}</h2>
+          <p className="voice-sub">{VOICE_TEXT[state].sub}</p>
         </div>
         <div className="voice-states" aria-label="حالات الجلسة">
-          <span aria-current={state === "ready" ? "true" : undefined}>جاهز</span>
-          <span aria-current={state === "listening" ? "true" : undefined}>يستمع</span>
-          <span>يرد صوتيًا · قريبًا</span>
+          <span aria-current={state === "ready" ? "true" : undefined}>الميكروفون جاهز</span>
+          <span aria-current={state === "listening" ? "true" : undefined}>تسجيل الكلام</span>
+          <span>ردّ باشت الصوتي · قريبًا</span>
         </div>
         <div className="voice-actions">
           <button className="voice-side" onClick={() => { d.abort(); setText(""); d.clearError(); }} disabled={!text && !d.listening} aria-label="مسح النص وإلغاء"><Icon name="trash" size={20} /></button>

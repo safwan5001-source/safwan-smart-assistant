@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Icon, { type IconName } from "./icon";
 import { BRAND, BRAND_ASSETS } from "@/lib/brand";
 import type { AgentState } from "@/lib/agent-activity";
+import type { VoiceState } from "@/lib/voice-state";
 
 export function PageHeader({ eyebrow, title, description, actions, icon }: { eyebrow?: string; title: string; description?: string; actions?: ReactNode; icon?: IconName }) {
   return (
@@ -107,6 +108,17 @@ export function AgentOrb({ state, size = "md" }: { state: AgentState; size?: "sm
     <span className={"agent-orb " + size} data-state={state} aria-hidden="true">
       <span className="agent-ring" />
       <BrandMark size={size === "sm" ? "sm" : "md"} />
+      <span className="agent-dot" />
+    </span>
+  );
+}
+
+/** The voice screen's face: reflects the MICROPHONE only (data-voice), never an agent state — listening is not BASHT replying. */
+export function VoiceOrb({ state }: { state: VoiceState }) {
+  return (
+    <span className="agent-orb voice-face" data-voice={state} aria-hidden="true">
+      <span className="agent-ring" />
+      <BrandMark size="md" />
       <span className="agent-dot" />
     </span>
   );

@@ -132,19 +132,27 @@ code, kbd, .mono { font-family: var(--font-mono); }
 .agent-ring::before { content: ""; position: absolute; inset: -2.5px; border-radius: 50%; opacity: 0; transition: opacity var(--t) var(--ease);
   background: conic-gradient(from 0deg, var(--brand-secondary), var(--brand-cyan), var(--brand-gold), var(--brand-secondary));
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2.5px)); }
-.agent-orb[data-state="ready"] .agent-ring::before, .agent-orb[data-state="done"] .agent-ring::before { opacity: .9; }
+.agent-orb[data-state="ready"] .agent-ring::before, .agent-orb[data-state="replied"] .agent-ring::before, .agent-orb[data-state="task_done"] .agent-ring::before { opacity: .9; }
 .agent-orb[data-state="thinking"] .agent-ring::before, .agent-orb[data-state="responding"] .agent-ring::before { opacity: 1; animation: spin 1.1s linear infinite; }
 .agent-orb[data-state="thinking"] .brand-mark { animation: breathe 1.6s var(--ease) infinite; }
 .agent-dot { position: absolute; z-index: 2; inset-block-end: 1px; inset-inline-end: 1px; width: clamp(9px, 27%, 16px); height: clamp(9px, 27%, 16px); border-radius: 50%; border: 2px solid var(--surface); background: var(--muted); }
-.agent-orb[data-state="ready"] .agent-dot, .agent-orb[data-state="done"] .agent-dot { background: var(--ok); }
+.agent-orb[data-state="ready"] .agent-dot, .agent-orb[data-state="task_done"] .agent-dot { background: var(--ok); }
+.agent-orb[data-state="replied"] .agent-dot { background: var(--ai); }
 .agent-orb[data-state="thinking"] .agent-dot, .agent-orb[data-state="responding"] .agent-dot { background: var(--ai); }
 .agent-orb[data-state="notes"] .agent-dot { background: var(--gold); }
 .agent-orb[data-state="offline"] .agent-dot { background: var(--warn); }
-.agent-orb[data-state="failed"] .agent-dot { background: var(--danger); }
+.agent-orb[data-state="reply_failed"] .agent-dot, .agent-orb[data-state="task_failed"] .agent-dot { background: var(--danger); }
+/* voice face: microphone state only (never an agent state) */
+.voice-face .agent-ring::before { background: conic-gradient(from 0deg, var(--brand-cyan), #67e8f9, var(--brand-cyan)); }
+.voice-face[data-voice="listening"] .agent-ring::before { opacity: 1; animation: none; }
+.voice-face[data-voice="listening"] .agent-dot { background: var(--ai); }
+.voice-face[data-voice="ready"] .agent-dot { background: rgba(255, 255, 255, .7); }
+.voice-face[data-voice="unsupported"] .agent-dot { background: var(--warn); }
+.voice-face[data-voice="error"] .agent-dot { background: var(--danger); }
 @keyframes breathe { 50% { transform: scale(.94); } }
 .state-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-inline-end: 6px; vertical-align: middle; }
 [data-tone="ok"] > .state-dot { background: var(--ok); } [data-tone="live"] > .state-dot { background: var(--ai); animation: blink 1.2s ease-in-out infinite; }
-[data-tone="warn"] > .state-dot { background: var(--warn); } [data-tone="danger"] > .state-dot { background: var(--danger); } [data-tone="muted"] > .state-dot { background: var(--gold); }
+[data-tone="warn"] > .state-dot { background: var(--warn); } [data-tone="info"] > .state-dot { background: var(--ai); } [data-tone="danger"] > .state-dot { background: var(--danger); } [data-tone="muted"] > .state-dot { background: var(--gold); }
 @keyframes blink { 50% { opacity: .35; } }
 
 /* ── layout shell ─────────────────────────────────────────────────────── */
@@ -226,7 +234,7 @@ body:has(.composer textarea:focus) .bottom-nav { display: none; }
 .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (min-width: 700px) { .grid-md-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .grid-md-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .grid-md-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-@media (min-width: 1000px) { .grid-lg-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1000px) { .grid-lg-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .grid-lg-3 > .span-lg-2 { grid-column: span 2; } }
 
 .btn { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 18px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface); font-weight: 600; font-size: 15px; white-space: nowrap; transition: background var(--t-fast), border-color var(--t-fast), box-shadow var(--t-fast), transform .1s; }
 .btn:hover:not(:disabled) { background: var(--surface-2); border-color: var(--accent-border); }
@@ -341,6 +349,7 @@ dialog.top-dialog { margin: 0 auto; inset-block-start: calc(env(safe-area-inset-
 .cc-state[data-tone="live"] > .state-dot { background: #22d3ee; }
 .cc-state[data-tone="warn"] > .state-dot { background: #fbbf24; }
 .cc-state[data-tone="danger"] > .state-dot { background: #f87171; }
+.cc-state[data-tone="info"] > .state-dot { background: #22d3ee; }
 .cc-ask { display: flex; align-items: center; gap: 8px; padding: 6px; padding-inline-start: 16px; border-radius: 18px; background: rgba(255, 255, 255, .97); color: var(--text); box-shadow: 0 14px 30px -14px rgba(0, 0, 0, .5); }
 :root[data-theme="dark"] .cc-ask { background: rgba(25, 18, 48, .92); border: 1px solid rgba(255, 255, 255, .1); }
 .cc-ask input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 16px; min-height: 44px; outline: none; color: var(--text); }
@@ -480,6 +489,7 @@ a.attn-item:hover { border-color: var(--accent-border); }
 .voice[data-state="listening"]::before { opacity: 1; }
 .voice-orb { position: relative; display: grid; place-items: center; width: 156px; height: 156px; }
 .voice-orb .agent-orb { --s: 112px; }
+.voice-orb .agent-orb .brand-mark { width: 76%; height: 76%; }
 .voice-orb .agent-orb .agent-dot { border-color: #3b1676; }
 .voice-halo { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .18); }
 .voice[data-state="listening"] .voice-halo { border-color: rgba(34, 211, 238, .6); animation: halo 1.8s var(--ease) infinite; }
