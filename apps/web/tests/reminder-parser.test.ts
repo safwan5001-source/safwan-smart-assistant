@@ -20,7 +20,7 @@ const clarify = (text: string, now = NOW) => {
 
 describe("intent detection", () => {
   it("recognises reminder commands and ignores ordinary chat", () => {
-    for (const t of ["ذكرني بكرة الساعة 9 أراجع الفواتير", "نبهني بعد ساعة", "لو سمحت ذكرني بعد 5 دقائق", "/ذكرني بعد ساعة اتصل", "ذكّرني غدا"]) expect(isReminderIntent(t)).toBe(true);
+    for (const t of ["ذكرني بكرة الساعة 9 أراجع الفواتير", "نبهني بعد ساعة", "لو سمحت ذكرني بعد 5 دقائق", "/ذكرني بعد ساعة اتصل", "ذكّرني غدا", "يا باشت ذكرني بعد ساعة", "يا صفوان ذكرني بعد ساعة"]) expect(isReminderIntent(t)).toBe(true);
     for (const t of ["مرحبا", "كيف حالك؟", "ما هي مهامي", "تذكرت شيئا", ""]) expect(isReminderIntent(t)).toBe(false);
     expect(parseReminderText("مرحبا", NOW).kind).toBe("none");
   });

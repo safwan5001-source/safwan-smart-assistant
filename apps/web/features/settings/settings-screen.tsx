@@ -2,7 +2,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Icon, { type IconName } from "@/components/icon";
-import { Badge, LogoTile, Notice, PageHeader } from "@/components/ui";
+import { Badge, BrandMark, Notice, PageHeader } from "@/components/ui";
+import { BRAND, BRAND_ASSETS } from "@/lib/brand";
 import { useDialogs } from "@/components/dialogs";
 import { aiReady, useAssistant } from "@/components/assistant-context";
 import { useStore } from "@/lib/hooks";
@@ -41,7 +42,7 @@ export default function SettingsScreen() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="الإعدادات" title="الإعدادات" description="تُحفظ إعدادات العرض على هذا الجهاز فقط." />
+      <PageHeader icon="settings" eyebrow="الإعدادات" title="الإعدادات" description="تُحفظ إعدادات العرض على هذا الجهاز فقط." />
 
       <section className="card card-pad stack" aria-labelledby="look-h">
         <h2 id="look-h">المظهر</h2>
@@ -69,7 +70,7 @@ export default function SettingsScreen() {
         <div style={{ marginBlockStart: 6 }}>
           <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : status.server === "checking" ? "جارٍ الفحص…" : "لا استجابة من /api/health"}</small></span>
             <Badge tone={status.server === "online" ? "ok" : status.server === "offline" ? "warn" : undefined}>{status.server === "online" ? "متصل" : status.server === "offline" ? "غير متصل" : "…"}</Badge></div>
-          <div className="status-line"><span><strong>المساعد الذكي</strong><small>يتطلب مزوّد نماذج ومفاتيح على الخادم</small></span><Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "مفعّل" : "غير مفعّل"}</Badge></div>
+          <div className="status-line"><span><strong>Claude (الذكاء الاصطناعي)</strong><small>يتطلب مزوّد نماذج ومفاتيح على الخادم</small></span><Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "مفعّل" : "غير مفعّل"}</Badge></div>
           <div className="status-line"><span><strong>الحساب والمصادقة</strong><small>لا حساب ولا مزامنة بعد</small></span><Badge>غير مهيأ</Badge></div>
           <div className="status-line"><span><strong>Windows السحابي</strong><small>التنفيذ على الكمبيوتر السحابي</small></span><Badge>غير متصل</Badge></div>
           <div className="status-line"><span><strong>الصوت المباشر</strong><small>الإملاء متاح حسب دعم المتصفح؛ الرد الصوتي غير مفعّل</small></span><Badge>جزئي</Badge></div>
@@ -85,8 +86,14 @@ export default function SettingsScreen() {
         </div>
       </section>
 
-      <section className="card card-pad row" aria-label="عن التطبيق">
-        <LogoTile /><span><strong>مساعد صفوان الذكي</strong><small className="muted" style={{ display: "block" }}>نسخة تجريبية · الواجهة تعمل محلياً</small></span>
+      <section className="about" aria-label="عن التطبيق">
+        <BrandMark size="lg" />
+        <span className="stack" style={{ gap: 4 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={BRAND_ASSETS.wordmarkWhite} alt={BRAND.full} style={{ height: 30, width: "auto" }} />
+          <small>{BRAND.tagline} · نسخة تجريبية · الواجهة تعمل على هذا الجهاز</small>
+          <small>إن ثبّتّ التطبيق على الشاشة الرئيسية قبل التحديث، احذفه وأضِفه من جديد ليظهر اسم «باشت» وأيقونته الجديدة.</small>
+        </span>
       </section>
       <Notice>الأسرار ومفاتيح الواجهات البرمجية لا توضع في هذا التطبيق أبداً؛ تُحفظ في بيئة الخادم فقط.</Notice>
     </div>

@@ -195,15 +195,16 @@ export async function runCommand<K extends CommandId>(id: K, payload: PayloadOf<
 
 // ── chat quick commands (deterministic, no AI) ───────────────────────────
 export type ReminderOffer = { draft: Partial<ReminderInput>; clarification: Clarification; notes: string[] };
-export type QuickReply = { handled: boolean; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer; browserOffer?: { url: string; mode?: "interactive" }; browserAction?: ActionRequest };
+/** `outcome` reports whether a local command actually ran ("executed") or ran and failed; absent for offers, questions and invalid input. */
+export type QuickReply = { handled: boolean; outcome?: "executed" | "failed"; reply?: string; reminderCreated?: Reminder; reminderOffer?: ReminderOffer; browserOffer?: { url: string; mode?: "interactive" }; browserAction?: ActionRequest };
 export async function runQuickCommand(text: string): Promise<QuickReply> {
   // «ذكرني بكرة الساعة 9 …» — typed or dictated. Ambiguity is asked about BEFORE anything is saved.
   if (isReminderIntent(text)) {
     const out = parseReminderText(text, Date.now(), prefsStore.getSnapshot().tz); // the user's configured zone, like the reminders screen
     if (out.kind === "ready") {
       const res = await runCommand("reminders.add", out.draft);
-      if (res.status === "executed") return { handled: true, reminderCreated: res.data, reply: `تم ضبط التذكير: «${res.data.title}».` };
-      return { handled: true, reply: res.status === "invalid" ? res.message : "تعذر ضبط التذكير." };
+      if (res.status === "executed") return { handled: true, outcome: "executed", reminderCreated: res.data, reply: `تم ضبط التذكير: «${res.data.title}».` };
+      return res.status === "invalid" ? { handled: true, reply: res.message } : { handled: true, outcome: "failed", reply: "تعذر ضبط التذكير." };
     }
     if (out.kind === "clarify") return { handled: true, reply: out.clarification.question, reminderOffer: { draft: out.draft, clarification: out.clarification, notes: out.notes } };
   }
@@ -222,5 +223,6 @@ export async function runQuickCommand(text: string): Promise<QuickReply> {
     return { handled: true, reply: "الأوامر السريعة المتاحة:\n/مهمة <العنوان> — إضافة مهمة\nذكرني بكرة الساعة 9 صباحاً <ما تريد> — ضبط تذكير (يمكنك أيضاً: بعد 30 دقيقة، كل يوم، قبل الموعد بنصف ساعة)\n/متصفح — تجربة قراءة صفحة اختبار (example.com) من متصفح سحابي؛ قراءة فقط وتحتاج موافقتك وإعداد المالك\n/مساعدة — عرض هذه القائمة\nهذه أوامر محلية ثابتة وليست ذكاءً اصطناعياً." };
   }
   const res = await runCommand("tasks.add", { title: slash.arg });
-  return { handled: true, reply: res.status === "executed" ? `تمت إضافة المهمة: «${res.data.title}».` : res.status === "invalid" ? "اكتب عنوان المهمة بعد الأمر، مثل: /مهمة مراجعة الفواتير" : "تعذر تنفيذ الأمر." };
+  if (res.status === "executed") return { handled: true, outcome: "executed", reply: `تمت إضافة المهمة: «${res.data.title}».` };
+  return res.status === "invalid" ? { handled: true, reply: "اكتب عنوان المهمة بعد الأمر، مثل: /مهمة مراجعة الفواتير" } : { handled: true, outcome: "failed", reply: "تعذر تنفيذ الأمر." };
 }

@@ -15,7 +15,7 @@ export type PushPayload = {
 };
 
 /** Generic text is the default so nothing private appears on a locked screen unless the user opted in. */
-export const GENERIC_TITLE = "مساعد صفوان";
+export const GENERIC_TITLE = "باشت";
 export const GENERIC_BODY = "لديك تذكير";
 const REMINDER_TTL_S = 3600;
 const RETRY_WINDOW_MS = 6 * 3600_000;

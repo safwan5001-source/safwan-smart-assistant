@@ -3,7 +3,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import Modal from "@/components/modal";
-import { Empty, ListSkeleton, Notice } from "@/components/ui";
+import { AgentOrb, BrandMark, Empty, ListSkeleton, Notice } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
 import { aiReady, useAssistant } from "@/components/assistant-context";
 import { useHydrated, useMediaQuery, useStore, useStoreError } from "@/lib/hooks";
@@ -19,6 +19,15 @@ import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/f
 import { formatTime } from "@/lib/format";
 import { matches } from "@/lib/search";
 import type { Attachment, Message, Thread } from "@/lib/domain";
+import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
+import type { BrowserRef } from "@/lib/domain";
+
+/** Tap-to-fill starters: they only put text in the composer; nothing is sent until the user presses send. */
+const STARTERS: { label: string; text: string }[] = [
+  { label: "أضف مهمة", text: "/مهمة " },
+  { label: "ذكّرني غدًا", text: "ذكرني بكرة الساعة 9 " },
+  { label: "تصفح تجريبي", text: "/متصفح" },
+];
 
 type Preview = { name: string; url: string; kind: "image" | "pdf" };
 
@@ -47,6 +56,8 @@ export default function ChatScreen() {
   const picker = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const dictation = useDictation();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const agent = agentState(status, useAgentActivity());
 
   const visible = useMemo(
     () => threads.filter((t) => Boolean(t.archived) === showArchived && matches(t.title + " " + t.messages.map((m) => m.text).join(" "), search))
@@ -59,6 +70,13 @@ export default function ChatScreen() {
 
   // A new ?t= target (e.g. from global search while already on /chat) wins over local selection.
   useEffect(() => { if (fromUrl) { dictation.abort(); setSelected(null); setDraft(""); setAttachments([]); setNotice(""); setSheet(false); } }, [fromUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+  // «?draft=» from the Command Center: prefill only (the user still presses send), then drop it from the URL.
+  const draftParam = params.get("draft");
+  useEffect(() => {
+    if (draftParam === null) return;
+    setSelected("new"); setDraft(draftParam.slice(0, 2000)); router.replace("/chat", { scroll: false });
+    requestAnimationFrame(() => input.current?.focus());
+  }, [draftParam]); // eslint-disable-line react-hooks/exhaustive-deps
   const syncUrl = (id: string | null) => { if ((params.get("t") ?? null) !== id) router.replace(id ? `/chat?t=${id}` : "/chat", { scroll: false }); };
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [current?.messages.length, activeId, streaming?.text]);
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -78,6 +96,8 @@ export default function ChatScreen() {
       const id = sent.data;
       setSelected(id); syncUrl(id); setDraft(""); setAttachments([]); setNotice("");
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
+      const executed = phaseForQuick(quick); // a local command that really ran (or failed) — distinct from a Claude reply
+      if (executed) setAgentPhase(executed);
       if (quick.reminderOffer) setOffer(quick.reminderOffer);
       // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
       if (quick.browserOffer) {
@@ -100,13 +120,17 @@ export default function ChatScreen() {
         const ctl = new AbortController();
         abortRef.current = ctl;
         const keep = async (reply: string) => { if (reply.trim()) await runCommand("chat.send", { threadId: id, text: reply, role: "assistant" }, { origin: "assistant", mode: "execute" }); };
+        let first = true;
         try {
           await ensureClaudeSession(prompt);
+          setAgentPhase("thinking");
           setStreaming({ threadId: id, text: "" });
-          const out = await assistantService.chat(id, text, { signal: ctl.signal, onDelta: (_d, all) => setStreaming({ threadId: id, text: all }) });
+          const out = await assistantService.chat(id, text, { signal: ctl.signal, onDelta: (_d, all) => { if (first) { first = false; setAgentPhase("responding"); } setStreaming({ threadId: id, text: all }); } });
           await keep(out.text);
+          setAgentPhase(out.stopped ? "stopped" : "replied");
           if (out.stopped) await runCommand("chat.send", { threadId: id, text: "أُوقف الرد بناءً على طلبك.", role: "system" });
         } catch (e) {
+          setAgentPhase("reply_failed");
           await keep((e as { partial?: string }).partial ?? "");
           await runCommand("chat.send", { threadId: id, text: e instanceof AssistantRequestError ? e.message : e instanceof Error ? e.message : "تعذر الحصول على رد.", role: "system" });
         } finally { setStreaming(null); abortRef.current = null; }
@@ -146,6 +170,12 @@ export default function ChatScreen() {
     // the Claude copy of this conversation lives on the server: remove it too (best effort; a 404 just means it never reached Claude)
     const gone = await assistantService.removeConversation(t.id).then(() => true, (e: unknown) => e instanceof AssistantRequestError && (e.code === "not_found" || e.code === "unauthorized" || e.code === "disabled"));
     toast(gone ? "حُذفت المحادثة" : "حُذفت محليًا، لكن تعذر حذف نسختها على الخادم. أعد المحاولة لاحقًا.", gone ? "ok" : "error");
+  };
+  // browser task cards: persist the patch as before; a real started → done transition is an executed-task outcome
+  const updateBrowser = (threadId: string, m: Message, patch: Partial<BrowserRef>) => {
+    const phase = phaseForBrowser(m.browser, patch);
+    if (phase) setAgentPhase(phase);
+    void runCommand("chat.browser.update", { threadId, id: m.id, patch });
   };
   const copy = async (m: Message) => {
     try { await navigator.clipboard.writeText(m.text); toast("تم النسخ"); } catch { toast("تعذر النسخ. حدّد النص وانسخه يدوياً.", "error"); }
@@ -197,26 +227,29 @@ export default function ChatScreen() {
         <section className="chat-main" aria-label="المحادثة الحالية">
           <div className="chat-head">
             {!desktop && <button className="icon-btn mobile-only" onClick={() => setSheet(true)} aria-label="قائمة المحادثات" aria-haspopup="dialog"><Icon name="menu" size={21} /></button>}
-            <strong>{current?.title ?? "محادثة جديدة"}</strong>
+            <div className="chat-agent">
+              <AgentOrb state={agent} size="sm" />
+              <span className="grow"><span className="who-name">{current?.title ?? "محادثة جديدة"}</span><small role="status">باشت · {AGENT_STATE_TEXT[agent].label}</small></span>
+            </div>
             <button className="icon-btn" onClick={newChat} aria-label="محادثة جديدة"><Icon name="plus" size={21} /></button>
           </div>
 
           <div className="chat-log" ref={log} role="log" aria-live="polite" aria-label="رسائل المحادثة">
             {!current?.messages.length && (
-              <Empty icon="spark" title="كيف أستطيع مساعدتك؟">
-                {ready ? "اكتب رسالتك للمساعد." : "أنت في وضع الملاحظات: المساعد الذكي غير مفعّل بعد، وتُحفظ رسائلك على هذا الجهاز فقط."}
-                <span style={{ display: "block", marginBlockStart: 8 }}>جرّب الأمر السريع: <span className="kbd">/مهمة مراجعة الفواتير</span></span>
-                <span style={{ display: "block", marginBlockStart: 4 }}>تجربة المتصفح (قراءة فقط، موقع اختبار): <span className="kbd">/متصفح</span></span>
-                <span style={{ display: "block", marginBlockStart: 4 }}>جلسة تفاعلية على صفحة المختبر (تنقل ونقر وكتابة بموافقتك): <span className="kbd">/متصفح تفاعلي</span></span>
+              <Empty icon="spark" brand title="أهلًا، أنا باشت. بماذا أبدأ؟"
+                action={<div className="suggest" aria-label="اقتراحات للبدء">{STARTERS.map((s) => (
+                  <button key={s.label} type="button" onClick={() => { setDraft(s.text); input.current?.focus(); }}><Icon name="spark" size={15} />{s.label}</button>))}</div>}>
+                {ready ? "اكتب ما تريد إنجازه، وسأرد عليك هنا." : "أنت في وضع الملاحظات: الذكاء الاصطناعي غير مفعّل بعد، وتُحفظ رسائلك على هذا الجهاز فقط."}
+                <span style={{ display: "block", marginBlockStart: 8 }}>أوامر سريعة: <span className="kbd">/مهمة</span> · <span className="kbd">/متصفح</span> (قراءة فقط) · <span className="kbd">/متصفح تفاعلي</span> (بموافقتك لكل خطوة)</span>
               </Empty>
             )}
             {current?.messages.map((m) => (
               <article key={m.id} className={"bubble " + (m.role ?? "user")}>
-                {m.role && m.role !== "user" && <span className="who">{m.role === "system" ? "النظام" : "المساعد"}</span>}
+                {m.role && m.role !== "user" && <span className="who">{m.role === "system" ? <><Icon name="info" size={14} />النظام</> : <><BrandMark size="xs" />باشت</>}</span>}
                 {m.browser && current
                   ? (m.browser.mode === "interactive"
-                    ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />
-                    : <BrowserCard browser={m.browser} onChange={(patch) => void runCommand("chat.browser.update", { threadId: current.id, id: m.id, patch })} />)
+                    ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => updateBrowser(current.id, m, patch)} />
+                    : <BrowserCard browser={m.browser} onChange={(patch) => updateBrowser(current.id, m, patch)} />)
                   : m.text}
                 {m.attachments?.map((a) => (
                   <div key={a.id} style={{ marginBlockStart: 6 }}>
@@ -233,8 +266,8 @@ export default function ChatScreen() {
             ))}
             {streaming && streaming.threadId === activeId && (
               <article className="bubble assistant streaming" aria-busy="true">
-                <span className="who">المساعد</span>
-                {streaming.text || <span className="muted"><i className="spinner" aria-hidden="true" /> Claude يكتب…</span>}
+                <span className="who"><BrandMark size="xs" />باشت</span>
+                {streaming.text || <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
               </article>
             )}
           </div>
@@ -251,7 +284,7 @@ export default function ChatScreen() {
             )}
             <div className="composer-row">
               <button className="icon-btn bordered" onClick={() => picker.current?.click()} aria-label="إرفاق ملف" title="إرفاق ملف"><Icon name="clip" size={20} /></button>
-              <textarea className="textarea" rows={1} aria-label="اكتب رسالة" placeholder={ready ? "اكتب رسالتك…" : "اكتب ملاحظة…"} value={draft}
+              <textarea ref={input} className="textarea" rows={1} aria-label="اكتب رسالة" placeholder={ready ? "اكتب لباشت…" : "اكتب ملاحظة أو أمرًا سريعًا…"} value={draft}
                 onChange={(e) => setDraft(e.target.value)} enterKeyHint="send"
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && desktop) { e.preventDefault(); void send(); } }} />
               <button className={"icon-btn bordered " + (dictation.listening ? "recording" : "")} disabled={!dictation.supported} aria-pressed={dictation.listening}
@@ -261,9 +294,9 @@ export default function ChatScreen() {
                 ? <button className="icon-btn send-btn stop-btn" onClick={() => abortRef.current?.abort()} aria-label="إيقاف الرد" title="إيقاف الرد"><Icon name="stop" size={20} /></button>
                 : <button className="icon-btn send-btn" onClick={() => void send()} disabled={busy || (!draft.trim() && !attachments.length)} aria-label="إرسال"><Icon name="send" size={20} style={{ transform: "scaleX(-1)" }} /></button>}
             </div>
-            {dictation.listening && <small role="status" style={{ color: "var(--accent)" }}>يستمع الآن… تحدّث بالعربية ثم راجع النص قبل الإرسال.</small>}
+            {dictation.listening && <small role="status" style={{ color: "var(--ai-ink)" }}>يستمع الآن… تحدّث بالعربية ثم راجع النص قبل الإرسال.</small>}
             {(notice || dictation.error) && <small role="alert" style={{ color: "var(--danger)" }}>{notice || dictation.error}</small>}
-            <small className="muted">{ready ? "Claude مفعّل: تُحفظ محادثاته على خادم صفوان لتتابعها بعد إعادة فتح التطبيق." : "وضع الملاحظات — المساعد الذكي غير مفعّل."} المرفقات تبقى على هذا الجهاز فقط ولا تُرسل إلى Claude؛ لا تكتب بيانات حساسة.</small>
+            <small className="composer-note">{ready ? "باشت يعمل بـ Claude: تُحفظ المحادثة على خادم باشت لتتابعها لاحقًا." : "وضع الملاحظات — الذكاء الاصطناعي غير مفعّل."} المرفقات تبقى على هذا الجهاز ولا تُرسل إلى Claude؛ لا تكتب بيانات حساسة.</small>
           </div>
         </section>
       </div>

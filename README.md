@@ -1,6 +1,8 @@
-# مساعد صفوان الذكي | Safwan Smart Assistant
+# باشت | BASHT
 
-مساعد شخصي ذكي مستقل، واجهته الأولى الآيفون (PWA عربي RTL) وهدفه تنفيذ أعمال المستخدم على المواقع والبرامج عبر واجهاتها.
+وكيل ذكاء اصطناعي تنفيذي مستقل (سابقًا «مساعد صفوان الذكي»)، واجهته الأولى الآيفون (PWA عربي RTL) وهدفه تنفيذ أعمال المستخدم على المواقع والبرامج عبر واجهاتها.
+
+> الهوية البصرية ونظام التصميم: [docs/brand/BASHT-UI.md](docs/brand/BASHT-UI.md) · [BASHT Design System v1](docs/brand/BASHT_Design_System_v1.md)
 
 > **الحالة (نسخة تجريبية):** الواجهة تعمل بالكامل محلياً على جهاز المستخدم (محادثات/ملاحظات، مهام، ملفات، بحث، إعدادات).
 > **غير مفعّل بعد:** المساعد الذكي (لا مزوّد نماذج)، تنفيذ الأوامر على الخادم، التكاملات الخارجية، الحساب والمزامنة، المكالمات، Windows السحابي.
@@ -40,7 +42,7 @@ bash scripts/backup-restore-rehearsal.sh                 # تمرين نسخ/ا�
 ## الوثائق
 - [المعمارية](docs/ARCHITECTURE.md) · [خطة التنفيذ والقبول](docs/IMPLEMENTATION.md)
 - [الأمان والمخاطر المتبقية](docs/SECURITY.md) · [مراجعة B1 الأمنية](docs/B1-SECURITY-REVIEW.md) · [قائمة إثبات Preview](docs/B1-PREVIEW-CHECKLIST.md) · [سجل القرارات](docs/DECISIONS.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md) · [تقرير الدفعة التطويرية](docs/DEVELOPMENT_REPORT.md)
-- [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md) · [مهمة المتصفح من المحادثة](docs/CHAT-BROWSER.md) · [التحكم التفاعلي](docs/CHAT-BROWSER-2.md)
+- [هوية باشت وتجربة الواجهة](docs/brand/BASHT-UI.md) · [الإشعارات والتنبيهات الصوتية والتذكيرات](docs/NOTIFICATIONS.md) · [مهمة المتصفح من المحادثة](docs/CHAT-BROWSER.md) · [التحكم التفاعلي](docs/CHAT-BROWSER-2.md)
 - [النشر على Railway — المرحلة 2: API](docs/deploy/RAILWAY-API-PHASE2.md) · [المرحلة 3: PostgreSQL والمصادقة](docs/deploy/RAILWAY-PHASE3-DB-AUTH.md)
 
 ## مبادئ معتمدة

@@ -1,5 +1,5 @@
 /*
- * مساعد صفوان — service worker (Web Push + notification clicks only).
+ * باشت | BASHT — service worker (Web Push + notification clicks only).
  *
  * Deliberately NOT a caching/offline worker: it never intercepts fetches, so it cannot serve stale app code.
  * iOS rules this file respects:
@@ -38,7 +38,7 @@ function safeUrl(raw) {
 }
 
 self.addEventListener("push", (event) => {
-  const p = readPayload(event) || { key: "", kind: "reminder", title: "مساعد صفوان", body: "لديك إشعار", url: "/", priority: "normal", reminderId: "", tag: "" };
+  const p = readPayload(event) || { key: "", kind: "reminder", title: "باشت", body: "لديك إشعار", url: "/", priority: "normal", reminderId: "", tag: "" };
   const options = {
     body: p.body || "لديك إشعار",
     tag: p.tag || p.key || undefined, // same tag ⇒ the system replaces instead of stacking duplicates
@@ -48,7 +48,7 @@ self.addEventListener("push", (event) => {
     data: { url: safeUrl(p.url), key: p.key, reminderId: p.reminderId, kind: p.kind },
   };
   event.waitUntil((async () => {
-    await self.registration.showNotification(p.title || "مساعد صفوان", options);
+    await self.registration.showNotification(p.title || "باشت", options);
     // wake open windows so the in-app engine can add the full-content inbox item (idempotent by key)
     const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     for (const w of wins) w.postMessage({ type: "safwan:push", key: p.key, kind: p.kind, reminderId: p.reminderId });

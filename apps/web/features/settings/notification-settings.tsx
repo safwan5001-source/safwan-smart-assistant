@@ -74,14 +74,14 @@ export default function NotificationSettings() {
             <ol className="steps">
               <li>افتح هذه الصفحة في Safari.</li>
               <li>اضغط زر المشاركة <Icon name="forward" size={14} style={{ display: "inline", verticalAlign: "middle" }} /> ثم «إضافة إلى الشاشة الرئيسية».</li>
-              <li>افتح «صفوان» من الشاشة الرئيسية، وارجع إلى الإعدادات هنا.</li>
+              <li>افتح «باشت» (أو «صفوان» إن ثبّتّه قبل تغيير الاسم) من الشاشة الرئيسية، وارجع إلى الإعدادات هنا.</li>
               <li>اضغط «تفعيل الإشعارات» واسمح بها عندما يسألك iOS.</li>
             </ol>
             يتطلب iOS 16.4 أو أحدث.</Notice>
         )}
         {state === "unsupported" && <Notice tone="warn">هذا المتصفح أو الإصدار لا يدعم إشعارات الويب. على iPhone يلزم iOS 16.4 أو أحدث مع التطبيق المثبّت. ستظل التنبيهات تعمل داخل التطبيق وهو مفتوح.</Notice>}
         {state === "unconfigured" && <Notice tone="warn">خادم الإشعارات غير مهيأ بعد (مفاتيح VAPID وقاعدة البيانات). التنبيهات داخل التطبيق تعمل، لكن لن تصلك إشعارات والتطبيق مغلق حتى يُفعَّل الخادم.</Notice>}
-        {state === "denied" && <Notice tone="danger">الإشعارات محظورة لهذا التطبيق. فعّلها من إعدادات iPhone ← الإشعارات ← صفوان (أو من إعدادات الموقع في المتصفح)، ثم عد إلى هنا.</Notice>}
+        {state === "denied" && <Notice tone="danger">الإشعارات محظورة لهذا التطبيق. فعّلها من إعدادات iPhone ← الإشعارات ← باشت أو صفوان (أو من إعدادات الموقع في المتصفح)، ثم عد إلى هنا.</Notice>}
         {state === "error" && <Notice tone="danger" role="alert">تعذر قراءة حالة الإشعارات. تحقق من الاتصال وحاول مجدداً.</Notice>}
         <div className="row-wrap">
           {(state === "off" || state === "error") && <button className="btn btn-primary" disabled={busy} onClick={() => void enable()}><Icon name="bell" size={18} />تفعيل الإشعارات</button>}

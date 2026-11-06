@@ -42,7 +42,7 @@ type Tok = { raw: string; f: string; used: boolean };
 
 // ── vocab ───────────────────────────────────────────────────────────────────
 const TRIGGER = /^(?:\/)?(?:ذكرني|ذكرنا|ذكرلي|ذكر لي|نبهني|نبهنا|نبهلي|نبه لي|اضف تذكير|اضبط تذكير|انشئ تذكير|سوي تذكير|ضع تذكير|ضع لي تذكير|ابغى تذكير|ابي تذكير|تذكير)(?=\s|$)/;
-const POLITE = /^(?:(?:لو سمحت|من فضلك|ممكن|يا صفوان|صفوان|هلا|مرحبا|اهلا)\s+)+/;
+const POLITE = /^(?:(?:لو سمحت|من فضلك|ممكن|يا باشت|باشت|يا صفوان|صفوان|هلا|مرحبا|اهلا)\s+)+/;
 export function isReminderIntent(text: string): boolean {
   const f = fold(text.replace(DIACRITICS, "")).trim().replace(POLITE, "");
   return TRIGGER.test(f);
