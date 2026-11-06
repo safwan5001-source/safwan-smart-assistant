@@ -55,7 +55,7 @@ export default function NotificationsScreen() {
   ];
   return (
     <div className="page">
-      <PageHeader eyebrow="الإشعارات" title="مركز الإشعارات" description="كل تنبيه وصلك يُحفظ هنا على هذا الجهاز، حتى لو فاتك صوته."
+      <PageHeader icon="bell" eyebrow="الإشعارات" title="مركز الإشعارات" description="كل تنبيه وصلك يُحفظ هنا على هذا الجهاز، حتى لو فاتك صوته."
         actions={<button className="btn" onClick={() => void markAll()} disabled={!unread}><Icon name="check" size={18} />تعليم الكل كمقروء</button>} />
       {err && <Notice tone="warn" role="alert">{err}</Notice>}
       <div className="stack">

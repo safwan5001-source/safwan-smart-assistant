@@ -74,7 +74,7 @@ export default function TasksScreen() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="المهام" title="مهامي" description="رتّب أولوياتك ومواعيدك. المهام محفوظة على هذا الجهاز فقط." />
+      <PageHeader icon="tasks" eyebrow="المهام" title="مهامي" description="رتّب أولوياتك ومواعيدك. المهام محفوظة على هذا الجهاز فقط." />
       {storageError && <Notice tone="warn" role="alert">{storageError}</Notice>}
 
       <form className="card card-pad add-form" onSubmit={add} aria-label="إضافة مهمة">

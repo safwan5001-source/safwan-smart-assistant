@@ -76,7 +76,7 @@ export default function FilesScreen() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="الملفات" title="ملفاتي" description="مكتبة محلية داخل هذا المتصفح. لا رفع للخادم ولا مزامنة ولا نسخ احتياطي؛ قد تختفي الملفات إذا حُذفت بيانات الموقع." />
+      <PageHeader icon="files" eyebrow="الملفات" title="ملفاتي" description="مكتبة محلية داخل هذا المتصفح. لا رفع للخادم ولا مزامنة ولا نسخ احتياطي؛ قد تختفي الملفات إذا حُذفت بيانات الموقع." />
       {error && <Notice tone="danger" role="alert">{error}</Notice>}
 
       <div className={"dropzone " + (over ? "over" : "")}

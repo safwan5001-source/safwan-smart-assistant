@@ -25,7 +25,7 @@ export default function IntegrationsScreen() {
 
   return (
     <div className="page">
-      <PageHeader eyebrow="التكاملات" title="التكاملات والصلاحيات" description="الخدمات المخطط ربطها وما يحتاجه كل ربط من صلاحيات. لا يوجد أي اتصال فعلي حتى الآن، ولا تطلب هذه الشاشة رموز وصول." />
+      <PageHeader icon="integrations" eyebrow="التكاملات" title="التكاملات والصلاحيات" description="الخدمات المخطط ربطها وما يحتاجه كل ربط من صلاحيات. لا يوجد أي اتصال فعلي حتى الآن، ولا تطلب هذه الشاشة رموز وصول." />
       <Notice tone="warn"><strong>{connected} من {items.length} خدمة متصلة.</strong> تتحول الحالة إلى «متصل» فقط بعد نجاح فحص حي من الخادم. اتصال حساباتك داخل أدوات أخرى لا يعني أن هذا التطبيق متصل بها.</Notice>
 
       <div className="stack">

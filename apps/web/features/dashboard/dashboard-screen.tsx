@@ -1,139 +1,215 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import Icon, { type IconName } from "@/components/icon";
-import { Badge, Empty, LogoTile, Notice, Skeleton } from "@/components/ui";
-import { aiReady, useAssistant } from "@/components/assistant-context";
+import { AgentOrb, Notice, Skeleton, StatusPill, type RunStatus } from "@/components/ui";
+import { useAssistant } from "@/components/assistant-context";
 import { OPEN_SEARCH_EVENT } from "@/components/app-shell";
 import { useHydrated, useStore } from "@/lib/hooks";
-import { activityStore, remindersStore, tasksStore, threadsStore } from "@/lib/stores";
+import { activityStore, noticesStore, remindersStore, tasksStore, threadsStore } from "@/lib/stores";
 import { alertAt, describeSchedule, type Reminder } from "@/lib/reminders";
+import { unreadCount } from "@/lib/notifications";
+import { INTEGRATIONS } from "@/lib/integrations";
 import { listFiles } from "@/lib/files-db";
 import { commandTitle } from "@/lib/commands";
 import { dueState, formatDay, formatTime, formatToday, localDateKey } from "@/lib/format";
+import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-activity";
+import { BRAND } from "@/lib/brand";
+import type { Task } from "@/lib/domain";
 
 const greeting = (h: number) => (h < 12 ? "صباح الخير" : "مساء الخير");
-const SHORTCUTS: { href: string; icon: IconName; title: string; sub: string }[] = [
-  { href: "/chat", icon: "chat", title: "محادثة جديدة", sub: "اكتب ملاحظة أو أمراً سريعاً" },
-  { href: "/tasks", icon: "tasks", title: "إضافة مهمة", sub: "رتّب أولوياتك" },
-  { href: "/reminders", icon: "clock", title: "ضبط تذكير", sub: "بجملة عربية أو من النموذج" },
-  { href: "/files", icon: "files", title: "ملفاتي", sub: "افتح مستنداتك المحفوظة" },
-  { href: "/integrations", icon: "integrations", title: "التكاملات", sub: "حالة الخدمات وصلاحياتها" },
+const QUICK: { href?: string; search?: true; icon: IconName; label: string; tone?: "ai" | "gold" }[] = [
+  { href: "/chat", icon: "chat", label: "محادثة" },
+  { href: "/tasks", icon: "tasks", label: "مهمة" },
+  { href: "/reminders", icon: "clock", label: "تذكير", tone: "gold" },
+  { href: "/files", icon: "upload", label: "ملف" },
+  { href: "/calls", icon: "wave", label: "صوت", tone: "ai" },
+  { search: true, icon: "search", label: "بحث" },
 ];
-const STATUS_LABEL: Record<string, string> = { executed: "نُفّذ", denied: "مرفوض", approval_required: "بانتظار موافقة", invalid: "غير صالح", failed: "فشل" };
+/** Activity log → Design System status set. These are past outcomes recorded on this device, never projected ones. */
+const ACTIVITY: Record<string, { s: RunStatus; label: string }> = {
+  executed: { s: "done", label: "نُفّذ" }, approval_required: { s: "awaiting_approval", label: "طلب موافقة" },
+  denied: { s: "cancelled", label: "مرفوض" }, invalid: { s: "failed", label: "غير صالح" }, failed: { s: "failed", label: "تعذّر" },
+};
+
+type Next = { icon: IconName; title: string; sub: string; href?: string; action?: () => void };
 
 export default function DashboardScreen() {
   const hydrated = useHydrated();
-  const reminders = useStore(remindersStore), tasks = useStore(tasksStore), threads = useStore(threadsStore), activity = useStore(activityStore);
+  const router = useRouter();
+  const reminders = useStore(remindersStore), tasks = useStore(tasksStore), threads = useStore(threadsStore), activity = useStore(activityStore), notices = useStore(noticesStore);
   const { status, refresh } = useAssistant();
+  const state = agentState(status, useAgentActivity());
+  const st = AGENT_STATE_TEXT[state];
   const [fileCount, setFileCount] = useState<number | null>(null);
+  const [ask, setAsk] = useState("");
   useEffect(() => { let live = true; listFiles().then((f) => live && setFileCount(f.length)).catch(() => live && setFileCount(null)); return () => { live = false; }; }, []);
 
   const now = useMemo(() => (hydrated ? new Date() : null), [hydrated]);
   const today = localDateKey();
   const pending = tasks.filter((t) => !t.done);
-  const overdue = pending.filter((t) => dueState(t.due, today) === "overdue").length;
-  const dueToday = pending.filter((t) => dueState(t.due, today) === "today").length;
-  const next = [...pending].sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || b.created - a.created).slice(0, 4);
-  const upcoming = reminders.filter((r: Reminder) => r.status === "active" || r.status === "fired")
-    .sort((a, b) => (a.status === "fired" ? -1 : 0) - (b.status === "fired" ? -1 : 0) || (alertAt(a) ?? a.dueAt) - (alertAt(b) ?? b.dueAt)).slice(0, 3);
-  const ai = aiReady(status);
+  const overdue = pending.filter((t) => dueState(t.due, today) === "overdue");
+  const dueToday = pending.filter((t) => dueState(t.due, today) === "today");
+  const fired = reminders.filter((r) => r.status === "fired");
+  const unread = unreadCount(notices);
+  const endOfDay = now ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime() : 0;
+  const remindersToday = reminders.filter((r) => r.status === "active" && (alertAt(r) ?? r.dueAt) < endOfDay).length;
+  const upcomingTasks = [...pending].filter((t) => dueState(t.due, today) !== "overdue")
+    .sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || b.created - a.created).slice(0, 4);
+  const upcomingReminders = reminders.filter((r: Reminder) => r.status === "active").sort((a, b) => (alertAt(a) ?? a.dueAt) - (alertAt(b) ?? b.dueAt)).slice(0, 3);
+  const plannedIntegrations = INTEGRATIONS.length;
+  const connectedIntegrations = INTEGRATIONS.filter((i) => i.status === "connected").length;
+
+  // One suggested next step, derived only from what is on this device and the live connection status.
+  const next: Next = fired[0] ? { icon: "bell", title: fired[0].title, sub: "تذكير وصل وينتظر إجراءك", href: "/reminders" }
+    : overdue[0] ? { icon: "alert", title: overdue[0].title, sub: "مهمة متأخرة — ابدأ بها", href: "/tasks" }
+    : dueToday[0] ? { icon: "target", title: dueToday[0].title, sub: "مستحقة اليوم", href: "/tasks" }
+    : status.server === "offline" ? { icon: "repeat", title: "أعد فحص الاتصال بالخادم", sub: "ما على جهازك يعمل كالمعتاد", action: refresh }
+    : status.server === "online" && !status.assistant ? { icon: "spark", title: "فعّل Claude ليبدأ باشت التنفيذ", sub: "من الإعدادات ← Claude", href: "/settings" }
+    : { icon: "chat", title: "ابدأ محادثة جديدة مع باشت", sub: "اكتب ما تريد إنجازه", href: "/chat" };
+
+  const submitAsk = (e: FormEvent) => {
+    e.preventDefault();
+    const text = ask.trim();
+    router.push(text ? "/chat?draft=" + encodeURIComponent(text) : "/chat");
+  };
+
+  const nextBody = (
+    <>
+      <span className="ico"><Icon name={next.icon} size={18} /></span>
+      <span className="grow"><small>الخطوة التالية المقترحة</small><strong>{next.title}</strong></span>
+      <Icon name="forward" size={18} />
+    </>
+  );
 
   return (
     <div className="page">
-      <section className="hero" aria-labelledby="hello">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <span className="muted num" style={{ fontSize: 13, fontWeight: 600 }}>{now ? formatToday(now) : " "}</span>
-          <h1 id="hello">{now ? greeting(now.getHours()) : "أهلاً"}، صفوان</h1>
-          <p>محادثاتك ومهامك وملفاتك في مكان واحد. كل ما تراه محفوظ على هذا الجهاز؛ المساعد الذكي وتنفيذ الأوامر على الخادم لم يُفعَّلا بعد.</p>
-          <div className="row-wrap" style={{ marginBlockStart: 14 }}>
-            <Link href="/chat" className="btn btn-primary"><Icon name="chat" size={18} />ابدأ محادثة</Link>
-            <button className="btn" onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}><Icon name="search" size={18} />بحث شامل</button>
+      <h1 className="sr-only">مركز قيادة {BRAND.nameAr}</h1>
+      <section className="cc-hero" aria-labelledby="hello">
+        <div className="cc-top">
+          <AgentOrb state={state} size="lg" />
+          <div className="grow">
+            <span className="cc-date num">{now ? formatToday(now) : " "}</span>
+            <h2 id="hello" className="cc-hello">{now ? greeting(now.getHours()) : "أهلاً"}، {BRAND.ownerName}</h2>
+            <span className="cc-state" data-tone={st.tone} role="status"><i className="state-dot" aria-hidden="true" />{BRAND.nameAr} · {st.label}</span>
           </div>
         </div>
-        <LogoTile size="lg" />
+        <form className="cc-ask" onSubmit={submitAsk} role="search" aria-label={"اطلب من " + BRAND.nameAr}>
+          <input value={ask} onChange={(e) => setAsk(e.target.value)} placeholder="اطلب من باشت… مثلًا: /مهمة مراجعة الفواتير" aria-label="اكتب طلبك لباشت" enterKeyHint="go" maxLength={500} />
+          <button className="icon-btn send-btn" type="submit" aria-label="متابعة في المحادثة"><Icon name="send" size={20} style={{ transform: "scaleX(-1)" }} /></button>
+        </form>
+        {hydrated && (next.href
+          ? <Link href={next.href} className="cc-next">{nextBody}</Link>
+          : <button type="button" className="cc-next" onClick={next.action} style={{ textAlign: "start" }}>{nextBody}</button>)}
       </section>
 
-      <section aria-label="ملخص" className="grid grid-2 grid-md-4">
-        {!hydrated ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={92} />) : (<>
-          <Link href="/tasks" className="stat"><span>المهام المتبقية</span><strong>{pending.length}</strong><small>{dueToday ? `${dueToday} تستحق اليوم` : "للمتابعة"}</small></Link>
-          <Link href="/tasks" className="stat"><span>متأخرة</span><strong style={overdue ? { color: "var(--danger)" } : undefined}>{overdue}</strong><small>{overdue ? "تحتاج اهتماماً" : "لا شيء متأخر"}</small></Link>
-          <Link href="/chat" className="stat"><span>المحادثات</span><strong>{threads.filter((t) => !t.archived).length}</strong><small>على هذا الجهاز</small></Link>
-          <Link href="/files" className="stat"><span>الملفات</span><strong>{fileCount ?? "—"}</strong><small>مكتبة محلية</small></Link>
-        </>)}
+      <nav className="quick" aria-label="إجراءات سريعة">
+        {QUICK.map((q) => {
+          const body = <><span className={"ico " + (q.tone ?? "")}><Icon name={q.icon} size={21} /></span>{q.label}</>;
+          return q.search
+            ? <button key={q.label} type="button" onClick={() => window.dispatchEvent(new Event(OPEN_SEARCH_EVENT))}>{body}</button>
+            : <Link key={q.label} href={q.href!}>{body}</Link>;
+        })}
+      </nav>
+
+      <section aria-labelledby="today-h" className="stack">
+        <div className="section-head"><h2 id="today-h"><Icon name="calendar" size={18} />ملخص اليوم</h2></div>
+        <div className="grid grid-2 grid-md-4">
+          {!hydrated ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} h={96} />) : (<>
+            <Link href="/tasks" className="stat"><span><Icon name="target" size={15} />مستحقة اليوم</span><strong>{dueToday.length}</strong><small>من {pending.length} مهمة مفتوحة</small></Link>
+            <Link href="/tasks" className={"stat" + (overdue.length ? " alert" : "")}><span><Icon name="alert" size={15} />متأخرة</span><strong>{overdue.length}</strong><small>{overdue.length ? "تحتاج اهتمامك" : "لا شيء متأخر"}</small></Link>
+            <Link href="/reminders" className="stat"><span><Icon name="clock" size={15} />تذكيرات اليوم</span><strong>{remindersToday}</strong><small>{fired.length ? `${fired.length} بانتظار إجراء` : "مجدولة حتى منتصف الليل"}</small></Link>
+            <Link href="/files" className="stat"><span><Icon name="files" size={15} />الملفات</span><strong>{fileCount ?? "—"}</strong><small>{threads.filter((t) => !t.archived).length} محادثة على هذا الجهاز</small></Link>
+          </>)}
+        </div>
+      </section>
+
+      <section aria-labelledby="attn-h" className="stack">
+        <div className="section-head"><h2 id="attn-h"><Icon name="hourglass" size={18} />بانتظارك</h2></div>
+        {!hydrated ? <Skeleton h={60} /> : (fired.length || overdue.length || unread) ? (
+          <div className="attn">
+            {fired.slice(0, 3).map((r) => (
+              <Link key={r.id} href="/reminders" className={"attn-item " + (r.priority === "critical" ? "danger" : "")}>
+                <span className="ico"><Icon name="bell" size={19} /></span>
+                <span className="grow"><strong>{r.title}</strong><small className="num">{describeSchedule(r)}</small></span>
+                <StatusPill status="awaiting_approval" label="بانتظار إجراء" />
+              </Link>
+            ))}
+            {overdue.slice(0, 3).map((t: Task) => (
+              <Link key={t.id} href="/tasks" className="attn-item danger">
+                <span className="ico"><Icon name="tasks" size={19} /></span>
+                <span className="grow"><strong>{t.title}</strong><small>متأخرة · {t.due ? formatDay(t.due) : ""}</small></span>
+                <Icon name="forward" size={18} style={{ color: "var(--muted)" }} />
+              </Link>
+            ))}
+            {unread > 0 && (
+              <Link href="/notifications" className="attn-item info">
+                <span className="ico"><Icon name="inbox" size={19} /></span>
+                <span className="grow"><strong className="num">{unread} إشعار غير مقروء</strong><small>صندوق الإشعارات</small></span>
+                <Icon name="forward" size={18} style={{ color: "var(--muted)" }} />
+              </Link>
+            )}
+          </div>
+        ) : (
+          <div className="calm" role="status"><Icon name="check-circle" size={22} /><span><strong style={{ display: "block" }}>لا شيء ينتظرك الآن</strong><small className="muted">لا تذكيرات تنتظر إجراءً ولا مهام متأخرة.</small></span></div>
+        )}
       </section>
 
       <div className="grid grid-lg-3" style={{ alignItems: "start" }}>
         <section className="card card-pad" style={{ gridColumn: "span 2" }} aria-labelledby="next-h">
-          <div className="section-head"><h2 id="next-h">مهام للمتابعة</h2><Link href="/tasks" className="btn btn-ghost btn-sm" style={{ color: "var(--accent)" }}>عرض الكل<Icon name="forward" size={16} /></Link></div>
+          <div className="section-head"><h2 id="next-h"><Icon name="activity" size={18} />التالي في جدولك</h2><Link href="/tasks" className="btn-link">كل المهام<Icon name="forward" size={16} /></Link></div>
           {!hydrated ? <div className="stack" style={{ marginBlockStart: 12 }}><Skeleton h={44} /><Skeleton h={44} /></div>
-            : next.length ? (
-              <ul className="list">
-                {next.map((t) => { const d = dueState(t.due, today); return (
+            : upcomingTasks.length || upcomingReminders.length ? (
+              <ul className="timeline" style={{ marginBlockStart: 6 }}>
+                {upcomingReminders.map((r) => (
+                  <li key={r.id}>
+                    <span className="grow"><span className="title">{r.title}</span><small className="muted num">{describeSchedule(r)}</small></span>
+                    <span className="badge gold"><Icon name="clock" size={13} />تذكير</span>
+                  </li>
+                ))}
+                {upcomingTasks.map((t) => { const d = dueState(t.due, today); return (
                   <li key={t.id}>
-                    <Icon name="tasks" size={20} style={{ color: "var(--accent)" }} />
-                    <span className="grow"><span className="title">{t.title}</span></span>
-                    {t.priority === "high" && <Badge tone="danger">عالية</Badge>}
-                    {t.due && <Badge tone={d === "overdue" ? "danger" : d === "today" ? "warn" : undefined}>{d === "overdue" ? "متأخرة · " : d === "today" ? "اليوم · " : ""}{formatDay(t.due)}</Badge>}
+                    <span className="grow"><span className="title">{t.title}</span>{t.due && <small className="muted">{d === "today" ? "اليوم · " : ""}{formatDay(t.due)}</small>}</span>
+                    {t.priority === "high" ? <span className="badge danger">عالية</span> : <span className="badge accent"><Icon name="tasks" size={13} />مهمة</span>}
                   </li>); })}
               </ul>
-            ) : <Empty icon="check" title="لا مهام معلقة" action={<Link href="/tasks" className="btn btn-primary btn-sm">أضف مهمة</Link>}>أنجزت كل شيء، أو لم تبدأ بعد.</Empty>}
+            ) : (
+              <div className="empty" style={{ padding: "22px 12px" }}>
+                <span className="empty-icon"><Icon name="check" size={24} /></span>
+                <p>جدولك فارغ. قل لباشت «ذكرني بكرة الساعة 9 …» أو أضف مهمة.</p>
+                <Link href="/tasks" className="btn btn-primary btn-sm"><Icon name="plus" size={16} />أضف مهمة</Link>
+              </div>
+            )}
         </section>
 
-        <section className="card card-pad" aria-labelledby="status-h">
-          <div className="section-head"><h2 id="status-h">حالة النظام</h2><button className="btn btn-ghost btn-sm" onClick={refresh} aria-label="إعادة فحص الخادم">إعادة الفحص</button></div>
-          <div style={{ marginBlockStart: 6 }}>
-            <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : "فحص /api/health"}</small></span>
-              {status.server === "checking" ? <Badge>جارٍ الفحص</Badge> : status.server === "online" ? <Badge tone="ok">متصل</Badge> : <Badge tone="warn">غير متصل</Badge>}</div>
-            <div className="status-line"><span><strong>المساعد الذكي</strong><small>{ai ? "مُهيّأ على الخادم" : "لا يوجد مزوّد نماذج مفعّل"}</small></span>{ai ? <Badge tone="ok">مفعّل</Badge> : <Badge>غير مفعّل</Badge>}</div>
-            <div className="status-line"><span><strong>التكاملات</strong><small>لا خدمة متصلة بعد</small></span><Badge>0 متصلة</Badge></div>
-            <div className="status-line"><span><strong>المزامنة</strong><small>بين الأجهزة</small></span><Badge>غير متاحة</Badge></div>
+        <section className="card card-pad" aria-labelledby="conn-h">
+          <div className="section-head"><h2 id="conn-h"><Icon name="link" size={18} />الاتصالات</h2><button className="btn-link" onClick={refresh} aria-label="إعادة فحص الخادم">إعادة الفحص</button></div>
+          <div className="conn" style={{ marginBlockStart: 4 }}>
+            <div className="conn-row"><span className="ico"><Icon name="server" size={18} /></span><span className="grow"><strong>الخادم</strong><small className="num">{status.server === "online" ? `الإصدار ${status.version}` : "فحص /api/health"}</small></span>
+              {status.server === "checking" ? <StatusPill status="running" label="يفحص" /> : status.server === "online" ? <StatusPill status="verified" label="متصل" /> : <StatusPill status="failed" label="غير متصل" />}</div>
+            <div className="conn-row"><span className="ico"><Icon name="spark" size={18} /></span><span className="grow"><strong>Claude</strong><small>{status.server === "online" && status.assistant ? "مُهيّأ على الخادم" : "لا يوجد مزوّد نماذج مفعّل"}</small></span>
+              {status.server === "online" && status.assistant ? <StatusPill status="verified" label="مفعّل" /> : <StatusPill status="draft" label="غير مفعّل" />}</div>
+            <Link href="/integrations" className="conn-row"><span className="ico"><Icon name="integrations" size={18} /></span><span className="grow"><strong>التكاملات</strong><small className="num">{connectedIntegrations} متصلة من {plannedIntegrations} مخطط لها</small></span><span className="badge">قيد التخطيط</span></Link>
+            <div className="conn-row"><span className="ico"><Icon name="repeat" size={18} /></span><span className="grow"><strong>المزامنة</strong><small>بين الأجهزة</small></span><span className="badge">غير متاحة</span></div>
           </div>
         </section>
       </div>
 
-      <section className="card card-pad" aria-labelledby="rem-h">
-        <div className="section-head"><h2 id="rem-h">تذكيرات قادمة</h2><Link href="/reminders" className="btn btn-ghost btn-sm" style={{ color: "var(--accent)" }}>كل التذكيرات<Icon name="forward" size={16} /></Link></div>
-        {!hydrated ? <div style={{ marginBlockStart: 12 }}><Skeleton h={44} /></div> : upcoming.length ? (
-          <ul className="list">
-            {upcoming.map((r) => (
-              <li key={r.id}>
-                <Icon name="clock" size={20} style={{ color: "var(--accent)" }} />
-                <span className="grow"><span className="title">{r.title}</span><small className="muted num">{describeSchedule(r)}</small></span>
-                {r.status === "fired" && <Badge tone="warn">بانتظار إجراء</Badge>}
-              </li>
-            ))}
-          </ul>
-        ) : <p className="muted" style={{ marginBlockStart: 8 }}>لا تذكيرات قادمة. قل «ذكرني بكرة الساعة 9 …» في المحادثات أو من صفحة التذكيرات.</p>}
-      </section>
-      <section aria-labelledby="quick-h" className="stack">
-        <div className="section-head"><h2 id="quick-h">وصول سريع</h2></div>
-        <div className="grid grid-md-2 grid-lg-3">
-          {SHORTCUTS.map((s) => (
-            <Link key={s.href} href={s.href} className="shortcut">
-              <span className="ico"><Icon name={s.icon} size={22} /></span>
-              <span style={{ flex: 1 }}><strong>{s.title}</strong><small>{s.sub}</small></span>
-              <Icon name="forward" size={18} style={{ color: "var(--muted)" }} />
-            </Link>
-          ))}
-        </div>
-      </section>
-
       <section className="card card-pad" aria-labelledby="act-h">
-        <div className="section-head"><h2 id="act-h">آخر النشاط</h2><small className="muted">محلي · آخر 100 عملية</small></div>
+        <div className="section-head"><h2 id="act-h"><Icon name="check-circle" size={18} />ما أُنجز مؤخرًا</h2><small className="muted">على هذا الجهاز · آخر 100</small></div>
         {!hydrated ? <div style={{ marginBlockStart: 12 }}><Skeleton h={40} /></div> : activity.length ? (
-          <ul className="list">
-            {activity.slice(0, 5).map((a) => (
+          <ul className="timeline" style={{ marginBlockStart: 6 }}>
+            {activity.slice(0, 5).map((a) => { const m = ACTIVITY[a.status] ?? { s: "draft" as RunStatus, label: a.status }; return (
               <li key={a.id}>
                 <span className="grow"><span className="title">{commandTitle(a.command)}</span><small className="muted num">{formatTime(a.ts)}</small></span>
-                <Badge tone={a.status === "executed" ? "ok" : a.status === "denied" || a.status === "failed" ? "danger" : "warn"}>{STATUS_LABEL[a.status] ?? a.status}</Badge>
-              </li>
-            ))}
+                <StatusPill status={m.s} label={m.label} />
+              </li>); })}
           </ul>
-        ) : <p className="muted" style={{ marginBlockStart: 8 }}>لا نشاط بعد. ستظهر هنا العمليات التي تنفذها داخل التطبيق.</p>}
+        ) : <p className="muted" style={{ marginBlockStart: 8, fontSize: 14 }}>لا نشاط بعد. ستظهر هنا كل عملية ينفّذها باشت أو تنفّذها أنت داخل التطبيق، بنتيجتها الفعلية.</p>}
       </section>
 
-      <Notice>الرسائل والمهام والملفات غير متزامنة بين الأجهزة ولا توجد نسخة احتياطية. لا تحفظ بيانات حساسة هنا حتى يُفعَّل الحساب والتشفير.</Notice>
+      <Notice>المحادثات والمهام والملفات محفوظة على هذا الجهاز فقط، بلا مزامنة أو نسخة احتياطية بعد. لا تحفظ بيانات حساسة حتى يُفعَّل الحساب والتشفير.</Notice>
     </div>
   );
 }

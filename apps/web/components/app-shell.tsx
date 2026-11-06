@@ -3,18 +3,23 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import Icon from "./icon";
-import { LogoTile } from "./ui";
+import { AgentOrb, BrandLockup, BrandMark, Ornament } from "./ui";
 import SearchDialog from "./search-dialog";
 import NotificationBell from "./notification-bell";
 import { NAV, TABS, isActive, titleFor } from "@/lib/nav";
-import { aiReady, useAssistant } from "./assistant-context";
+import { BRAND } from "@/lib/brand";
+import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-activity";
+import { useAssistant } from "./assistant-context";
 
 export const OPEN_SEARCH_EVENT = "safwan:open-search";
+const MORE_PATHS = ["/more", "/integrations", "/calls", "/settings", "/reminders", "/notifications"];
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
-  const { status } = useAssistant();
+  const { status, refresh } = useAssistant();
+  const state = agentState(status, useAgentActivity());
+  const st = AGENT_STATE_TEXT[state];
 
   useEffect(() => {
     const open = () => setSearchOpen(true);
@@ -28,17 +33,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
     return () => { window.removeEventListener(OPEN_SEARCH_EVENT, open); window.removeEventListener("keydown", onKey); };
   }, []);
 
-  const serverLabel = status.server === "checking" ? "جارٍ فحص الخادم…" : status.server === "offline" ? "الخادم غير متصل" : "الخادم متصل";
-  const aiLabel = aiReady(status) ? "المساعد الذكي مفعّل" : "المساعد الذكي غير مفعّل";
-
   return (
     <div className="shell">
       <a className="skip-link" href="#main">تخطَّ إلى المحتوى</a>
       <aside className="sidebar" aria-label="القائمة الرئيسية">
-        <Link href="/" className="brand" aria-label="مساعد صفوان الذكي — الرئيسية">
-          <LogoTile />
-          <span><strong>مساعد صفوان</strong><small>المساعد الشخصي الذكي</small></span>
+        <Link href="/" className="brand" aria-label={BRAND.full + " — الرئيسية"}>
+          <BrandLockup tagline />
         </Link>
+        <button className="sidebar-search" onClick={() => setSearchOpen(true)} aria-haspopup="dialog">
+          <Icon name="search" size={18} /><span>بحث شامل</span><span className="kbd kbd-hint">⌘K</span>
+        </button>
         <nav className="nav" aria-label="الأقسام">
           {NAV.map((n) => (
             <Link key={n.href} href={n.href} aria-current={isActive(pathname, n.href) ? "page" : undefined}>
@@ -46,17 +50,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Link>
           ))}
         </nav>
-        <div className="sidebar-foot" aria-label="حالة النظام">
-          <span className="row"><span className={"dot " + (status.server === "online" ? "ok" : status.server === "checking" ? "" : "warn")} />{serverLabel}</span>
-          <span className="row"><span className={"dot " + (aiReady(status) ? "ok" : "warn")} />{aiLabel}</span>
-          <small>نسخة تجريبية · البيانات على هذا الجهاز</small>
+        <div className="sidebar-foot">
+          <section className="agent-card" aria-label="حالة باشت" data-tone={st.tone}>
+            <AgentOrb state={state} size="sm" />
+            <span className="grow">
+              <strong>باشت · <span role="status">{st.label}</span></strong>
+              <small>{st.detail}</small>
+            </span>
+            {(state === "offline" || state === "notes") && (
+              <button className="icon-btn sm" onClick={refresh} aria-label="إعادة فحص الاتصال" title="إعادة فحص الاتصال"><Icon name="repeat" size={16} /></button>
+            )}
+          </section>
+          <Ornament />
+          <small className="foot-note">نسخة تجريبية · بياناتك على هذا الجهاز</small>
         </div>
       </aside>
 
       <div className="main-col">
         <header className="topbar">
-          <Link href="/" className="brand-mini" aria-label="الرئيسية"><LogoTile size="sm" /></Link>
-          <h2 className="topbar-title">{titleFor(pathname)}</h2>
+          <Link href="/" className="brand-mini" aria-label="الرئيسية"><BrandMark size="sm" /></Link>
+          <h2 className="topbar-title">
+            {pathname === "/" ? <span className="topbar-brand">{BRAND.nameAr}<small data-tone={st.tone}><i className="state-dot" aria-hidden="true" />{st.label}</small></span> : titleFor(pathname)}
+          </h2>
           <button className="icon-btn bordered" onClick={() => setSearchOpen(true)} aria-label="بحث (اختصار: /)" aria-haspopup="dialog"><Icon name="search" size={20} /></button>
           <NotificationBell />
           <Link href="/settings" className="icon-btn bordered mobile-only" aria-label="الإعدادات"><Icon name="settings" size={20} /></Link>
@@ -66,7 +81,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
       <nav className="bottom-nav" aria-label="التنقل السفلي">
         {TABS.map((n) => {
-          const active = n.href === "/more" ? ["/more", "/integrations", "/calls", "/settings", "/reminders", "/notifications"].some((h) => isActive(pathname, h)) : isActive(pathname, n.href);
+          const active = n.href === "/more" ? MORE_PATHS.some((h) => isActive(pathname, h)) : isActive(pathname, n.href);
+          if (n.href === "/chat") {
+            return (
+              <Link key={n.href} href={n.href} className="tab-agent" aria-current={active ? "page" : undefined} aria-label={"تحدّث مع باشت — " + st.label}>
+                <AgentOrb state={state} size="md" /><span>باشت</span>
+              </Link>
+            );
+          }
           return <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined}><Icon name={n.icon} size={23} /><span>{n.label}</span></Link>;
         })}
       </nav>

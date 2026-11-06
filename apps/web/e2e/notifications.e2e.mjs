@@ -232,7 +232,7 @@ try {
   check("iOS < 16.4: reported as unsupported with honest explanation", (await op.locator("#push-h + .badge").innerText()).includes("غير مدعومة"));
   await octx.close();
   await ip.goto(BASE + "/");
-  await ip.waitForSelector("#rem-h");
+  await ip.waitForSelector("#today-h"); // Command Center: «ملخص اليوم»
   await overflow(ip, "/ (dashboard)");
   await shot(ip, "11-dashboard-dark");
   await ictx.close();

@@ -95,7 +95,7 @@ export default function ClaudeSettings() {
   return (
     <section className="card card-pad stack" aria-labelledby="claude-h">
       <div className="section-head"><h2 id="claude-h">Claude (Anthropic)</h2><Badge tone={tone}>{label}</Badge></div>
-      <p className="muted" style={{ fontSize: 14 }}>المزود الأساسي لمساعد صفوان. المفتاح محفوظ على الخادم فقط ولا يظهر هنا ولا يصل إلى الآيفون.</p>
+      <p className="muted" style={{ fontSize: 14 }}>المزوّد الأساسي لباشت. المفتاح محفوظ على الخادم فقط ولا يظهر هنا ولا يصل إلى الآيفون.</p>
 
       {phase === "off" && <Notice tone="warn">بوابة Claude غير مفعّلة على الخادم (AI_CHAT_ACCESS_CODE). تفاصيل التهيئة في docs/CHAT-AI-1.md.</Notice>}
       {phase === "locked" && (

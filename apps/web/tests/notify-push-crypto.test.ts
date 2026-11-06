@@ -75,7 +75,7 @@ describe("real Web Push delivery (VAPID + aes128gcm)", () => {
     expect(v.claims).toMatchObject({ sub: "mailto:ops@example.com", aud: `https://127.0.0.1:${port}` });
     expect(v.k).toBe(vapid.publicKey);
     const plain = JSON.parse(ece.decrypt(got.body, { version: "aes128gcm", privateKey: ecdh, authSecret: auth.toString("base64url") }).toString("utf8"));
-    expect(plain).toMatchObject({ v: 1, kind: "reminder", title: "مساعد صفوان", body: "لديك تذكير", generic: true, reminderId: "real1", priority: "high" });
+    expect(plain).toMatchObject({ v: 1, kind: "reminder", title: "باشت", body: "لديك تذكير", generic: true, reminderId: "real1", priority: "high" });
     expect(JSON.stringify(plain)).not.toContain("موعد سري"); // the private title never travels in the default mode
     expect(String(plain.url)).toBe("/reminders?focus=real1");
   });

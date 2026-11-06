@@ -81,7 +81,7 @@ export default function RemindersScreen() {
   const filters: { id: Filter; label: string }[] = [{ id: "active", label: "النشطة" }, { id: "paused", label: "الموقوفة" }, { id: "completed", label: "المكتملة" }, { id: "all", label: "الكل" }];
   return (
     <div className="page">
-      <PageHeader eyebrow="التذكيرات" title="تذكيراتي" description="أنشئ تذكيراً بجملة عربية أو من النموذج. تُنبَّه وأنت داخل التطبيق، وعلى iPhone المثبّت تصلك إشعارات حتى والتطبيق مغلق."
+      <PageHeader icon="clock" eyebrow="التذكيرات" title="تذكيراتي" description="أنشئ تذكيراً بجملة عربية أو من النموذج. تُنبَّه وأنت داخل التطبيق، وعلى iPhone المثبّت تصلك إشعارات حتى والتطبيق مغلق."
         actions={<button className="btn btn-primary" onClick={() => setDialog({ reminder: null })}><Icon name="plus" size={18} />تذكير جديد</button>} />
       {storageError && <Notice tone="warn" role="alert">{storageError}</Notice>}
       {awaiting > 0 && <Notice tone="warn" role="status"><strong>{awaiting === 1 ? "لديك تذكير بانتظار إجراء" : `لديك ${awaiting} تذكيرات بانتظار إجراء`}</strong> — اختر «تم» أو أجّله.</Notice>}

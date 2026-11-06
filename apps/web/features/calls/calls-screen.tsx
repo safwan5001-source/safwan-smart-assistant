@@ -1,32 +1,78 @@
 "use client";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/icon";
-import { Badge, Notice, PageHeader } from "@/components/ui";
+import { AgentOrb, Badge, Notice, PageHeader } from "@/components/ui";
 import { useDictation } from "@/lib/speech";
+import { useStore } from "@/lib/hooks";
+import { earcon, voiceFxStore } from "@/lib/earcons";
+
+type VoiceState = "unsupported" | "ready" | "listening" | "error";
+const LABEL: Record<VoiceState, { title: string; sub: string }> = {
+  unsupported: { title: "الصوت غير مدعوم هنا", sub: "هذا المتصفح لا يوفّر التعرف على الكلام. استخدم Safari محدّثًا أو إملاء لوحة المفاتيح." },
+  ready: { title: "جاهز للاستماع", sub: "اضغط الميكروفون وتحدّث بالعربية، ثم راجع النص وأرسله لباشت." },
+  listening: { title: "يستمع الآن…", sub: "تحدّث بهدوء. اضغط الزر مرة أخرى للإيقاف." },
+  error: { title: "توقّف الاستماع", sub: "راجع الرسالة أدناه ثم حاول مرة أخرى." },
+};
 
 export default function CallsScreen() {
   const d = useDictation();
   const [text, setText] = useState("");
+  const fx = useStore(voiceFxStore);
+  const state: VoiceState = !d.supported ? "unsupported" : d.listening ? "listening" : d.error ? "error" : "ready";
+  const wasListening = useRef(false);
+  // the engine can end on its own (silence): play the stop cue for that too
+  useEffect(() => { if (wasListening.current && !d.listening && fx) earcon("stop"); wasListening.current = d.listening; }, [d.listening, fx]);
+
+  const toggle = () => {
+    if (d.listening) { d.stop(); return; }
+    if (fx) earcon("start");
+    d.start(text, setText, true);
+  };
+
   return (
     <div className="page">
-      <PageHeader eyebrow="المكالمات" title="المحادثة الصوتية" description="المكالمات الصادرة والواردة والرد الصوتي المباشر غير مفعّلة بعد. المتاح الآن اختبار الإملاء العربي بالميكروفون." />
-      <section className="card card-pad stack" aria-labelledby="mic-h">
-        <div className="section-head"><h2 id="mic-h">اختبار الإملاء</h2><Badge tone={d.supported ? "ok" : "warn"}>{d.supported ? "مدعوم في هذا المتصفح" : "غير مدعوم"}</Badge></div>
-        <div className="row-wrap">
-          <button className={"btn " + (d.listening ? "btn-danger" : "btn-primary")} disabled={!d.supported} aria-pressed={d.listening}
-            onClick={() => (d.listening ? d.stop() : d.start(text, setText, true))}>
-            <Icon name={d.listening ? "stop" : "mic"} size={18} />{d.listening ? "إيقاف الاستماع" : "بدء الاستماع"}
-          </button>
-          <button className="btn" onClick={() => { d.abort(); setText(""); d.clearError(); }} disabled={!text && !d.listening}>مسح النص</button>
+      <PageHeader icon="wave" eyebrow="الصوت" title="الجلسة الصوتية" description="تحدّث مع باشت بصوتك. المتاح الآن: إملاء عربي يحوّل كلامك إلى نص ترسله للمحادثة. الرد الصوتي المباشر والمكالمات لم تُفعَّل بعد." />
+
+      <section className="voice" data-state={state} aria-labelledby="voice-h">
+        <div className="voice-orb">
+          <span className="voice-halo" aria-hidden="true" /><span className="voice-halo" aria-hidden="true" />
+          <AgentOrb state={state === "listening" ? "responding" : state === "unsupported" ? "offline" : state === "error" ? "failed" : "ready"} />
         </div>
-        <p role="status" className="muted" style={{ fontSize: 14 }}>{d.listening ? "الميكروفون يعمل — تحدّث بالعربية." : "اضغط «بدء الاستماع» ثم تحدّث."}</p>
-        <div className="card card-pad" aria-label="نص الكلام" style={{ minHeight: 84, background: "var(--surface-2)", overflowWrap: "anywhere" }}>{text || <span className="muted">سيظهر نص كلامك هنا.</span>}</div>
-        {d.error && <Notice tone="danger" role="alert">{d.error}</Notice>}
-        <small className="muted">تفريغ صوتي فقط: لا رد ذكي ولا تنفيذ أوامر. قد يعالج المتصفح (أو مزوّده) الصوت عبر خدمة خارجية.</small>
+        <div className="voice-bars" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
+        <div className="stack" style={{ gap: 4, justifyItems: "center" }}>
+          <h2 id="voice-h" className="voice-label" role="status">{LABEL[state].title}</h2>
+          <p className="voice-sub">{LABEL[state].sub}</p>
+        </div>
+        <div className="voice-states" aria-label="حالات الجلسة">
+          <span aria-current={state === "ready" ? "true" : undefined}>جاهز</span>
+          <span aria-current={state === "listening" ? "true" : undefined}>يستمع</span>
+          <span>يرد صوتيًا · قريبًا</span>
+        </div>
+        <div className="voice-actions">
+          <button className="voice-side" onClick={() => { d.abort(); setText(""); d.clearError(); }} disabled={!text && !d.listening} aria-label="مسح النص وإلغاء"><Icon name="trash" size={20} /></button>
+          <button className="voice-main" onClick={toggle} disabled={!d.supported} aria-pressed={d.listening} aria-label={d.listening ? "إيقاف الاستماع" : "بدء الاستماع"}>
+            <Icon name={d.listening ? "stop" : "mic"} size={30} />
+          </button>
+          <button className="voice-side" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} aria-label={fx ? "إيقاف المؤثرات الصوتية" : "تشغيل المؤثرات الصوتية"} title="مؤثرات صوتية عند البدء والإيقاف"><Icon name="volume" size={20} /></button>
+        </div>
       </section>
+
+      <section className="card card-pad stack" aria-labelledby="tr-h">
+        <div className="section-head"><h2 id="tr-h"><Icon name="doc" size={18} />النص</h2><Badge tone={d.supported ? "ok" : "warn"}>{d.supported ? "الإملاء مدعوم" : "غير مدعوم"}</Badge></div>
+        <div className="transcript" aria-live="polite" aria-label="نص الكلام">{text || <span className="muted">سيظهر نص كلامك هنا.</span>}</div>
+        {d.error && <Notice tone="danger" role="alert">{d.error}</Notice>}
+        <div className="row-wrap">
+          <Link href={text.trim() ? "/chat?draft=" + encodeURIComponent(text.trim()) : "/chat"} className={"btn btn-primary" + (text.trim() ? "" : " is-disabled")} aria-disabled={!text.trim()} onClick={(e) => { if (!text.trim()) e.preventDefault(); else d.abort(); }}>
+            <Icon name="send" size={18} style={{ transform: "scaleX(-1)" }} />راجع وأرسل لباشت
+          </Link>
+        </div>
+        <small className="muted">تفريغ صوتي فقط: يُفتح النص في المحادثة لتراجعه قبل الإرسال. قد يعالج المتصفح (أو مزوّده) الصوت عبر خدمة خارجية.</small>
+      </section>
+
       <section className="grid grid-md-2" aria-label="قدرات قادمة">
-        {[["calls", "مكالمات صادرة وواردة", "تتطلب مزود اتصالات يدعم أرقام السعودية؛ لم يُختر بعد."], ["spark", "المحادثة الصوتية المباشرة", "ردّ صوتي قابل للمقاطعة؛ يتطلب خادماً ومزوّد نماذج."]].map(([icon, title, sub]) => (
-          <div key={title} className="card card-pad row"><span className="file-ico"><Icon name={icon as "calls"} size={22} /></span><span style={{ flex: 1 }}><strong>{title}</strong><small className="muted" style={{ display: "block" }}>{sub}</small></span><Badge>قريباً</Badge></div>
+        {([["calls", "مكالمات صادرة وواردة", "تتطلب مزود اتصالات يدعم أرقام السعودية؛ لم يُختر بعد."], ["spark", "الرد الصوتي المباشر", "باشت يرد بصوته ويمكن مقاطعته؛ يتطلب خادمًا ومزوّد نماذج صوتية."]] as const).map(([icon, title, sub]) => (
+          <div key={title} className="card card-pad row"><span className="file-ico"><Icon name={icon} size={22} /></span><span style={{ flex: 1 }}><strong>{title}</strong><small className="muted" style={{ display: "block" }}>{sub}</small></span><Badge>قريبًا</Badge></div>
         ))}
       </section>
     </div>
