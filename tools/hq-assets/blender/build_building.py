@@ -19,6 +19,7 @@ import time
 sys.path.insert(0, os.path.dirname(__file__))
 import bpy  # noqa: E402
 from common import B, MeshSink, hex_rgba, principled, reset_scene, select_only  # noqa: E402
+import textures  # noqa: E402
 
 HERE = os.path.dirname(__file__)
 ROOT = os.path.abspath(os.path.join(HERE, ".."))
@@ -58,6 +59,15 @@ M = {
     "screen": principled("screen", "#1a1244", rough=0.3, emission="#5b4bd6", emission_strength=2.0),
     "glow": principled("glow", "#ffd88a", rough=0.5, emission="#ffcf7a", emission_strength=6.0),
 }
+# tileable surface textures (procedural, deterministic) on the big floors; texture repeat in metres per tile
+TEXTURED = {"marble": (textures.marble, 4.0), "oak": (textures.oak, 2.0), "carpet_exec": (textures.carpet, 1.5)}
+for mname, (fn, _) in TEXTURED.items():
+    img = textures.to_blender_image(bpy, "tex_" + mname, fn())
+    nt = M[mname].node_tree
+    tex = nt.nodes.new("ShaderNodeTexImage")
+    tex.image = img
+    tex.interpolation = "Linear"
+    nt.links.new(tex.outputs["Color"], nt.nodes["Principled BSDF"].inputs["Base Color"])
 S = MeshSink()
 
 # ── floors ───────────────────────────────────────────────────────────────────
@@ -315,17 +325,18 @@ for o in objs:
     me = o.data
     uv0 = me.uv_layers.new(name="UVMap")
     me.uv_layers.active = uv0
+    tile = TEXTURED.get(o.active_material.name, (None, 2.0))[1]
     for poly in me.polygons:
         n = poly.normal
         for li in poly.loop_indices:
             v = me.vertices[me.loops[li].vertex_index].co
             # triplanar-style projection, 1 unit = 1 metre / 2 (texture tiles every 2 m)
             if abs(n.z) > 0.7:
-                uv0.data[li].uv = (v.x / 2.0, v.y / 2.0)
+                uv0.data[li].uv = (v.x / tile, v.y / tile)
             elif abs(n.x) > abs(n.y):
-                uv0.data[li].uv = (v.y / 2.0, v.z / 2.0)
+                uv0.data[li].uv = (v.y / tile, v.z / tile)
             else:
-                uv0.data[li].uv = (v.x / 2.0, v.z / 2.0)
+                uv0.data[li].uv = (v.x / tile, v.z / tile)
 
 # every static surface gets its own island in ONE shared lightmap atlas (multi-object edit mode packs them together)
 for o in static:
@@ -432,7 +443,7 @@ select_only(objs)
 glb = os.path.join(args.out, "building.glb")
 bpy.ops.export_scene.gltf(
     filepath=glb, export_format="GLB", use_selection=True, export_apply=True, export_texcoords=True, export_normals=True,
-    export_materials="EXPORT", export_image_format="NONE", export_yup=True, export_extras=False, export_cameras=False, export_lights=False,
+    export_materials="EXPORT", export_image_format="WEBP", export_image_quality=88, export_yup=True, export_extras=False, export_cameras=False, export_lights=False,
 )
 tris = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in objs)
 print(f"[building] exported {glb} ({os.path.getsize(glb) / 1e6:.2f} MB, {len(objs)} meshes, {tris} tris) in {time.time() - T0:.1f}s total")

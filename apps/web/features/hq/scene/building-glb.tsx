@@ -41,7 +41,9 @@ export default function BuildingGlb({ night }: { night: boolean }) {
         mesh.material = m;
       } else if (mesh.geometry.attributes.uv1) {
         // large surface with a baked lightmap: unlit × baked light
-        const m = new THREE.MeshBasicMaterial({ name, color: src.color, lightMap: lightmap, lightMapIntensity: ASSETS.building.lightmapScale });
+        // surface texture (marble / oak / carpet tiles) × colour × baked light
+        if (src.map) { src.map.anisotropy = 8; src.map.colorSpace = THREE.SRGBColorSpace; }
+        const m = new THREE.MeshBasicMaterial({ name, color: src.color, map: src.map, lightMap: lightmap, lightMapIntensity: ASSETS.building.lightmapScale });
         mats.basic.push(m);
         mesh.material = m;
       } else {
