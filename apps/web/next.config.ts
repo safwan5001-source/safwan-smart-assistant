@@ -6,9 +6,10 @@ const HQ_ENABLED = process.env.NEXT_PUBLIC_HQ_ENABLED === "1";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  // With the HQ off, /hq must be a real 404 (a statically prerendered notFound() is served with status 200).
-  async rewrites() {
-    return HQ_ENABLED ? [] : { beforeFiles: [{ source: "/hq", destination: "/_hq-disabled" }], afterFiles: [], fallback: [] };
+  // With the HQ off, /hq must not serve the page (its notFound() is streamed with status 200): send the visitor home.
+  // A redirect, never a proxy to another server (pinned by services/api/tests/test_deploy_topology.py).
+  async redirects() {
+    return HQ_ENABLED ? [] : [{ source: "/hq/:path*", destination: "/", permanent: false }];
   },
   async headers() {
     return [
