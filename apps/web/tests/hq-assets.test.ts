@@ -83,14 +83,16 @@ describe("HQ 3D assets (tools/hq-assets → public/hq-assets)", () => {
       expect(j.skins ?? [], k).toEqual([]);
       expect(j.meshes ?? [], k).toEqual([]);
       expect(j.animations.map((a: { name: string }) => a.name).sort(), k).toEqual(["idle", "sit", "stand", "talk", "type", "walk"]);
-      // only the root and pelvis travel; every other joint keeps the avatar's own bone length
+      // only the root and pelvis travel: any other translation or scale channel is a constant (≤ 2 keys at rest
+      // values — the exporter keeps every joint's channels) and the app drops it (lib/hq/people.ts keepTrack)
       const moving = new Set<string>();
-      for (const a of j.animations) for (const c of a.channels as { target: { node: number; path: string } }[]) {
-        expect(c.target.path, k).not.toBe("scale");
-        if (c.target.path === "translation") moving.add(j.nodes[c.target.node].name);
+      for (const a of j.animations) for (const c of a.channels as { sampler: number; target: { node: number; path: string } }[]) {
+        if (c.target.path === "rotation") continue;
+        const keys = j.accessors[a.samplers[c.sampler].input].count;
+        if (keys > 2) moving.add(`${j.nodes[c.target.node].name}.${c.target.path}`);
       }
-      expect([...moving].sort(), k).toEqual(["Bip01 Pelvis", "RB_ROOT"].filter((n) => moving.has(n)));
-      expect(moving.has("RB_ROOT"), k).toBe(true); // seat height and in-place walk live on the root
+      expect([...moving].filter((n) => !/^(RB_ROOT|Bip01 Pelvis)\.translation$/.test(n)), k).toEqual([]);
+      expect(moving.has("RB_ROOT.translation"), k).toBe(true); // seat height and in-place walk live on the root
       expect(lib.walkSpeed, k).toBeGreaterThan(1.1); // the simulation walks at 1.35 m/s: the capture must be close
       expect(lib.walkSpeed, k).toBeLessThan(1.6);
     }
