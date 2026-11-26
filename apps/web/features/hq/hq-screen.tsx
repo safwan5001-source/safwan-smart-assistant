@@ -13,6 +13,7 @@ import { FRAMES, VIEWS, type ViewId } from "@/lib/hq/layout";
 import { SCENARIOS, SCENARIO_BY_ID } from "@/lib/hq/demo-data";
 import { HqSim, STAGE_AR, STATUS_AR, type Snapshot, type Status } from "@/lib/hq/sim";
 import { normalizeAr } from "@/lib/search";
+import { CORE_LINK_AR, HQ_SOURCE } from "@/lib/hq/source";
 import { createHqStore, useHq, type HqStore, type Panel } from "./hq-state";
 import HqPlan from "./hq-plan";
 
@@ -283,7 +284,9 @@ function AgentCard({ id, status, onClose, onVisit }: { id: AgentId; status: Stat
         <span className="grow" />
         <button className="btn btn-sm" onClick={onVisit}><Icon name="target" size={16} />زيارة المكتب</button>
       </div>
-      <small className="muted">شخصية افتراضية للعرض؛ ليست وكيلًا فعليًا في باشت.</small>
+      {id === "BASHT"
+        ? <small className="muted">الربط بباشت الفعلي: {HQ_SOURCE === "simulation" ? CORE_LINK_AR.simulation : "—"}</small>
+        : <small className="muted">شخصية افتراضية للعرض؛ ليست وكيلًا فعليًا في باشت.</small>}
     </section>
   );
 }
