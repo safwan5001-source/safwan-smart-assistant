@@ -159,7 +159,7 @@ def build_item(f):
         part(f, "dark", -0.22, 0.22, h, h + 0.02, -hd + 0.12, -hd + 0.27, bevel=0.005)
     elif k in ("chair", "exec-chair"):
         mat = "velvet" if k == "chair" else "leather"
-        sh = 0.46
+        sh = 0.42  # cushion top 0.50 m: the seated motion captures (build_humans.py) sit at this height
         part(f, mat, -0.24, 0.24, sh, sh + 0.08, -0.22, 0.24, bevel=0.03)
         part(f, mat, -0.23, 0.23, sh + 0.08, h, -0.27, -0.19, bevel=0.03)
         if k == "exec-chair":

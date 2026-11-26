@@ -4,8 +4,8 @@ BASHT HQ — realistic human employees from Microsoft Rocketbox (MIT licence, ht
     tools/hq-assets/build.sh humans            # needs ROCKETBOX=/path/to/Microsoft-Rocketbox (git clone, no LFS needed)
 
 For every human in layout.json ("characters", sourced from apps/web/lib/hq/roster.ts → look.model):
-  <ID>.glb      the avatar: one skinned mesh (body / head / hair-and-lash cards), 80-bone "Bip01" biped skeleton,
-                textures resized for phones (head 1024, body 512, normals 512) and exported as WebP
+  <ID>.glb      the person: one skinned mesh (body / head / headwear / hair-and-lash cards), 80-bone "Bip01" biped
+                skeleton, colour textures resized for phones (512², no normal maps) and exported as WebP
 and, once per sex:
   anims-m.glb / anims-f.glb   the motion-capture clips the app plays (idle, walk, sit, type, talk, stand), trimmed to
                               short loopable segments, walk made in-place (the simulation moves people)
@@ -44,9 +44,13 @@ PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
 # clip key → (folder, file stem without the m_/f_ prefix, start second, length seconds)
 ROOT_NODE = "RB_ROOT"
 SEATED = ("sit", "type", "talk")
-# seated clips are moved so the pelvis joint sits over the person's origin (the chair centre in the simulation), at this
-# height: HQ chair cushion top 0.54 m (build_building.py) + ~0.08 m from the pelvis joint down to the seat
-SEAT_PELVIS = 0.62
+# seated clips are placed against the HQ chair (build_building.py: cushion top 0.54 m, front edge 0.24 m ahead of the chair
+# centre = the person's origin in the simulation): feet flat on the floor, knees just past the cushion's front edge
+KNEE_FORWARD = 0.30
+# the male captures were taken on a lower chair than the female ones: men sit this much higher (feet barely clear the
+# floor) so the hips rest on the 0.50 m cushion instead of sinking into it
+SEAT_LIFT = {"m": 0.02, "f": 0.0}
+COPYRIGHT = "Microsoft Rocketbox (MIT licence, see LICENSE-rocketbox.txt); composed for BASHT HQ"
 # only these nodes keep translation keys: every other bone's length comes from the avatar wearing the clip, so tall and
 # short people keep their own proportions
 MOVING = ("Bip01 Pelvis",)  # (the biped root "Bip01" is the armature object itself: RB_ROOT)
@@ -102,6 +106,10 @@ def wire_materials(mesh, tex_dir):
             tex.image = load_image(color, size, f"{prefix}_{part}_color")
             nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
             if part == "opacity":  # eyelash / hair cards: alpha-TESTED (glTF MASK: no sorting, cheap on phones)
+                # cut at alpha 0.3 instead of the exporter's 0.5 so soft fringes (hair tips, a scarf's hem) stay whole
+                px = image_np(tex.image)
+                px[..., 3] = np.where(px[..., 3] > 0.3, 1.0, 0.0)
+                tex.image = new_image_np(tex.image.name, px)
                 rnd = nt.nodes.new("ShaderNodeMath")
                 rnd.operation = "ROUND"  # the glTF exporter reads Round(alpha) as alphaMode MASK, cutoff 0.5
                 nt.links.new(tex.outputs["Alpha"], rnd.inputs[0])
@@ -285,17 +293,50 @@ def hijab_shell(arm, tint_hex):
     a = image_np(tex.image)
     hgt, wid = a.shape[:2]
     uv = h.data.uv_layers.active.data
-    cloth_faces = []
+    # per face: cloth (light or shaded grey: red barely above blue) vs skin / eyes / mouth (orange-red)
+    warm = []
     for poly in h.data.polygons:
         u = sum(uv[i].uv.x for i in poly.loop_indices) / poly.loop_total
         w = sum(uv[i].uv.y for i in poly.loop_indices) / poly.loop_total
         px = a[min(hgt - 1, max(0, int(w * hgt))), min(wid - 1, max(0, int(u * wid))), :3]
-        cloth_faces.append(px.max() > 0.28 and px[0] - px[2] < 0.10)
+        warm.append(float(px[0] - px[2]))
     import bmesh
     bm = bmesh.new()
     bm.from_mesh(h.data)
     bm.faces.ensure_lookup_table()
-    bmesh.ops.delete(bm, geom=[f for f in bm.faces if not cloth_faces[f.index]], context="FACES")
+    cloth = {f.index for f in bm.faces if warm[f.index] < 0.10}
+    # close holes: a fold too dark or a seam texel must not punch through the drape — adopt faces mostly surrounded by
+    # cloth unless they are clearly skin
+    for _ in range(4):
+        add = set()
+        for f in bm.faces:
+            if f.index in cloth or warm[f.index] > 0.22:
+                continue
+            nb = {g.index for e in f.edges for g in e.link_faces if g is not f}
+            if len(nb & cloth) >= 2:
+                add.add(f.index)
+        if not add:
+            break
+        cloth |= add
+    # keep the connected cloth piece(s) that make the hijab; drop stray islands (lashes, inner-mouth specks)
+    seen, comps = set(), []
+    for start in cloth:
+        if start in seen:
+            continue
+        comp, stack = set(), [start]
+        while stack:
+            i = stack.pop()
+            if i in seen:
+                continue
+            seen.add(i)
+            comp.add(i)
+            for e in bm.faces[i].edges:
+                for g in e.link_faces:
+                    if g.index in cloth and g.index not in seen:
+                        stack.append(g.index)
+        comps.append(comp)
+    keep = set().union(*[c for c in comps if len(c) >= 40])
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if f.index not in keep], context="FACES")
     bm.to_mesh(h.data)
     bm.free()
     # tinted copy of the texture: cloth luminance × the person's colour
@@ -374,6 +415,12 @@ def compose(model, look):
         wearer = f
     if head == "ghutra":
         recolour_ghutra(mesh)
+    if model == HIJAB_SOURCE:
+        # her scarf's hem is a fringe of alpha cards that shreds at any alpha cut on a phone: the scarf ends at the cloth
+        parts = [part_of(s.material.name) for s in mesh.material_slots]
+        low = eye_level(arm) - 0.20
+        delete_faces(mesh, {p.index for p in mesh.data.polygons
+                            if parts[p.material_index] == "opacity" and (mesh.matrix_world @ p.center).z < low})
     shell = None
     if head in ("ghutra", "shemagh") and look.get("face"):
         shell = mesh.copy()
@@ -419,7 +466,7 @@ def build_avatar(cid, model, look=None):
     select_only([arm, *meshes])
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_yup=True, export_skins=True,
                               export_animations=False, export_materials="EXPORT", export_image_format="WEBP", export_image_quality=82,
-                              export_def_bones=False, export_normals=True, export_tangents=False)
+                              export_def_bones=False, export_normals=True, export_tangents=False, export_copyright=COPYRIGHT)
     tris = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
     # rest-pose pelvis height (metres) — the app scales clip root heights to each body
     pelvis = arm.data.bones.get("Bip01 Pelvis")
@@ -465,7 +512,7 @@ def build_anims(sex):
             # a calm stretch of the take whose last pose flows back into its first (no pop when the loop wraps)
             start_f = round(f0 + start * fps)
             want = start_f + length * fps
-            end_f = loop_end(src, start_f, want - fps * 2, min(f1, want + fps * 2))
+            end_f = loop_end(src, start_f, want - fps * 3, min(f1, want + fps * 3))
         if host is None:
             # the first clip's skeleton becomes the host: duplicate it without animation so its rest pose is the reference
             host = src.copy()
@@ -487,15 +534,28 @@ def build_anims(sex):
         bpy.ops.object.mode_set(mode="OBJECT")
         baked = host.animation_data.action
         baked.name = key
+        host.animation_data.action = baked
+        if key == "idle":
+            scene.frame_set(int(start_f))
+            ankle_stand = min(joint(host, "Bip01 L Foot").z, joint(host, "Bip01 R Foot").z)
         if key in SEATED:
             scene.frame_set(int(start_f))
-            p = host.matrix_world @ host.pose.bones["Bip01 Pelvis"].head
-            shift = (-p.x, -p.y, SEAT_PELVIS - p.z)
+            ankle = min(joint(host, "Bip01 L Foot").z, joint(host, "Bip01 R Foot").z)
+            knee = (joint(host, "Bip01 L Calf") + joint(host, "Bip01 R Calf")) / 2
+            # the person faces -Y here (+Z in the app): knees KNEE_FORWARD ahead of the chair centre, centred sideways
+            shift = (-knee.x, -KNEE_FORWARD - knee.y, ankle_stand - ankle + SEAT_LIFT[sex])
             for fc in action_fcurves(baked):
                 if fc.data_path == "location":
                     for kp in fc.keyframe_points:
                         for pt in (kp.co, kp.handle_left, kp.handle_right):
                             pt.y += shift[fc.array_index]
+            scene.frame_set(int(start_f))
+            pel = joint(host, "Bip01 Pelvis")
+            info_seat = {"pelvis_z": round(pel.z, 3), "pelvis_back": round(-pel.y, 3), "shift": [round(v, 3) for v in shift]}
+        else:
+            info_seat = None
+        close_loop(baked, walk=(key == "walk"))
+        host.animation_data.action = None
         for bag in action_channelbags(baked):
             for fc in list(bag.fcurves):
                 bone = fc.data_path.split('"')[1] if fc.data_path.startswith("pose.bones") else None
@@ -508,6 +568,8 @@ def build_anims(sex):
         strip.action_frame_start, strip.action_frame_end = start_f, end_f
         bpy.data.objects.remove(src, do_unlink=True)
         info[key] = {"file": os.path.basename(path), "seconds": round((end_f - start_f) / fps, 2)}
+        if info_seat:
+            info[key]["seat"] = info_seat
         if key == "walk":
             info[key]["speed"] = round(walk_speed, 3)  # metres / second the feet travel at timeScale 1
     host.location = (0, 0, 0)
@@ -517,8 +579,9 @@ def build_anims(sex):
     path = os.path.join(args.out, f"anims-{sex}.glb")
     select_only([host])
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_yup=True, export_skins=False,
-                              export_animations=True, export_animation_mode="NLA_TRACKS", export_frame_step=2,
-                              export_optimize_animation_size=True, export_optimize_animation_keep_anim_armature=False,
+                              export_animations=True, export_animation_mode="NLA_TRACKS", export_frame_step=1,
+                              export_optimize_animation_size=True, export_optimize_animation_keep_anim_armature=True,
+                              export_copyright=COPYRIGHT,
                               export_materials="NONE", export_def_bones=False)
     return {"bytes": os.path.getsize(path), "clips": info, "pelvis": round((host.matrix_world @ pelvis.head_local).z, 4) if pelvis else None}
 
@@ -527,15 +590,63 @@ SIG_BONES = ("Bip01 Head", "Bip01 L Hand", "Bip01 R Hand", "Bip01 L Forearm", "B
              "Bip01 L Calf", "Bip01 R Calf", "Bip01 Spine2")
 
 
+def joint(arm, name):
+    return arm.matrix_world @ arm.pose.bones[name].head
+
+
 def pose_sig(arm, frame):
-    """Pose fingerprint: key joints relative to the pelvis, in world space (metres)."""
+    """Pose fingerprint: key joints relative to the pelvis (metres) and every joint's local rotation (quaternion
+    components, sign-normalised), so both where the hands are and how the wrists / head are turned must match."""
     bpy.context.scene.frame_set(int(frame))
-    pel = arm.matrix_world @ arm.pose.bones["Bip01 Pelvis"].head
+    pel = joint(arm, "Bip01 Pelvis")
     out = []
     for b in SIG_BONES:
-        v = arm.matrix_world @ arm.pose.bones[b].head - pel
+        v = joint(arm, b) - pel
         out += [v.x, v.y, v.z]
+    for pb in arm.pose.bones:
+        if pb.name.endswith("Nub"):
+            continue
+        q = pb.matrix_basis.to_quaternion()
+        if q.w < 0:
+            q = -q
+        out += [0.15 * c for c in q]  # ~0.15 m per unit: a 20° turn weighs like a few cm of hand travel
     return out
+
+
+def close_loop(act, walk=False):
+    """Make a clip wrap seamlessly: whatever separates its last pose from its first is spread linearly over the whole
+    clip (a few degrees over 7–11 s is invisible; a snap at the wrap is not). Quaternions stay unit length and in the
+    first pose's hemisphere. The in-place walk's flattened travel is left alone."""
+    bags = list(action_channelbags(act))
+    curves = [fc for bag in bags for fc in bag.fcurves]
+    groups = {}
+    for fc in curves:
+        groups.setdefault(fc.data_path, {})[fc.array_index] = fc
+    for path, comps in groups.items():
+        if walk and path == "location":
+            continue
+        fcs = [comps[i] for i in sorted(comps)]
+        n = min(len(fc.keyframe_points) for fc in fcs)
+        if n < 3:
+            continue
+        first = [fc.keyframe_points[0].co.y for fc in fcs]
+        last = [fc.keyframe_points[n - 1].co.y for fc in fcs]
+        quat = path.endswith("rotation_quaternion") and len(fcs) == 4
+        if quat and sum(a * b for a, b in zip(first, last)) < 0:
+            first = [-v for v in first]
+        delta = [a - b for a, b in zip(first, last)]
+        for i in range(n):
+            w = i / (n - 1)
+            vals = [fc.keyframe_points[i].co.y + d * w for fc, d in zip(fcs, delta)]
+            if quat:
+                norm = math.sqrt(sum(v * v for v in vals)) or 1.0
+                vals = [v / norm for v in vals]
+            for fc, v in zip(fcs, vals):
+                kp = fc.keyframe_points[i]
+                kp.co.y = v
+                kp.interpolation = "LINEAR"
+        for fc in fcs:
+            fc.update()
 
 
 def root_xy(arm, frame):

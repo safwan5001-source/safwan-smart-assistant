@@ -40,9 +40,10 @@ covered Rocketbox avatars of each sex.
 - With `ghutra`, the keffiyeh is re-coloured white; the weave and black agal are kept. With `shemagh`, it stays red-check.
 - With `hijab`, the hijab is cut from Female_Adult_06's head and tinted with the person's colour.
 - Hair and caps under headwear are removed or tucked inside it (ray test). The hijab drape covers collar and lapels.
-- Clips are idle, walk, sit, type, talk and stand. They are re-baked onto one host skeleton per sex, and loop points are picked where the pose repeats.
+- Clips are idle, walk, sit, type, talk and stand. They are re-baked onto one host skeleton per sex.
+  - Loops close seamlessly (≤ 3° per joint).
   - Walk is a single gait cycle at 1.35 m/s, the simulation's speed, so feet don't slide.
-  - Seated clips put the pelvis on the HQ chair cushion.
+  - Seated clips keep the feet on the floor and the knees just past the front of the 0.50 m cushion.
 
 | ID | Role | Attire | Outfit avatar | Face |
 |---|---|---|---|---|
@@ -78,7 +79,25 @@ The tests enforce the following:
 
 The real-iPhone check (iPhone 12+) is still pending on the owner's device.
 
-## 5. Open items for the owner
+## 5. Independent review (round 1) and fixes
+
+An independent reviewer subagent checked the visuals, code, licence and performance of the first build (3aa9390).
+- **Blockers:** none.
+- **P1 and P2 findings:** all fixed except KTX2 textures, which need your approval for the encoder tool.
+- **Licence:** verified OK. No notice files under Assets/ add any conditions, and the shipped notice matches the licence word for word.
+
+| # | Finding | Fix |
+|---|---|---|
+| P1 | Seated people at the wrong height: men's feet floated 9–13 cm, women's sank 7 cm; cushions cut thighs. | Seated clips are now placed by the feet and knees: feet at standing ankle height, knees 0.30 m forward and centred. The HQ chair cushion is lowered to 0.50 m to match the capture chairs, and men get +2 cm. A test checks feet, pelvis and knees for every seated clip. |
+| P1 | Holes in the hijab drapes; shredded hem on KAFAAT; ragged hair cards. | The hijab is cut as connected cloth regions with holes closed, and stray islands dropped. The alpha cut moved from 0.5 to 0.3. KAFAAT's fringe cards are removed. |
+| P1 | Loops snapped at the wrap: talk up to 140°, stand ~25°, sit ~20°. | Loop points are chosen on joint positions and rotations. Any residual difference is spread over the whole clip, and every frame is exported. A test requires each joint to wrap within 3°. |
+| P2 | Joints with constant motion were dropped and fell back to the bind pose (fingers 4–55°). | Every joint keeps its track. A test checks every non-Nub joint in every clip. |
+| P2 | Builds not varied. | The roster's `build` now changes width and depth (slim 0.95 / broad 1.06) on top of height. |
+| P2 | One Skeleton per material: 43 skeletons uploaded per frame. | All of a person's materials share one skeleton: 13 per frame. |
+| P2 | About 60 MB GPU texture memory. | Open: KTX2 needs the encoder tool (owner approval). |
+| P3 | Walk rate ignored body scale; label height; docstring; extras; copyright. | All fixed. `extras` are documented as greybox-only, and the GLBs carry `asset.copyright`. |
+
+## 6. Open items for the owner
 
 1. Approve the casting and attire mix above. Any person can be re-cast by editing `look` in `roster.ts` and running `build.sh humans`.
 2. Optional: allow KTX2 texture encoding (needs the KTX-Software tool). This cuts GPU memory by about 4–6× on phones.

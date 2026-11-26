@@ -11,15 +11,11 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
 import { WALK_SPEED, type Clip, type HqSim } from "@/lib/hq/sim";
+import { SEAT_PELVIS, bodyScale, keepTrack, walkRate as rateFor } from "@/lib/hq/people";
 import { ANIM_LIBS, PEOPLE_URLS, animLib, characterEntry, withMeshopt } from "./assets";
 
 const FADE = 0.28;
 const SEATED = new Set<string>(["sit", "type", "talk"]);
-/** Height of the pelvis joint in the seated clips (tools/hq-assets/blender/build_humans.py SEAT_PELVIS). */
-const SEAT_PELVIS = 0.62;
-/** Clip tracks a person keeps: every joint's rotation, but translation only for the root and pelvis — bone lengths come
- *  from the avatar wearing the clip, not from the capture actor. Scale keys are never used. */
-const keepTrack = (name: string) => name.endsWith(".quaternion") || /^(RB_ROOT|Bip01_Pelvis)\.position$/.test(name);
 
 type Rig = {
   root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string;
@@ -44,10 +40,20 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       const root = new THREE.Group();
       const model = cloneSkinned(g.scene); // the loader caches the glTF; each mount animates its own skeleton
       root.add(model);
-      // people: the roster's height, within a natural range of the avatar's own (no stretched faces)
+      // people: roster height and build (bodyScale), applied to the whole posed body
       const look = AGENTS[id].look;
-      const scale = human && look.kind === "human" && entry.height ? THREE.MathUtils.clamp(look.height / entry.height, 0.93, 1.03) : 1;
-      model.scale.setScalar(scale);
+      const body = human && look.kind === "human" && entry.height ? bodyScale(look, entry.height) : null;
+      const scale = body?.s ?? 1;
+      if (body) model.scale.set(body.x, body.y, body.z);
+      // GLTFLoader gives every primitive of a skinned mesh its own Skeleton (same bones): bind them all to one, so a
+      // person uploads one set of bone matrices per frame instead of one per material
+      let shared: THREE.Skeleton | null = null;
+      model.traverse((o) => {
+        const sm = o as THREE.SkinnedMesh;
+        if (!sm.isSkinnedMesh) return;
+        if (!shared) shared = sm.skeleton;
+        else if (sm.skeleton !== shared && sm.skeleton.bones.length === shared.bones.length && sm.skeleton.bones.every((b, k) => b === shared!.bones[k])) sm.bind(shared, sm.bindMatrix);
+      });
       model.traverse((o) => {
         const m = o as THREE.SkinnedMesh;
         if (m.isMesh) {
@@ -65,7 +71,7 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       const start = actions.sit ?? actions.idle;
       start?.play();
       // the capture walks at its own pace: play it at the simulation's speed so feet don't slide
-      const walkRate = human ? THREE.MathUtils.clamp(WALK_SPEED / animLib(entry.anims!).walkSpeed, 0.6, 1.6) : 1;
+      const walkRate = human ? rateFor(WALK_SPEED, animLib(entry.anims!).walkSpeed, scale) : 1;
       actions.walk?.setEffectiveTimeScale(walkRate);
       out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate };
       // de-synchronise idle loops

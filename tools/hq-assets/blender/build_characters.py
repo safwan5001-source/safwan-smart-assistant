@@ -37,7 +37,7 @@ os.makedirs(args.out, exist_ok=True)
 PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
 
 FPS = 24
-SEAT_TOP = 0.54  # top of the HQ chair cushions (tools/hq-assets/blender/build_building.py: 0.46 + 0.08)
+SEAT_TOP = 0.50  # top of the HQ chair cushions (tools/hq-assets/blender/build_building.py: 0.42 + 0.08)
 
 
 def sit_hips(J):

@@ -18,7 +18,8 @@ import Building from "./building";
 import People from "./people";
 import BuildingGlb from "./building-glb";
 import PeopleGlb from "./people-glb";
-import { ASSETS, PEOPLE_URLS, assetUrl } from "./assets";
+import { ASSETS, PEOPLE_URLS, assetUrl, characterEntry } from "./assets";
+import { bodyScale } from "@/lib/hq/people";
 import { BRAND_ASSETS } from "@/lib/brand";
 
 CameraControls.install({ THREE });
@@ -259,7 +260,9 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     const sel = store.get().selected;
     for (const id of AGENT_IDS) {
       const w = sim.walkers[id], look = AGENTS[id].look;
-      const k = look.kind === "human" ? look.height / 1.75 : 1;
+      // above the person's real top (avatar height incl. headwear × the body scale people-glb applies)
+      const av = characterEntry(id).height;
+      const k = look.kind === "human" ? (av ? bodyScale(look, av).s * av : look.height) / 1.75 : 1;
       const standing = w.clip === "walk" || w.clip === "stand";
       const y = id === "BASHT" ? (standing ? 2.25 : 1.92) : (standing ? 1.98 : 1.58) * k;
       place(id, L.agents[id], w.pos[0], y, w.pos[1], id === sel ? 3 : id === "BASHT" ? 2 : 1, AGENTS[id].nameAr);

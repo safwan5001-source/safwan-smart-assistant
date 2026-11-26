@@ -26,6 +26,8 @@ export type Look =
       /** Body proportions so no two characters share a silhouette. */
       height: number; // metres
       build: "slim" | "regular" | "broad";
+      /** Accessories of the greybox stand-in only (shown when the 3D files cannot load); the realistic avatar's own
+       *  look (beard, glasses …) comes from its model / face. */
       extras: ReadonlyArray<"glasses" | "beard" | "moustache" | "bisht" | "watch" | "headset" | "lanyard" | "tablet">;
       /** Realistic avatar (Microsoft Rocketbox, MIT) the person is built from: Assets/Avatars/<model> — their outfit. */
       model: string;

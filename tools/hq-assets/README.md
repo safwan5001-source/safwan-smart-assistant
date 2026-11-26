@@ -79,11 +79,13 @@ hijab's drape also tucks the collar and lapels under it. All Rocketbox adults of
 heads, headwear and clips move between them with no retargeting.
 
 Clips (one GLB per skeleton, played by every person of that sex): `idle`, `walk` (a single gait cycle at 1.35 m/s — the
-simulation's speed, so feet don't slide), `sit`, `type`, `talk` (seated, pelvis placed on the HQ chair cushion), `stand`.
-Each Rocketbox take imports with its own rest pose, so clips are re-baked visually onto one host skeleton; loop points
-are chosen where the pose repeats; only the root and pelvis keep translation keys (bone lengths stay the wearer's).
+simulation's speed, so feet don't slide), `sit`, `type`, `talk` (seated: feet on the floor, knees 0.30 m forward of the
+chair centre over the 0.50 m cushion), `stand`. Each Rocketbox take imports with its own rest pose, so clips are re-baked
+visually onto one host skeleton; loop points are chosen where positions and rotations repeat and the remainder is spread
+over the clip (seamless wrap); every joint keeps a rotation track; only the root and pelvis keep translation keys (bone
+lengths stay the wearer's). `apps/web/tests/hq-clips.test.ts` decodes the shipped libraries and checks all of this.
 
-Phone budget: ≤ 10 k triangles and ≤ 4 materials per person (body, head, headwear/hair cards, crown), colour textures
+Phone budget: ≤ 11 k triangles and ≤ 4 materials per person (one shared skeleton) (body, head, headwear/hair cards, crown), colour textures
 only (head/body/cloth 512², no normal maps), WebP, meshopt — 13 people ≈ 3.6 MB on the wire.
 
 ## Known limits (and the planned upgrade)
