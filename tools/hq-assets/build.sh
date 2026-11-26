@@ -3,7 +3,9 @@
 #
 #   tools/hq-assets/build.sh all          # building + characters + publish
 #   tools/hq-assets/build.sh building     # architecture, furniture, baked lightmap  (≈6 min on 4 CPU cores)
-#   tools/hq-assets/build.sh characters   # 14 skinned characters with clips        (≈10 s)
+#   tools/hq-assets/build.sh characters   # BASHT robot (+ procedural stand-ins)    (≈10 s)
+#   tools/hq-assets/build.sh humans       # 13 realistic people + mocap clip libraries from Microsoft Rocketbox (MIT) (≈1 min)
+#                                         #   needs ROCKETBOX=<git clone of github.com/microsoft/Microsoft-Rocketbox>
 #   tools/hq-assets/build.sh lineup       # QA render of all characters (idle + walk)
 #   tools/hq-assets/build.sh publish      # meshopt-compress into apps/web/public/hq-assets/<version>/ + manifest
 #
@@ -20,8 +22,9 @@ mkdir -p "$OUT"
 case "${1:-all}" in
   building)   "$PY" "$HERE/blender/build_building.py" -- --out "$OUT" "${@:2}" ;;
   characters) "$PY" "$HERE/blender/build_characters.py" -- --out "$OUT" "${@:2}" ;;
+  humans)     "$PY" "$HERE/blender/build_humans.py" -- --out "$OUT" "${@:2}" ;;
   lineup)     "$PY" "$HERE/blender/render_lineup.py" -- "$OUT" idle && "$PY" "$HERE/blender/render_lineup.py" -- "$OUT" walk ;;
   publish)    HQ_BLENDER_PY="$PY" node "$HERE/publish.mjs" "$OUT" "${@:2}" ;;
-  all)        "$0" building && "$0" characters && "$0" publish ;;
-  *) echo "usage: $0 [all|building|characters|lineup|publish]"; exit 2 ;;
+  all)        "$0" building && "$0" characters && "$0" humans && "$0" publish ;;
+  *) echo "usage: $0 [all|building|characters|humans|lineup|publish]"; exit 2 ;;
 esac

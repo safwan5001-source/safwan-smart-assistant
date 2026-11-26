@@ -39,6 +39,21 @@ describe("HQ roster", () => {
     }
     expect(bad).toEqual([]);
   });
+  it("gives every person their own realistic face and dresses the team in Saudi business attire", () => {
+    const people = ROSTER.flatMap((a) => (a.look.kind === "human" ? [{ id: a.id, ...a.look }] : []));
+    const faces = people.map((p) => p.face ?? p.model);
+    expect(new Set(faces).size).toBe(13); // a face is never reused, even when two people share an outfit
+    for (const p of people) {
+      const female = (p.face ?? p.model).includes("Female");
+      expect(p.model.includes("Female"), `${p.id}: face and outfit must share a skeleton`).toBe(female);
+      if (female) expect(p.head, `${p.id}: women wear the hijab`).toBe("hijab");
+      if (p.attire === "thobe") expect(["ghutra", "shemagh"], p.id).toContain(p.head);
+      if (p.head === "ghutra" || p.head === "shemagh") expect(p.attire, p.id).toBe("thobe");
+    }
+    // a mix, as the owner asked: thobes, suits and modest women's wear
+    expect(people.filter((p) => p.attire === "thobe").length).toBeGreaterThanOrEqual(4);
+    expect(people.filter((p) => p.attire === "suit" && !p.model.includes("Female")).length).toBeGreaterThanOrEqual(2);
+  });
   it("gives every human a distinct look (no two characters share outfit, height and build)", () => {
     const keys = ROSTER.flatMap((a) => (a.look.kind === "human" ? [`${a.look.attire}|${a.look.head}|${a.look.outfit}|${a.look.accent}|${a.look.height}|${a.look.build}|${a.look.extras.join("+")}`] : []));
     expect(keys).toHaveLength(13);

@@ -30,6 +30,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--out", default=os.path.join(ROOT, "out"))
 ap.add_argument("--only", nargs="*", default=[])
 ap.add_argument("--preview", action="store_true", help="also render a Cycles preview PNG per character")
+ap.add_argument("--procedural-humans", action="store_true",
+                help="also build the procedural human stand-ins for people that have a realistic model (build_humans.py)")
 args, _ = ap.parse_known_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:])
 os.makedirs(args.out, exist_ok=True)
 PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
@@ -578,6 +580,8 @@ summary = {}
 for ch in PLAN["characters"]:
     if args.only and ch["id"] not in args.only:
         continue
+    if ch["look"].get("model") and not args.procedural_humans:
+        continue  # realistic person: built by build_humans.py (this script would overwrite <ID>.glb)
     t = time.time()
     reset_scene()
     bpy.context.scene.render.fps = FPS

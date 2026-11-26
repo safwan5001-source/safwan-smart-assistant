@@ -1,38 +1,59 @@
 "use client";
 /**
- * The authored characters (Blender → one skinned GLB each, built from roster.ts: no two alike). Positions come from the
- * simulation every frame; the simulation's clip picks the animation, cross-faded so nobody pops between poses.
+ * The characters: BASHT is the authored robot (its clips ride in its own GLB); the 13 people are realistic avatars
+ * (Microsoft Rocketbox, MIT) that share one motion-capture clip library per skeleton. Positions come from the simulation
+ * every frame; the simulation's clip picks the animation, cross-faded so nobody pops between poses.
  */
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { AGENT_IDS, type AgentId } from "@/lib/hq/roster";
-import type { Clip, HqSim } from "@/lib/hq/sim";
-import { characterUrl, withMeshopt } from "./assets";
+import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
+import { WALK_SPEED, type Clip, type HqSim } from "@/lib/hq/sim";
+import { ANIM_LIBS, PEOPLE_URLS, animLib, characterEntry, withMeshopt } from "./assets";
 
-const URLS = AGENT_IDS.map(characterUrl);
 const FADE = 0.28;
+const SEATED = new Set<string>(["sit", "type", "talk"]);
+/** Height of the pelvis joint in the seated clips (tools/hq-assets/blender/build_humans.py SEAT_PELVIS). */
+const SEAT_PELVIS = 0.62;
+/** Clip tracks a person keeps: every joint's rotation, but translation only for the root and pelvis — bone lengths come
+ *  from the avatar wearing the clip, not from the capture actor. Scale keys are never used. */
+const keepTrack = (name: string) => name.endsWith(".quaternion") || /^(RB_ROOT|Bip01_Pelvis)\.position$/.test(name);
 
-type Rig = { root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string };
+type Rig = {
+  root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string;
+  /** uniform body scale (roster height) and the lift that keeps a scaled person on the chair cushion */
+  scale: number; walkRate: number;
+};
 
 export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
-  const gltfs = useLoader(GLTFLoader, URLS, withMeshopt);
+  const loaded = useLoader(GLTFLoader, PEOPLE_URLS, withMeshopt);
   const shadows = useRef<THREE.InstancedMesh>(null);
   const shadowTex = useMemo(blobTexture, []);
   const rigs = useMemo(() => {
+    const libs: Record<string, THREE.AnimationClip[]> = {};
+    ANIM_LIBS.forEach((k, i) => {
+      libs[k] = loaded[AGENT_IDS.length + i].animations.map((c) => new THREE.AnimationClip(c.name, c.duration, c.tracks.filter((t) => keepTrack(t.name))));
+    });
     const out = {} as Record<AgentId, Rig>;
     AGENT_IDS.forEach((id, i) => {
-      const g = gltfs[i];
+      const g = loaded[i];
+      const entry = characterEntry(id);
+      const human = entry.kind === "human" && !!entry.anims && !!libs[entry.anims];
       const root = new THREE.Group();
       const model = cloneSkinned(g.scene); // the loader caches the glTF; each mount animates its own skeleton
       root.add(model);
+      // people: the roster's height, within a natural range of the avatar's own (no stretched faces)
+      const look = AGENTS[id].look;
+      const scale = human && look.kind === "human" && entry.height ? THREE.MathUtils.clamp(look.height / entry.height, 0.93, 1.03) : 1;
+      model.scale.setScalar(scale);
       model.traverse((o) => {
         const m = o as THREE.SkinnedMesh;
         if (m.isMesh) {
           m.frustumCulled = false; // skinned bounds don't follow the pose; 14 small meshes are cheap to always draw
           for (const mat of (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]) {
+            if (human) { mat.envMapIntensity = 0.7; continue; } // scanned-style textures carry their own shading
             mat.roughness = 0.68; mat.metalness = 0;
             if (mat.name.endsWith("_glow")) { mat.emissive.set("#22d3ee"); mat.emissiveIntensity = 1.6; mat.toneMapped = false; } // BASHT's eyes
           }
@@ -40,22 +61,26 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       });
       const mixer = new THREE.AnimationMixer(model);
       const actions: Rig["actions"] = {};
-      for (const clip of g.animations) actions[clip.name as Clip] = mixer.clipAction(clip);
+      for (const clip of human ? libs[entry.anims!] : g.animations) actions[clip.name as Clip] = mixer.clipAction(clip);
       const start = actions.sit ?? actions.idle;
       start?.play();
-      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle" };
+      // the capture walks at its own pace: play it at the simulation's speed so feet don't slide
+      const walkRate = human ? THREE.MathUtils.clamp(WALK_SPEED / animLib(entry.anims!).walkSpeed, 0.6, 1.6) : 1;
+      actions.walk?.setEffectiveTimeScale(walkRate);
+      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate };
       // de-synchronise idle loops
       mixer.setTime(i * 0.37);
     });
     return out;
-  }, [gltfs]);
+  }, [loaded]);
   useEffect(() => () => { for (const id of AGENT_IDS) { rigs[id].mixer.stopAllAction(); rigs[id].mixer.uncacheRoot(rigs[id].root.children[0]); } shadowTex.dispose(); }, [rigs, shadowTex]);
 
   const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4() }), []);
   useFrame((_, dt) => {
     for (const id of AGENT_IDS) {
       const w = sim.walkers[id], r = rigs[id];
-      r.root.position.set(w.pos[0], 0, w.pos[1]);
+      r.root.position.x = w.pos[0];
+      r.root.position.z = w.pos[1];
       r.root.rotation.y = w.yaw;
       const want = w.clip in r.actions ? w.clip : w.clip === "walk" ? "walk" : "idle";
       if (want !== r.current) {
@@ -65,13 +90,19 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
           for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isRunning()) a.fadeOut(FADE);
           // a clip still fading out is picked up where it is (reset() would jump its pose)
           if (!next.isRunning()) next.reset();
-          next.stopFading().setEffectiveTimeScale(1).fadeIn(FADE).play();
+          next.stopFading().setEffectiveTimeScale(want === "walk" ? r.walkRate : 1).fadeIn(FADE).play();
           r.current = want;
         }
       }
       // paused: everyone holds still (the simulation is stopped too); reduced motion: no idle motion, walking still animates
       r.mixer.timeScale = paused ? 0 : reducedMotion && w.clip !== "walk" ? 0 : 1;
       r.mixer.update(Math.min(dt, 0.1));
+      // a person scaled below their avatar's size would sink into the cushion: lift by what the scale took off the seat
+      if (r.scale !== 1) {
+        let seated = 0;
+        for (const [name, a] of Object.entries(r.actions)) if (a && SEATED.has(name)) seated += a.getEffectiveWeight();
+        r.root.position.y = SEAT_PELVIS * (1 - r.scale) * Math.min(1, seated);
+      }
     }
     const sh = shadows.current;
     if (sh) {

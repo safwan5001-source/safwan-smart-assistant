@@ -96,8 +96,8 @@ function partColor(id: AgentId, part: PartName): string | null {
   switch (part) {
     case "head": case "handL": case "handR": return look.skin;
     case "footL": case "footR": return "#2a2320";
-    case "headwear": return look.head === "shemagh" ? "#c8363b" : look.head === "ghutra" ? "#f6f5f1" : look.accent;
-    case "agal": return look.head === "hijab" ? null : "#1b1b1f";
+    case "headwear": return look.head === "shemagh" ? "#c8363b" : look.head === "ghutra" ? "#f6f5f1" : look.head === "hijab" ? look.accent : null;
+    case "agal": return look.head === "shemagh" || look.head === "ghutra" ? "#1b1b1f" : null;
     case "bisht": return look.extras.includes("bisht") ? "#3a2618" : null;
     case "torso": case "armUL": case "armUR": case "armLL": case "armLR": return look.outfit;
     default: return look.outfit; // legs: the robe

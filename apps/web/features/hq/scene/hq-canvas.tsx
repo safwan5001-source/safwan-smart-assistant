@@ -18,7 +18,7 @@ import Building from "./building";
 import People from "./people";
 import BuildingGlb from "./building-glb";
 import PeopleGlb from "./people-glb";
-import { ASSETS, assetUrl, characterUrl } from "./assets";
+import { ASSETS, PEOPLE_URLS, assetUrl } from "./assets";
 import { BRAND_ASSETS } from "@/lib/brand";
 
 CameraControls.install({ THREE });
@@ -57,9 +57,10 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
   }, []);
   // leaving the HQ releases the parsed models and the lightmap held by the loader cache (they come back from the HTTP cache)
   useEffect(() => () => {
-    // keys must match the useLoader calls exactly: the building alone, the 14 characters as ONE array, the two textures
+    // keys must match the useLoader calls exactly: the building alone, the people (characters + clip libraries) as ONE array,
+    // the two textures
     useLoader.clear(GLTFLoader, assetUrl(ASSETS.building.file));
-    useLoader.clear(GLTFLoader, AGENT_IDS.map(characterUrl));
+    useLoader.clear(GLTFLoader, PEOPLE_URLS);
     useLoader.clear(THREE.TextureLoader, assetUrl(ASSETS.building.lightmap));
     useLoader.clear(THREE.TextureLoader, BRAND_ASSETS.logo);
   }, []);

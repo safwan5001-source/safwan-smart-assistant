@@ -15,10 +15,10 @@ export type Look =
   | { kind: "robot" }
   | {
       kind: "human";
-      /** Outfit family; the asset generator turns it into geometry. */
-      attire: "thobe" | "abaya";
-      /** Head covering: shemagh (red check) / ghutra (white) for thobe, hijab colour family for abaya. */
-      head: "shemagh" | "ghutra" | "hijab";
+      /** Outfit family (the realistic avatar wears it; the greybox stand-in approximates it). */
+      attire: "thobe" | "abaya" | "suit";
+      /** Head covering: shemagh (red check) / ghutra (white) with the thobe, hijab (colour = accent), or none. */
+      head: "shemagh" | "ghutra" | "hijab" | "none";
       /** Base colours (sRGB hex) used by the generator and by the greybox stand-in. */
       outfit: string;
       accent: string;
@@ -27,6 +27,11 @@ export type Look =
       height: number; // metres
       build: "slim" | "regular" | "broad";
       extras: ReadonlyArray<"glasses" | "beard" | "moustache" | "bisht" | "watch" | "headset" | "lanyard" | "tablet">;
+      /** Realistic avatar (Microsoft Rocketbox, MIT) the person is built from: Assets/Avatars/<model> — their outfit. */
+      model: string;
+      /** Optional face: another avatar of the same skeleton whose head replaces the outfit avatar's (tools/hq-assets
+       *  build_humans.py composes them; headwear then covers the hair). Every person's face is unique. */
+      face?: string;
     };
 
 export type Agent = {
@@ -40,51 +45,52 @@ export type Agent = {
   look: Look;
 };
 
-const human = (attire: "thobe" | "abaya", head: "shemagh" | "ghutra" | "hijab", outfit: string, accent: string, skin: string,
-  height: number, build: "slim" | "regular" | "broad", extras: Extract<Look, { kind: "human" }>["extras"] = []): Look =>
-  ({ kind: "human", attire, head, outfit, accent, skin, height, build, extras });
+type HumanLook = Extract<Look, { kind: "human" }>;
+const human = (attire: HumanLook["attire"], head: HumanLook["head"], outfit: string, accent: string, skin: string,
+  height: number, build: HumanLook["build"], extras: HumanLook["extras"], model: string, face?: string): Look =>
+  ({ kind: "human", attire, head, outfit, accent, skin, height, build, extras, model, ...(face ? { face } : {}) });
 
 export const ROSTER: readonly Agent[] = [
   { id: "BASHT", nameAr: "باشت", role: "المدير التنفيذي", tint: "#d4a017", look: { kind: "robot" },
     duties: ["يوزّع المهام على الإدارات ويتابع تقدّمها", "يجمع النتائج ويرفعها للمالك للاعتماد", "يدير الاجتماعات ويحدد الأولويات"] },
   { id: "MIZAN", nameAr: "ميزان", role: "المالية والمحاسبة", tint: "#15803d",
-    look: human("thobe", "ghutra", "#f4f1ea", "#1f6f4a", "#c99a6e", 1.76, "regular", ["glasses", "beard"]),
+    look: human("thobe", "ghutra", "#f4f1ea", "#1f6f4a", "#c99a6e", 1.76, "regular", ["glasses", "beard"], "Adults/Male_Adult_21", "Adults/Male_Adult_15"),
     duties: ["مراجعة الفواتير والقيود", "متابعة التدفقات النقدية", "إعداد الملخصات المالية"] },
   { id: "RAWAJ", nameAr: "رواج", role: "التسويق والإعلانات", tint: "#db2777",
-    look: human("abaya", "hijab", "#3d1f3a", "#c026d3", "#d7a982", 1.64, "slim", ["tablet"]),
+    look: human("suit", "hijab", "#1d1d22", "#7a4a5a", "#7a5238", 1.64, "slim", ["tablet"], "Professions/Business_Female_01"),
     duties: ["تخطيط الحملات والمحتوى", "متابعة أداء الإعلانات", "تحليل الجمهور والسوق"] },
   { id: "MIMAR", nameAr: "معمار", role: "التقنية والتطوير", tint: "#2563eb",
-    look: human("thobe", "shemagh", "#c9d4e2", "#1d4ed8", "#b98660", 1.81, "slim", ["headset", "moustache"]),
+    look: human("suit", "none", "#f2f2f0", "#1d4ed8", "#c9a07e", 1.81, "slim", ["headset", "moustache"], "Professions/Business_Male_06"),
     duties: ["تطوير الأنظمة والتكاملات", "مراجعة البنية التقنية", "متابعة جودة الكود"] },
   { id: "MASAR", nameAr: "مسار", role: "العمليات والنقليات", tint: "#ea580c",
-    look: human("thobe", "shemagh", "#9aa0a8", "#c2410c", "#a8764f", 1.79, "broad", ["beard", "watch"]),
+    look: human("thobe", "shemagh", "#eeebe4", "#c2410c", "#a8764f", 1.79, "broad", ["beard", "watch"], "Adults/Male_Adult_19", "Adults/Male_Adult_17"),
     duties: ["جدولة الأسطول والرحلات", "متابعة التشغيل الميداني", "تحسين مسارات النقل"] },
   { id: "NASAQ", nameAr: "نسق", role: "الإدارة والتنظيم", tint: "#7c3aed",
-    look: human("abaya", "hijab", "#1e2a4a", "#6d28d9", "#e0b48f", 1.62, "regular", ["glasses"]),
+    look: human("suit", "hijab", "#cdbb9c", "#1e2a4a", "#e0b48f", 1.62, "regular", ["glasses"], "Adults/Female_Adult_09"),
     duties: ["تنظيم الإجراءات والسياسات", "متابعة المواعيد والمراسلات", "ترتيب الملفات الإدارية"] },
   { id: "MIYAR", nameAr: "معيار", role: "الرقابة والجودة", tint: "#0891b2",
-    look: human("thobe", "ghutra", "#d9d2c0", "#0e7490", "#c48d63", 1.72, "slim", ["glasses", "moustache"]),
+    look: human("thobe", "ghutra", "#f6f4ee", "#0e7490", "#d2a585", 1.72, "slim", ["moustache"], "Adults/Male_Adult_21", "Adults/Male_Adult_07"),
     duties: ["مراجعة جودة المخرجات", "التحقق من الالتزام بالإجراءات", "رصد المخاطر التشغيلية"] },
   { id: "FURAS", nameAr: "فرص", role: "تطوير الأعمال والمبيعات", tint: "#ca8a04",
-    look: human("thobe", "shemagh", "#efe9dc", "#a16207", "#b07a52", 1.84, "broad", ["bisht", "beard"]),
+    look: human("thobe", "shemagh", "#efe9dc", "#a16207", "#b07a52", 1.84, "broad", ["bisht", "beard"], "Adults/Male_Adult_21"),
     duties: ["البحث عن فرص وعملاء جدد", "إعداد العروض والتسعير", "متابعة الصفقات"] },
   { id: "BASIRA", nameAr: "بصيرة", role: "ذكاء الأعمال وتحليل البيانات", tint: "#0d9488",
-    look: human("thobe", "shemagh", "#d8ccb4", "#0f766e", "#cf9d73", 1.70, "slim", ["glasses", "beard"]),
+    look: human("suit", "none", "#26262c", "#7e22ce", "#6b4630", 1.70, "slim", ["beard"], "Professions/Business_Male_05"),
     duties: ["بناء لوحات المؤشرات", "تحليل الاتجاهات والأداء", "إعداد التقارير التحليلية"] },
   { id: "RAFID", nameAr: "رافد", role: "المشتريات والإمداد", tint: "#65a30d",
-    look: human("abaya", "hijab", "#4a3426", "#4d7c0f", "#c08a62", 1.67, "regular", ["lanyard"]),
+    look: human("suit", "hijab", "#2a2a2e", "#d8c8b0", "#e2b896", 1.67, "regular", ["lanyard"], "Professions/Business_Female_04"),
     duties: ["طلبات الشراء والموردين", "متابعة المخزون والتوريد", "مقارنة العروض والأسعار"] },
   { id: "SANAD", nameAr: "سند", role: "الشؤون القانونية", tint: "#475569",
-    look: human("thobe", "ghutra", "#ddd6c6", "#334155", "#ba8a64", 1.78, "regular", ["bisht", "glasses", "beard"]),
+    look: human("thobe", "ghutra", "#ddd6c6", "#334155", "#ba8a64", 1.78, "regular", ["bisht", "glasses", "beard"], "Adults/Male_Adult_19"),
     duties: ["مراجعة العقود والاتفاقيات", "متابعة الامتثال النظامي", "تقديم الرأي القانوني"] },
   { id: "WISAL", nameAr: "وصال", role: "علاقات العملاء", tint: "#e11d48",
-    look: human("abaya", "hijab", "#16131c", "#be123c", "#d9aa86", 1.66, "slim", ["headset"]),
+    look: human("abaya", "hijab", "#16131c", "#1a171f", "#d9aa86", 1.66, "slim", ["headset"], "Adults/Female_Adult_10"),
     duties: ["متابعة طلبات العملاء", "قياس رضا العملاء", "تنسيق الردود والشكاوى"] },
   { id: "HASEEN", nameAr: "حصين", role: "الأمن السيبراني", tint: "#dc2626",
-    look: human("thobe", "shemagh", "#2c3448", "#991b1b", "#a77450", 1.82, "broad", ["moustache", "watch"]),
+    look: human("suit", "none", "#1f1f24", "#991b1b", "#e0b392", 1.82, "broad", ["watch"], "Professions/Business_Male_01"),
     duties: ["مراقبة الحماية والصلاحيات", "مراجعة الثغرات والتحديثات", "إدارة الاستجابة للحوادث"] },
   { id: "KAFAAT", nameAr: "كفاءات", role: "الموارد البشرية", tint: "#9333ea",
-    look: human("abaya", "hijab", "#55555f", "#a855f7", "#c99872", 1.60, "regular", ["glasses", "lanyard"]),
+    look: human("abaya", "hijab", "#8a7a45", "#f2f0ea", "#c99872", 1.60, "regular", ["lanyard"], "Adults/Female_Adult_06"),
     duties: ["التوظيف والتهيئة", "تقييم الأداء والتطوير", "سياسات الموظفين"] },
 ];
 

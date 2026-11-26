@@ -2788,7 +2788,9 @@
     "extras": [
      "glasses",
      "beard"
-    ]
+    ],
+    "model": "Adults/Male_Adult_21",
+    "face": "Adults/Male_Adult_15"
    }
   },
   {
@@ -2796,16 +2798,17 @@
    "tint": "#db2777",
    "look": {
     "kind": "human",
-    "attire": "abaya",
+    "attire": "suit",
     "head": "hijab",
-    "outfit": "#3d1f3a",
-    "accent": "#c026d3",
-    "skin": "#d7a982",
+    "outfit": "#1d1d22",
+    "accent": "#7a4a5a",
+    "skin": "#7a5238",
     "height": 1.64,
     "build": "slim",
     "extras": [
      "tablet"
-    ]
+    ],
+    "model": "Professions/Business_Female_01"
    }
   },
   {
@@ -2813,17 +2816,18 @@
    "tint": "#2563eb",
    "look": {
     "kind": "human",
-    "attire": "thobe",
-    "head": "shemagh",
-    "outfit": "#c9d4e2",
+    "attire": "suit",
+    "head": "none",
+    "outfit": "#f2f2f0",
     "accent": "#1d4ed8",
-    "skin": "#b98660",
+    "skin": "#c9a07e",
     "height": 1.81,
     "build": "slim",
     "extras": [
      "headset",
      "moustache"
-    ]
+    ],
+    "model": "Professions/Business_Male_06"
    }
   },
   {
@@ -2833,7 +2837,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "shemagh",
-    "outfit": "#9aa0a8",
+    "outfit": "#eeebe4",
     "accent": "#c2410c",
     "skin": "#a8764f",
     "height": 1.79,
@@ -2841,7 +2845,9 @@
     "extras": [
      "beard",
      "watch"
-    ]
+    ],
+    "model": "Adults/Male_Adult_19",
+    "face": "Adults/Male_Adult_17"
    }
   },
   {
@@ -2849,16 +2855,17 @@
    "tint": "#7c3aed",
    "look": {
     "kind": "human",
-    "attire": "abaya",
+    "attire": "suit",
     "head": "hijab",
-    "outfit": "#1e2a4a",
-    "accent": "#6d28d9",
+    "outfit": "#cdbb9c",
+    "accent": "#1e2a4a",
     "skin": "#e0b48f",
     "height": 1.62,
     "build": "regular",
     "extras": [
      "glasses"
-    ]
+    ],
+    "model": "Adults/Female_Adult_09"
    }
   },
   {
@@ -2868,15 +2875,16 @@
     "kind": "human",
     "attire": "thobe",
     "head": "ghutra",
-    "outfit": "#d9d2c0",
+    "outfit": "#f6f4ee",
     "accent": "#0e7490",
-    "skin": "#c48d63",
+    "skin": "#d2a585",
     "height": 1.72,
     "build": "slim",
     "extras": [
-     "glasses",
      "moustache"
-    ]
+    ],
+    "model": "Adults/Male_Adult_21",
+    "face": "Adults/Male_Adult_07"
    }
   },
   {
@@ -2894,7 +2902,8 @@
     "extras": [
      "bisht",
      "beard"
-    ]
+    ],
+    "model": "Adults/Male_Adult_21"
    }
   },
   {
@@ -2902,17 +2911,17 @@
    "tint": "#0d9488",
    "look": {
     "kind": "human",
-    "attire": "thobe",
-    "head": "shemagh",
-    "outfit": "#d8ccb4",
-    "accent": "#0f766e",
-    "skin": "#cf9d73",
+    "attire": "suit",
+    "head": "none",
+    "outfit": "#26262c",
+    "accent": "#7e22ce",
+    "skin": "#6b4630",
     "height": 1.7,
     "build": "slim",
     "extras": [
-     "glasses",
      "beard"
-    ]
+    ],
+    "model": "Professions/Business_Male_05"
    }
   },
   {
@@ -2920,16 +2929,17 @@
    "tint": "#65a30d",
    "look": {
     "kind": "human",
-    "attire": "abaya",
+    "attire": "suit",
     "head": "hijab",
-    "outfit": "#4a3426",
-    "accent": "#4d7c0f",
-    "skin": "#c08a62",
+    "outfit": "#2a2a2e",
+    "accent": "#d8c8b0",
+    "skin": "#e2b896",
     "height": 1.67,
     "build": "regular",
     "extras": [
      "lanyard"
-    ]
+    ],
+    "model": "Professions/Business_Female_04"
    }
   },
   {
@@ -2948,7 +2958,8 @@
      "bisht",
      "glasses",
      "beard"
-    ]
+    ],
+    "model": "Adults/Male_Adult_19"
    }
   },
   {
@@ -2959,13 +2970,14 @@
     "attire": "abaya",
     "head": "hijab",
     "outfit": "#16131c",
-    "accent": "#be123c",
+    "accent": "#1a171f",
     "skin": "#d9aa86",
     "height": 1.66,
     "build": "slim",
     "extras": [
      "headset"
-    ]
+    ],
+    "model": "Adults/Female_Adult_10"
    }
   },
   {
@@ -2973,17 +2985,17 @@
    "tint": "#dc2626",
    "look": {
     "kind": "human",
-    "attire": "thobe",
-    "head": "shemagh",
-    "outfit": "#2c3448",
+    "attire": "suit",
+    "head": "none",
+    "outfit": "#1f1f24",
     "accent": "#991b1b",
-    "skin": "#a77450",
+    "skin": "#e0b392",
     "height": 1.82,
     "build": "broad",
     "extras": [
-     "moustache",
      "watch"
-    ]
+    ],
+    "model": "Professions/Business_Male_01"
    }
   },
   {
@@ -2993,15 +3005,15 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#55555f",
-    "accent": "#a855f7",
+    "outfit": "#8a7a45",
+    "accent": "#f2f0ea",
     "skin": "#c99872",
     "height": 1.6,
     "build": "regular",
     "extras": [
-     "glasses",
      "lanyard"
-    ]
+    ],
+    "model": "Adults/Female_Adult_06"
    }
   }
  ]
