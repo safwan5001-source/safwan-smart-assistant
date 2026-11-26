@@ -298,7 +298,7 @@ def build_item(f):
         part(f, "gold", -hw - 0.06, -hw, 0.0, h + 0.06, -hd, hd)
         part(f, "gold", hw, hw + 0.06, 0.0, h + 0.06, -hd, hd)
         part(f, "glow", -hw + 0.1, hw - 0.1, 0.02, 0.05, hd, hd + 0.01)
-        part(f, "dark", -0.75, 0.75, 0.45, 2.25, hd, hd + 0.012)  # logo plate (the official logo is applied at runtime)
+        part(f, "dark", -0.85, 0.85, 0.38, 2.36, hd, hd + 0.012)  # logo plate (the official logo, 1.3×1.65 m, is applied at runtime)
 
 
 for f in PLAN["furniture"]:
@@ -414,7 +414,8 @@ if not args.no_bake:
     # gentle 3x3 blur to calm sampling noise (islands are padded by the bake margin)
     k = np.pad(rgb, ((1, 1), (1, 1), (0, 0)), mode="edge")
     rgb = sum(k[1 + dy:1 + dy + args.lightmap, 1 + dx:1 + dx + args.lightmap] for dy in (-1, 0, 1) for dx in (-1, 0, 1)) / 9.0
-    rgb = np.clip(rgb, 0, 1) ** (1 / 2.2)  # store gamma-encoded in 8 bits; the app decodes it (sRGB texture)
+    rgb = np.clip(rgb, 0, 1)
+    rgb = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * np.power(rgb, 1 / 2.4) - 0.055)  # sRGB transfer (the app decodes as sRGB)
     px[..., :3] = rgb
     px[..., 3] = 1.0
     out_img = bpy.data.images.new("lightmap-out", args.lightmap, args.lightmap)

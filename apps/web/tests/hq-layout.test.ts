@@ -19,6 +19,26 @@ describe("HQ roster", () => {
     expect(AGENTS.BASIRA.role).toBe("ذكاء الأعمال وتحليل البيانات");
     expect(AGENTS.BASHT.role).toBe("المدير التنفيذي");
   });
+  it("makes every pair of humans visibly different (colour, silhouette or accessories — not just a different file)", () => {
+    const hex = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+    const dist = (a: string, b: string) => Math.hypot(...hex(a).map((v, i) => v - hex(b)[i]));
+    const humans = ROSTER.flatMap((a) => (a.look.kind === "human" ? [{ id: a.id, ...a.look }] : []));
+    const bad: string[] = [];
+    for (let i = 0; i < humans.length; i++) for (let j = i + 1; j < humans.length; j++) {
+      const a = humans[i], b = humans[j];
+      const headA = a.head === "hijab" ? a.accent : a.head, headB = b.head === "hijab" ? b.accent : b.head;
+      const cues = [
+        a.attire !== b.attire,
+        dist(a.outfit, b.outfit) > 40, // robe colour you can tell apart at a glance
+        headA !== headB && (a.head !== "hijab" || dist(a.accent, b.accent) > 60),
+        Math.abs(a.height - b.height) >= 0.04 || a.build !== b.build,
+        a.extras.includes("bisht") !== b.extras.includes("bisht"), // a cloak changes the whole silhouette
+        a.extras.filter((x) => !b.extras.includes(x)).length + b.extras.filter((x) => !a.extras.includes(x)).length >= 2,
+      ].filter(Boolean).length;
+      if (cues < 2) bad.push(`${a.id}~${b.id}`);
+    }
+    expect(bad).toEqual([]);
+  });
   it("gives every human a distinct look (no two characters share outfit, height and build)", () => {
     const keys = ROSTER.flatMap((a) => (a.look.kind === "human" ? [`${a.look.attire}|${a.look.head}|${a.look.outfit}|${a.look.accent}|${a.look.height}|${a.look.build}|${a.look.extras.join("+")}`] : []));
     expect(keys).toHaveLength(13);

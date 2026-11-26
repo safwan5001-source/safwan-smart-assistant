@@ -2262,7 +2262,7 @@
    "kind": "chair",
    "at": [
     -1.2,
-    11.45
+    11.62
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2274,7 +2274,7 @@
    "kind": "chair",
    "at": [
     -0.1,
-    11.45
+    11.62
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2286,7 +2286,7 @@
    "kind": "chair",
    "at": [
     1,
-    11.45
+    11.62
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2298,7 +2298,7 @@
    "kind": "chair",
    "at": [
     2.1,
-    11.45
+    11.62
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2310,7 +2310,7 @@
    "kind": "chair",
    "at": [
     3.2,
-    11.45
+    11.62
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2334,7 +2334,7 @@
    "kind": "chair",
    "at": [
     -1.2,
-    14.15
+    13.98
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2346,7 +2346,7 @@
    "kind": "chair",
    "at": [
     -0.1,
-    14.15
+    13.98
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2358,7 +2358,7 @@
    "kind": "chair",
    "at": [
     1,
-    14.15
+    13.98
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2370,7 +2370,7 @@
    "kind": "chair",
    "at": [
     2.1,
-    14.15
+    13.98
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2382,7 +2382,7 @@
    "kind": "chair",
    "at": [
     3.2,
-    14.15
+    13.98
    ],
    "w": 0.6,
    "d": 0.6,
@@ -2690,35 +2690,35 @@
   {
    "at": [
     -1.2,
-    11.45
+    11.62
    ],
    "yaw": 0
   },
   {
    "at": [
     -0.1,
-    11.45
+    11.62
    ],
    "yaw": 0
   },
   {
    "at": [
     1,
-    11.45
+    11.62
    ],
    "yaw": 0
   },
   {
    "at": [
     2.1,
-    11.45
+    11.62
    ],
    "yaw": 0
   },
   {
    "at": [
     3.2,
-    11.45
+    11.62
    ],
    "yaw": 0
   },
@@ -2732,35 +2732,35 @@
   {
    "at": [
     -1.2,
-    14.15
+    13.98
    ],
    "yaw": 3.141592653589793
   },
   {
    "at": [
     -0.1,
-    14.15
+    13.98
    ],
    "yaw": 3.141592653589793
   },
   {
    "at": [
     1,
-    14.15
+    13.98
    ],
    "yaw": 3.141592653589793
   },
   {
    "at": [
     2.1,
-    14.15
+    13.98
    ],
    "yaw": 3.141592653589793
   },
   {
    "at": [
     3.2,
-    14.15
+    13.98
    ],
    "yaw": 3.141592653589793
   }
@@ -2798,7 +2798,7 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#2b1f3a",
+    "outfit": "#3d1f3a",
     "accent": "#c026d3",
     "skin": "#d7a982",
     "height": 1.64,
@@ -2815,7 +2815,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "shemagh",
-    "outfit": "#e9edf2",
+    "outfit": "#c9d4e2",
     "accent": "#1d4ed8",
     "skin": "#b98660",
     "height": 1.81,
@@ -2833,7 +2833,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "shemagh",
-    "outfit": "#ede6d8",
+    "outfit": "#9aa0a8",
     "accent": "#c2410c",
     "skin": "#a8764f",
     "height": 1.79,
@@ -2851,7 +2851,7 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#1c1a2b",
+    "outfit": "#1e2a4a",
     "accent": "#6d28d9",
     "skin": "#e0b48f",
     "height": 1.62,
@@ -2868,11 +2868,11 @@
     "kind": "human",
     "attire": "thobe",
     "head": "ghutra",
-    "outfit": "#f7f7f4",
+    "outfit": "#d9d2c0",
     "accent": "#0e7490",
     "skin": "#c48d63",
-    "height": 1.73,
-    "build": "regular",
+    "height": 1.72,
+    "build": "slim",
     "extras": [
      "glasses",
      "moustache"
@@ -2885,7 +2885,7 @@
    "look": {
     "kind": "human",
     "attire": "thobe",
-    "head": "ghutra",
+    "head": "shemagh",
     "outfit": "#efe9dc",
     "accent": "#a16207",
     "skin": "#b07a52",
@@ -2904,7 +2904,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "shemagh",
-    "outfit": "#e6ebee",
+    "outfit": "#d8ccb4",
     "accent": "#0f766e",
     "skin": "#cf9d73",
     "height": 1.7,
@@ -2922,7 +2922,7 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#3a2a1f",
+    "outfit": "#4a3426",
     "accent": "#4d7c0f",
     "skin": "#c08a62",
     "height": 1.67,
@@ -2939,7 +2939,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "ghutra",
-    "outfit": "#f2efe8",
+    "outfit": "#ddd6c6",
     "accent": "#334155",
     "skin": "#ba8a64",
     "height": 1.78,
@@ -2958,7 +2958,7 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#2a1d2e",
+    "outfit": "#16131c",
     "accent": "#be123c",
     "skin": "#d9aa86",
     "height": 1.66,
@@ -2975,7 +2975,7 @@
     "kind": "human",
     "attire": "thobe",
     "head": "shemagh",
-    "outfit": "#dfe3e8",
+    "outfit": "#2c3448",
     "accent": "#991b1b",
     "skin": "#a77450",
     "height": 1.82,
@@ -2993,7 +2993,7 @@
     "kind": "human",
     "attire": "abaya",
     "head": "hijab",
-    "outfit": "#241b33",
+    "outfit": "#55555f",
     "accent": "#a855f7",
     "skin": "#c99872",
     "height": 1.6,

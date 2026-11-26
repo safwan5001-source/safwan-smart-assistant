@@ -31,7 +31,8 @@ describe("HQ 3D assets (tools/hq-assets → public/hq-assets)", () => {
       const j = glbJson(file(HQ_ASSETS.characters[id].file));
       expect(j.skins?.length, id).toBe(1);
       expect(j.meshes.length, id).toBe(1);
-      expect(j.materials.length, id).toBe(1); // one draw call per character
+      // one draw call per character; BASHT adds one emissive material for his eyes
+      expect(j.materials.length, id).toBe(id === "BASHT" ? 2 : 1);
       const names = j.nodes.map((n: { name?: string }) => n.name);
       for (const bone of ["hips", "spine", "chest", "head", "thigh.L", "shin.R", "upperarm.L", "hand.R"]) expect(names, `${id} ${bone}`).toContain(bone);
       expect(j.animations.map((a: { name: string }) => a.name).sort(), id).toEqual(["idle", "sit", "stand", "talk", "type", "walk"]);

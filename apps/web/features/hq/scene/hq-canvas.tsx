@@ -18,7 +18,8 @@ import Building from "./building";
 import People from "./people";
 import BuildingGlb from "./building-glb";
 import PeopleGlb from "./people-glb";
-import { ALL_GLTF_URLS, ASSETS, assetUrl } from "./assets";
+import { ASSETS, assetUrl, characterUrl } from "./assets";
+import { BRAND_ASSETS } from "@/lib/brand";
 
 CameraControls.install({ THREE });
 
@@ -40,6 +41,9 @@ const OCCLUDERS = WALLS.filter((w) => w.kind === "solid" || (w.kind === "exterio
 export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; store: HqStore; onContextLost: () => void }) {
   const ui = useHq(store, (s) => s);
   const labels = useRef<LabelRefs>({ agents: {}, rooms: [] });
+  // a canvas that is being torn down (switch to plan, route change) is force-lost on purpose: not a failure
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [hidden, setHidden] = useState(false);
   const [offscreen, setOffscreen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
@@ -53,8 +57,11 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
   }, []);
   // leaving the HQ releases the parsed models and the lightmap held by the loader cache (they come back from the HTTP cache)
   useEffect(() => () => {
-    for (const url of ALL_GLTF_URLS) useLoader.clear(GLTFLoader, url);
+    // keys must match the useLoader calls exactly: the building alone, the 14 characters as ONE array, the two textures
+    useLoader.clear(GLTFLoader, assetUrl(ASSETS.building.file));
+    useLoader.clear(GLTFLoader, AGENT_IDS.map(characterUrl));
     useLoader.clear(THREE.TextureLoader, assetUrl(ASSETS.building.lightmap));
+    useLoader.clear(THREE.TextureLoader, BRAND_ASSETS.logo);
   }, []);
   const low = ui.quality === "low";
   const maxDpr = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
@@ -68,9 +75,9 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
         frameloop={hidden || offscreen ? "never" : low ? "demand" : "always"}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
-          gl.toneMapping = THREE.ACESFilmicToneMapping;
-          gl.toneMappingExposure = 1.2;
-          gl.domElement.addEventListener("webglcontextlost", (e) => { e.preventDefault(); onContextLost(); }, { once: true });
+          gl.toneMapping = THREE.NeutralToneMapping; // hue-preserving: brand purples stay purple (ACES shifts them to blue)
+          gl.toneMappingExposure = 1.0;
+          gl.domElement.addEventListener("webglcontextlost", (e) => { e.preventDefault(); if (mounted.current) onContextLost(); }, { once: true });
           gl.domElement.setAttribute("aria-label", "عرض ثلاثي الأبعاد للمقر — استخدم المخطط أو دليل الموظفين للتنقل بلوحة المفاتيح");
           gl.domElement.setAttribute("role", "img");
         }}
@@ -89,6 +96,12 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
   );
 }
 
+/** Distance at which a w × h (metres, facing the camera) area fills the view, with a small margin. */
+function fitDistance(w: number, h: number, cam: THREE.PerspectiveCamera, aspect: number) {
+  const t = Math.tan(((cam.fov ?? 38) * Math.PI) / 360);
+  return Math.max(h / 2 / t, w / 2 / (t * aspect)) * 1.08;
+}
+
 function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: React.RefObject<LabelRefs> }) {
   const ui = useHq(store, (s) => s);
   const { camera, gl, invalidate, setDpr, size } = useThree();
@@ -100,9 +113,11 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
   const scene = useThree((s) => s.scene);
   useEffect(() => {
     const pmrem = new THREE.PMREMGenerator(gl);
-    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const room = new RoomEnvironment();
+    const env = pmrem.fromScene(room, 0.04).texture;
     scene.environment = env;
     pmrem.dispose();
+    room.dispose();
     return () => { scene.environment = null; env.dispose(); };
   }, [gl, scene]);
 
@@ -144,10 +159,20 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
       void controls.fitToBox(box, animate, { paddingTop: 2.2, paddingBottom: 2.6, paddingLeft: 0.8, paddingRight: 0.8 });
       return;
     }
+    if (ui.view === "meeting") {
+      // seen from the far side of the table, so the people facing the door show their faces; framed to the room
+      const r = ZONES.meeting.rect;
+      const cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
+      // keep a 40° downward look (fitToBox would snap the camera level) and back off until the whole room fits the screen
+      const tilt = (40 * Math.PI) / 180;
+      const d = fitDistance(r.x1 - r.x0 + 0.6, (r.z1 - r.z0) * Math.sin(tilt) + 1.8, camera as THREE.PerspectiveCamera, aspect);
+      void controls.setLookAt(cx, 0.6 + d * Math.sin(tilt), cz + d * Math.cos(tilt), cx, 0.6, cz, animate);
+      return;
+    }
     const k = portrait ? 1.3 : 1;
     const p = v.pos.map((c, i) => v.target[i] + (c - v.target[i]) * k);
     void controls.setLookAt(p[0], p[1], p[2], v.target[0], v.target[1], v.target[2], animate);
-  }, [controls, ui.view, ui.viewNonce, ui.selected, aspect, reduceMotion]);
+  }, [controls, camera, ui.view, ui.viewNonce, ui.selected, aspect, reduceMotion]);
 
   // tap to select (a drag rotates the camera and must not select)
   useEffect(() => {
@@ -176,6 +201,23 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     return () => window.clearInterval(id);
   }, [ui.quality, invalidate]);
 
+  // toolbar + view chips over the canvas, relative to it; measured on resize only (no layout reads per frame)
+  const blockers = useRef<LabelBox[]>([]);
+  useEffect(() => {
+    const host = gl.domElement;
+    const measure = () => {
+      const h = host.getBoundingClientRect();
+      blockers.current = [...document.querySelectorAll<HTMLElement>(".hq-toolbar, .hq-views")].map((el) => {
+        const r = el.getBoundingClientRect();
+        return { id: "", x: r.left - h.left + r.width / 2, y: r.bottom - h.top, w: r.width, h: r.height, priority: 99, dist: 0 };
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(host);
+    document.querySelectorAll(".hq-toolbar, .hq-views").forEach((el) => ro.observe(el));
+    return () => ro.disconnect();
+  }, [gl]);
   const frames = useRef({ n: 0, acc: 0, dpr: 1 });
   useEffect(() => { frames.current.dpr = gl.getPixelRatio(); }, [gl]);
   const v = useMemo(() => new THREE.Vector3(), []);
@@ -223,12 +265,7 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     }
     ROOM_LABELS.forEach((r, i) => place("room" + i, L.rooms[i], r.at[0], r.at[1], r.at[2], 0, r.text, 0.82));
     // the toolbar and the view chips sit over the canvas: nothing may be drawn underneath them
-    const host = gl.domElement.getBoundingClientRect();
-    const blockers = [...document.querySelectorAll<HTMLElement>(".hq-toolbar, .hq-views")].map((el) => {
-      const r = el.getBoundingClientRect();
-      return { id: "", x: r.left - host.left + r.width / 2, y: r.bottom - host.top, w: r.width, h: r.height, priority: 99, dist: 0 };
-    });
-    const shown = placeLabels([...blockers, ...boxes]);
+    const shown = placeLabels([...blockers.current, ...boxes]);
     for (const b of boxes) {
       const el = b.id.startsWith("room") ? L.rooms[Number(b.id.slice(4))] : L.agents[b.id as AgentId];
       if (el) el.style.visibility = shown.has(b.id) ? "visible" : "hidden";
@@ -246,7 +283,7 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
         <Suspense fallback={<Building night={night} />}><BuildingGlb night={night} /></Suspense>
       </AssetBoundary>
       <AssetBoundary fallback={<People sim={sim} />}>
-        <Suspense fallback={<People sim={sim} />}><PeopleGlb sim={sim} paused={ui.paused || ui.reducedMotion} /></Suspense>
+        <Suspense fallback={<People sim={sim} />}><PeopleGlb sim={sim} paused={ui.paused} reducedMotion={ui.reducedMotion} /></Suspense>
       </AssetBoundary>
       <group ref={hitGroup} visible={false}>
         {AGENT_IDS.map((id) => (

@@ -3,8 +3,9 @@
 // 1. meshopt-compresses every GLB (@gltf-transform/cli, pinned) into apps/web/public/hq-assets/<version>/
 // 2. copies the lightmap
 // 3. writes apps/web/lib/hq/assets.generated.ts (the app imports it: no runtime manifest fetch)
-// The version folder is a content hash, so the files can be cached as immutable (next.config.ts) and a rebuild never
-// serves stale art. Old version folders are removed.
+// The version folder is a hash of the INPUTS (plan, generator scripts, tool versions): rebuilding unchanged sources gives the
+// same version and publish does nothing (no binary churn in git); any real change gets a new immutable folder. The previous
+// folder is kept so a client still running the last build keeps its art until it reloads.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -14,27 +15,39 @@ const HERE = resolve(import.meta.dirname);
 const SRC = resolve(process.argv[2] ?? join(HERE, "out"));
 const WEB = resolve(HERE, "../../apps/web");
 const PUB = join(WEB, "public/hq-assets");
-const GLTF_TRANSFORM = "@gltf-transform/cli@4.5.1";
+const ROOT = resolve(HERE, "../..");
+const GLTF_TRANSFORM = join(ROOT, "node_modules/.bin/gltf-transform"); // pinned in the root package.json / lockfile
 const plan = JSON.parse(readFileSync(join(HERE, "layout.json"), "utf8"));
 const ids = plan.characters.map((c) => c.id);
 const need = ["building.glb", "lightmap-day.webp", "building.json", ...ids.map((id) => `${id}.glb`)];
 for (const f of need) if (!existsSync(join(SRC, f))) throw new Error(`missing ${f} in ${SRC} — run build.sh building/characters first`);
 
+// version = hash of everything that determines the art
+const inputs = createHash("sha256");
+for (const f of ["layout.json", "publish.mjs", ...readdirSync(join(HERE, "blender")).filter((f) => f.endsWith(".py")).sort().map((f) => "blender/" + f)])
+  inputs.update(f).update(readFileSync(join(HERE, f)));
+inputs.update(JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).devDependencies["@gltf-transform/cli"]);
+inputs.update(execFileSync(process.env.HQ_BLENDER_PY ?? "python3", ["-c", "import bpy, numpy; print(bpy.app.version_string, numpy.__version__)"]).toString());
+const version = "v1-" + inputs.digest("hex").slice(0, 10);
+if (existsSync(join(PUB, version)) && !process.argv.includes("--force")) {
+  console.log(`up to date: public/hq-assets/${version}/ already holds this exact source (use --force to republish)`);
+  process.exit(0);
+}
+
 const tmp = join(SRC, "_publish");
 rmSync(tmp, { recursive: true, force: true });
 mkdirSync(tmp, { recursive: true });
 const meshopt = (name) => {
-  execFileSync("npx", ["-y", GLTF_TRANSFORM, "meshopt", join(SRC, name), join(tmp, name), "--level", "medium"], { stdio: "inherit" });
+  execFileSync(GLTF_TRANSFORM, ["meshopt", join(SRC, name), join(tmp, name), "--level", "medium"], { stdio: "inherit" });
 };
 meshopt("building.glb");
 for (const id of ids) meshopt(`${id}.glb`);
 copyFileSync(join(SRC, "lightmap-day.webp"), join(tmp, "lightmap-day.webp"));
 
 const files = readdirSync(tmp).sort();
-const hash = createHash("sha256");
-for (const f of files) hash.update(f).update(readFileSync(join(tmp, f)));
-const version = "v1-" + hash.digest("hex").slice(0, 10);
-for (const d of existsSync(PUB) ? readdirSync(PUB) : []) if (d.startsWith("v")) rmSync(join(PUB, d), { recursive: true, force: true });
+// keep only the version currently published (becomes N-1) and the new one
+const previous = (() => { try { return /"base": "\/hq-assets\/(v1-[0-9a-f]+)\//.exec(readFileSync(join(WEB, "lib/hq/assets.generated.ts"), "utf8"))?.[1]; } catch { return undefined; } })();
+for (const d of existsSync(PUB) ? readdirSync(PUB) : []) if (d.startsWith("v") && d !== previous) rmSync(join(PUB, d), { recursive: true, force: true });
 const dest = join(PUB, version);
 mkdirSync(dest, { recursive: true });
 for (const f of files) copyFileSync(join(tmp, f), join(dest, f));

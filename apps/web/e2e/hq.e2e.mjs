@@ -77,8 +77,33 @@ try {
   // measured against the device width, not innerWidth (which itself grows when a page overflows)
   const ov = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, inner: window.innerWidth }));
   check("no horizontal overflow on the phone", ov.scroll <= 390 && ov.client <= 390 && ov.inner <= 390, JSON.stringify(ov));
+  // and no element escapes the screen unless it lives in a horizontal scroller (page clipping must not hide a broken layout)
+  const escapes = await page.evaluate(() => [...document.querySelectorAll(".hq-page *")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || (r.left >= -1 && r.right <= 391)) return false;
+    for (let p = el.parentElement; p && !p.classList.contains("hq-page"); p = p.parentElement) {
+      const ox = getComputedStyle(p).overflowX;
+      if (ox === "auto" || ox === "scroll") return false;
+    }
+    return !el.closest(".hq-canvas-wrap");
+  }).slice(0, 5).map((el) => el.className || el.tagName));
+  check("no element escapes the phone screen outside a scroller", escapes.length === 0, escapes.join(" | "));
   check("no page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
   await ctx.close();
+
+  // A2. phone landscape: the tab bar must never cover the stage or the view chips
+  const land = await browser.newContext({ ...phone, viewport: { width: phone.viewport.height, height: phone.viewport.width } });
+  const pl = await land.newPage();
+  await pl.goto(BASE + "/hq", { waitUntil: "load" });
+  await pl.waitForSelector(".hq-views", { timeout: 60_000 });
+  const geo = await pl.evaluate(() => {
+    const nav = document.querySelector(".bottom-nav"), vp = document.querySelector(".hq-viewport").getBoundingClientRect();
+    const navTop = nav && getComputedStyle(nav).display !== "none" ? nav.getBoundingClientRect().top : Infinity;
+    return { vpBottom: Math.round(vp.bottom), navTop, inner: innerHeight };
+  });
+  check("landscape: stage and chips stay clear of the tab bar", geo.vpBottom <= Math.min(geo.navTop, geo.inner) + 1, JSON.stringify(geo));
+  await pl.screenshot({ path: `${OUT}/phone-landscape.png` });
+  await land.close();
 
   // B. no WebGL → 2D plan fallback, still fully usable
   const noGl = await chromium.launch({ ...exe, args: ["--disable-gpu", "--disable-webgl", "--disable-3d-apis"] });

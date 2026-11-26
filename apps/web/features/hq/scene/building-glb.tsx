@@ -13,6 +13,13 @@ import { FURNITURE } from "@/lib/hq/layout";
 import { ASSETS, assetUrl, withMeshopt } from "./assets";
 
 const EMISSIVE = new Set(["screen", "glow"]);
+/**
+ * three's basic material applies lightMap × intensity × 1/π. The bake is normalised to its 99.5th percentile
+ * (ASSETS.building.lightmapScale), so π × scale restores the baked radiance; LIGHTMAP_GAIN is the art-directed exposure
+ * that balances baked surfaces against the live-lit characters (tuned visually, ≈ ACES exposure at the previous look).
+ */
+const LIGHTMAP_GAIN = 0.4;
+const lmIntensity = (k = 1) => ASSETS.building.lightmapScale * Math.PI * LIGHTMAP_GAIN * k;
 
 export default function BuildingGlb({ night }: { night: boolean }) {
   const gltf = useLoader(GLTFLoader, assetUrl(ASSETS.building.file), withMeshopt);
@@ -33,7 +40,9 @@ export default function BuildingGlb({ night }: { night: boolean }) {
       const src = (mesh.material as THREE.MeshStandardMaterial).clone();
       const name = src.name;
       if (name === "glass") {
-        mesh.material = new THREE.MeshStandardMaterial({ name, color: src.color, transparent: true, opacity: 0.18, roughness: 0.05, metalness: 0.15, depthWrite: false, side: THREE.DoubleSide });
+        const g = new THREE.MeshStandardMaterial({ name, color: src.color, transparent: true, opacity: 0.18, roughness: 0.05, metalness: 0.15, depthWrite: false, side: THREE.DoubleSide });
+        mats.lit.push(g);
+        mesh.material = g;
         mesh.renderOrder = 2;
       } else if (EMISSIVE.has(name)) {
         const m = new THREE.MeshBasicMaterial({ name, color: src.emissive.clone().multiplyScalar(name === "glow" ? 1.0 : 0.9), toneMapped: false });
@@ -43,7 +52,7 @@ export default function BuildingGlb({ night }: { night: boolean }) {
         // large surface with a baked lightmap: unlit × baked light
         // surface texture (marble / oak / carpet tiles) × colour × baked light
         if (src.map) { src.map.anisotropy = 8; src.map.colorSpace = THREE.SRGBColorSpace; }
-        const m = new THREE.MeshBasicMaterial({ name, color: src.color, map: src.map, lightMap: lightmap, lightMapIntensity: ASSETS.building.lightmapScale });
+        const m = new THREE.MeshBasicMaterial({ name, color: src.color, map: src.map, lightMap: lightmap, lightMapIntensity: lmIntensity() });
         mats.basic.push(m);
         mesh.material = m;
       } else {
@@ -63,8 +72,8 @@ export default function BuildingGlb({ night }: { night: boolean }) {
 
   useEffect(() => {
     const k = night ? 0.32 : 1;
-    for (const m of mats.basic) m.lightMapIntensity = ASSETS.building.lightmapScale * k;
-    for (const m of mats.lit) m.envMapIntensity = (m.name === "gold" ? 1.1 : 0.55) * (night ? 0.45 : 1);
+    for (const m of mats.basic) m.lightMapIntensity = lmIntensity(k);
+    for (const m of mats.lit) if (m.name !== "glass") m.envMapIntensity = (m.name === "gold" ? 1.1 : 0.55) * (night ? 0.45 : 1);
     for (const m of mats.emissive) if (m.name === "glow") m.color.setRGB(1.0, 0.82, 0.48).multiplyScalar(night ? 1.6 : 0.85);
   }, [night, mats]);
   // our materials go with this mount; the cached glTF itself is released when the HQ unmounts (hq-canvas)
@@ -73,6 +82,7 @@ export default function BuildingGlb({ night }: { night: boolean }) {
   // official logo on the executive brand wall (original asset, never redrawn)
   const brand = FURNITURE.find((f) => f.kind === "brand-wall")!;
   const logoMat = useMemo(() => { logo.colorSpace = THREE.SRGBColorSpace; return new THREE.MeshBasicMaterial({ map: logo, transparent: true, toneMapped: false }); }, [logo]);
+  useEffect(() => () => logoMat.dispose(), [logoMat]);
   return (
     <group>
       <primitive object={scene} />

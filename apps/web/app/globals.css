@@ -732,7 +732,9 @@ tr:last-child td { border-bottom: 0; }
 :root[data-theme="dark"] .hq-viewport { background: radial-gradient(120% 90% at 50% 0%, #2a1f4a 0%, #1a1233 60%, #120c24 100%); }
 /* phone landscape: the stage takes the screen between the top bar and the tab bar; the title row steps aside */
 @media (orientation: landscape) and (max-height: 520px) {
-  .hq-viewport { height: calc(100svh - var(--topbar-h) - var(--bottom-nav-h) - env(safe-area-inset-bottom) - 20px); min-height: 220px; }
+  /* the tab bar steps aside on the HQ so the stage and the view chips are never covered (the top bar still links home) */
+  body:has(.hq-page) .bottom-nav { display: none; }
+  .hq-viewport { height: calc(100svh - var(--topbar-h) - env(safe-area-inset-bottom) - 16px); min-height: 0; }
   .hq-head { display: none; }
 }
 @media (min-width: 900px) { .hq-viewport { height: min(68vh, 680px); } }

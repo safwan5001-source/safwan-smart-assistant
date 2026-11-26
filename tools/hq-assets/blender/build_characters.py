@@ -35,7 +35,13 @@ os.makedirs(args.out, exist_ok=True)
 PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
 
 FPS = 24
-SIT_HIPS = 0.60  # hips height when seated on the HQ chairs (seat top ≈ 0.54 m)
+SEAT_TOP = 0.54  # top of the HQ chair cushions (tools/hq-assets/blender/build_building.py: 0.46 + 0.08)
+
+
+def sit_hips(J):
+    """Seated hip height for THIS body: thighs level on the cushion, shins hanging to just above the floor."""
+    shin = J["shin.L"][1] - J["foot.L"][1]
+    return max(SEAT_TOP + 0.05, shin + J["foot.L"][1] - 0.01)
 
 # ── geometry builder with per-corner colours and per-vertex bone candidates ──────────────────────────────────────────
 
@@ -44,18 +50,23 @@ class Body:
     def __init__(self):
         self.bm = bmesh.new()
         self.col = self.bm.loops.layers.color.new("Col")
-        self.bind = []  # (first_vert, last_vert_exclusive, {bone: weight} | [candidate bones])
+        # each vertex stores the id of the part that made it (a mesh attribute survives every later bevel/renumbering)
+        self.part = self.bm.verts.layers.int.new("part")
+        self.binds = [None]  # part id → {bone: weight} | [candidate bones] | "ROBE"
+        self.glow = set()  # part ids whose faces use material slot 1 (emissive), e.g. BASHT's eyes
 
     def _finish(self, verts, color, bind):
         bm = self.bm
-        bm.verts.index_update()
-        idx = [v.index for v in verts]
+        pid = len(self.binds)
+        self.binds.append(bind)
+        for v in verts:
+            v[self.part] = pid
+        self.last_part = pid
         c = hex_rgba(color)
-        faces = {f for v in verts for f in v.link_faces}
+        faces = sorted({f for v in verts for f in v.link_faces}, key=lambda f: f.index)  # sorted: byte-identical rebuilds
         for f in faces:
             for loop in f.loops:
                 loop[self.col] = c
-        self.bind.append((min(idx), max(idx) + 1, bind))
         return verts
 
     def xform(self, verts, m):
@@ -72,10 +83,14 @@ class Body:
         bmesh.ops.scale(self.bm, vec=Vector((x1 - x0, z1 - z0, y1 - y0)), verts=v)
         bmesh.ops.translate(self.bm, vec=B((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), verts=v)
         if bevel:
-            edges = list({e for vv in v for e in vv.link_edges})
+            self.bm.edges.index_update()
+            edges = sorted({e for vv in v for e in vv.link_edges}, key=lambda e: e.index)
             res = bmesh.ops.bevel(self.bm, geom=edges, offset=bevel, segments=2, affect="EDGES")
-            v = list({*v, *res["verts"]})
-            v = [vv for vv in v if vv.is_valid]
+            seen, out = set(), []
+            for vv in list(v) + list(res["verts"]):
+                if vv.is_valid and id(vv) not in seen:
+                    seen.add(id(vv)); out.append(vv)
+            v = out
         return self._finish(v, color, bind)
 
     def capsule(self, color, bind, a, b, r0, r1=None, segs=12):
@@ -200,8 +215,10 @@ def skin(mesh_ob, rig_ob, body, J):
     me = mesh_ob.data
     groups = {b: mesh_ob.vertex_groups.new(name=b) for b in BONES}
     segs = {b: (B(*J[b]) if b != "root" else B(0, 0, 0), B(*J[TAILS[b]]) if b != "root" else B(0, 0.1, 0)) for b in BONES}
-    for v0, v1, bind in body.bind:
-        for vi in range(v0, v1):
+    part = me.attributes["part"].data
+    for vi in range(len(me.vertices)):
+        bind = body.binds[part[vi].value]
+        if True:
             p = me.vertices[vi].co
             if isinstance(bind, dict):
                 for b, w in bind.items():
@@ -222,10 +239,11 @@ def skin(mesh_ob, rig_ob, body, J):
                 side = min(1.0, max(0.0, 0.5 + x / 0.22))  # 1 = character's left (+x)
                 leg = 0.7 * t ** 0.8
                 low = min(1.0, max(0.0, (ky - y) / max(ky, 1e-3)))  # below the knee a little shin influence
-                for bone, w in (("hips", 1 - leg), ("thigh.L", leg * side * (1 - 0.3 * low)), ("thigh.R", leg * (1 - side) * (1 - 0.3 * low)),
-                                ("shin.L", leg * side * 0.3 * low), ("shin.R", leg * (1 - side) * 0.3 * low)):
-                    if w > 1e-4:
-                        groups[bone].add([vi], w, "REPLACE")
+                ws = sorted(((w, bone) for bone, w in (("hips", 1 - leg), ("thigh.L", leg * side * (1 - 0.3 * low)), ("thigh.R", leg * (1 - side) * (1 - 0.3 * low)),
+                                                   ("shin.L", leg * side * 0.3 * low), ("shin.R", leg * (1 - side) * 0.3 * low)) if w > 1e-4), reverse=True)[:4]
+                tot = sum(w for w, _ in ws)
+                for w, bone in ws:
+                    groups[bone].add([vi], w / tot, "REPLACE")
                 continue
             ws = []
             for b in bind:
@@ -371,6 +389,7 @@ def build_robot():
         for k in range(7):  # happy closed-eye arcs, built from small beads (emissive cyan in the app)
             a = math.pi * (0.15 + 0.7 * k / 6)
             body.sphere(CY, {"head": 1.0}, ex + math.cos(a) * 0.045, hy - 0.005 + math.sin(a) * 0.03, 0.255, 0.012, subdiv=1)
+            body.glow.add(body.last_part)
     # dasmal (Yemeni head-wrap) + red band
     body.lathe(W, {"head": 1.0}, 0, -0.01, [(0.27, hy + 0.06), (0.29, hy + 0.12), (0.27, hy + 0.2), (0.2, hy + 0.26), (0.08, hy + 0.29)], segs=32, cap_top=True)
     body.lathe(R, {"head": 1.0}, 0, -0.01, [(0.285, hy + 0.085), (0.292, hy + 0.12), (0.288, hy + 0.155)], segs=32, stripes=(R, "#f5f3ff", 3))
@@ -426,7 +445,7 @@ def make_clips(rig, J, robot=False):
             pb["hips"].keyframe_insert("location", frame=f)
         clips[name] = (act, length)
 
-    seat = {"hips_y": SIT_HIPS, "thigh.L": q(x=-90, z=-4), "thigh.R": q(x=-90, z=4), "shin.L": q(x=90), "shin.R": q(x=90)}
+    seat = {"hips_y": sit_hips(J), "thigh.L": q(x=-90, z=-4), "thigh.R": q(x=-90, z=4), "shin.L": q(x=90), "shin.R": q(x=90)}
     lap = {"upperarm.L": q(x=-26, y=0, z=0), "upperarm.R": q(x=-26), "forearm.L": q(x=-58), "forearm.R": q(x=-58)}
     clip("idle", 2.0, [(t, {"hips_y": hips_rest, "chest": q(x=1.5 * math.sin(t * math.pi)), "head": q(z=6 * math.sin(t * math.pi)),
                             "upperarm.L": q(y=-6), "upperarm.R": q(y=6)}) for t in (0, 0.5, 1.0, 1.5, 2.0)])
@@ -483,6 +502,7 @@ def pose_frame(rig, clip_name, frame=1):
 
 
 def finish_mesh(body, name):
+    body_glow = body.glow
     me = bpy.data.meshes.new(name)
     body.bm.to_mesh(me)
     body.bm.free()
@@ -500,6 +520,18 @@ def finish_mesh(body, name):
     attr.layer_name = "Col"
     nt.links.new(attr.outputs["Color"], bsdf.inputs["Base Color"])
     me.materials.append(mat)
+    if body_glow:
+        glow = bpy.data.materials.new(name + "_glow")
+        glow.use_nodes = True
+        gb = glow.node_tree.nodes["Principled BSDF"]
+        gb.inputs["Base Color"].default_value = hex_rgba("#22d3ee")
+        gb.inputs["Emission Color"].default_value = hex_rgba("#22d3ee")
+        gb.inputs["Emission Strength"].default_value = 4.0
+        me.materials.append(glow)
+        part = me.attributes["part"].data
+        for p in me.polygons:
+            if all(part[v].value in body_glow for v in p.vertices):
+                p.material_index = 1
     ob = bpy.data.objects.new(name, me)
     bpy.context.scene.collection.objects.link(ob)
     return ob
@@ -555,6 +587,20 @@ for ch in PLAN["characters"]:
     rig = make_armature(ch["id"], J)
     skin(mesh, rig, body, J)
     clips = make_clips(rig, J, robot)
+    # QA: in every clip nothing may sink below the floor
+    for clip_name in clips:
+        pose_frame(rig, clip_name, 7)
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = mesh.evaluated_get(dg)
+        em = ev.to_mesh()
+        zmin, vmin = min(((ev.matrix_world @ v.co).z, v.index) for v in em.vertices)
+        ev.to_mesh_clear()
+        if zmin < -0.02:
+            part = body.binds[mesh.data.attributes["part"].data[vmin].value]
+            raise SystemExit(f"{ch['id']}: clip {clip_name} goes {zmin:.3f} m below the floor (vertex {vmin}, bind {part}, rest z {mesh.data.vertices[vmin].co.z:.3f})")
+    for tr in rig.animation_data.nla_tracks:
+        tr.mute = False
+    bpy.context.scene.frame_set(1)
     path = export(ch["id"], [rig, mesh])
     tris = sum(len(p.vertices) - 2 for p in mesh.data.polygons)
     summary[ch["id"]] = {"tris": tris, "bytes": os.path.getsize(path), "clips": list(clips)}

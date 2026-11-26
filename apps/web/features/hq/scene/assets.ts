@@ -20,5 +20,3 @@ export function gltfLoader() {
 }
 export type { GLTF };
 
-/** Every URL the HQ loads through R3F's cache; hq-canvas clears them when the HQ unmounts so their memory is released. */
-export const ALL_GLTF_URLS = [assetUrl(ASSETS.building.file), ...Object.values(ASSETS.characters).map((c) => assetUrl(c.file))];

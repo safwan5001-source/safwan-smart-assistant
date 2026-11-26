@@ -163,7 +163,7 @@ function officeFurniture(f: OfficeFrame): Furniture[] {
 
 // meeting room: 12 seats around one table
 const MEETING_TABLE = { at: [1, 12.8] as Vec2, w: 5.6, d: 1.8 };
-const MEETING_NORTH_Z = 11.45, MEETING_SOUTH_Z = 14.15, MEETING_LANE_N = 10.7, MEETING_LANE_S = 14.95;
+const MEETING_NORTH_Z = 11.62, MEETING_SOUTH_Z = 13.98, MEETING_LANE_N = 10.7, MEETING_LANE_S = 14.95;
 const MEETING_XS = [-1.2, -0.1, 1.0, 2.1, 3.2] as const;
 const MEETING_WEST_X = -3.3, MEETING_EAST_X = 5.3;
 export const MEETING_SEATS: readonly Seat[] = [

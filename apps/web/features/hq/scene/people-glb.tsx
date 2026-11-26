@@ -17,7 +17,7 @@ const FADE = 0.28;
 
 type Rig = { root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string };
 
-export default function PeopleGlb({ sim, paused }: { sim: HqSim; paused: boolean }) {
+export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
   const gltfs = useLoader(GLTFLoader, URLS, withMeshopt);
   const shadows = useRef<THREE.InstancedMesh>(null);
   const shadowTex = useMemo(blobTexture, []);
@@ -32,8 +32,10 @@ export default function PeopleGlb({ sim, paused }: { sim: HqSim; paused: boolean
         const m = o as THREE.SkinnedMesh;
         if (m.isMesh) {
           m.frustumCulled = false; // skinned bounds don't follow the pose; 14 small meshes are cheap to always draw
-          const mat = m.material as THREE.MeshStandardMaterial;
-          mat.roughness = 0.68; mat.metalness = 0;
+          for (const mat of (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]) {
+            mat.roughness = 0.68; mat.metalness = 0;
+            if (mat.name.endsWith("_glow")) { mat.emissive.set("#22d3ee"); mat.emissiveIntensity = 1.6; mat.toneMapped = false; } // BASHT's eyes
+          }
         }
       });
       const mixer = new THREE.AnimationMixer(model);
@@ -61,11 +63,14 @@ export default function PeopleGlb({ sim, paused }: { sim: HqSim; paused: boolean
         if (next) {
           // exactly one target clip: every other running action fades out (rotations blended at a total weight > 1 over-rotate)
           for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isRunning()) a.fadeOut(FADE);
-          next.reset().setEffectiveTimeScale(1).setEffectiveWeight(1).fadeIn(FADE).play();
+          // a clip still fading out is picked up where it is (reset() would jump its pose)
+          if (!next.isRunning()) next.reset();
+          next.stopFading().setEffectiveTimeScale(1).fadeIn(FADE).play();
           r.current = want;
         }
       }
-      r.mixer.timeScale = paused && w.clip !== "walk" ? 0.25 : 1;
+      // paused: everyone holds still (the simulation is stopped too); reduced motion: no idle motion, walking still animates
+      r.mixer.timeScale = paused ? 0 : reducedMotion && w.clip !== "walk" ? 0 : 1;
       r.mixer.update(Math.min(dt, 0.1));
     }
     const sh = shadows.current;

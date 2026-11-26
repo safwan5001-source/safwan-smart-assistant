@@ -22,7 +22,8 @@ export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim
   useEffect(() => {
     const el = svg.current?.parentElement;
     if (!el) return;
-    const ro = new ResizeObserver(([e]) => setPortrait(e.contentRect.height > e.contentRect.width * 1.05));
+    // judge the whole box (padding included): the plan's own padding must not hide a portrait screen
+    const ro = new ResizeObserver(() => setPortrait(el.clientHeight > el.clientWidth * 1.05));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
@@ -67,7 +68,7 @@ export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim
               onClick={() => onSelect(o.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(o.id); } }}
             />
             <text x={cx} y={cz - (o.exec ? 1.4 : 0.45)} transform={up(cx, cz - (o.exec ? 1.4 : 0.45))} className={"hq-plan-name" + (o.exec ? " exec" : "")}>{a.nameAr}</text>
-            <text x={cx} y={cz + (o.exec ? -0.2 : 0.55)} transform={up(cx, cz + (o.exec ? -0.2 : 0.55))} className={"hq-plan-role" + (o.exec ? "" : " office")}>{a.role}</text>
+            <text x={cx} y={cz + (o.exec ? -0.2 : 0.55)} transform={up(cx, cz + (o.exec ? -0.2 : 0.55))} className={"hq-plan-role" + (o.exec ? "" : " office")}>{a.role.split(" ").slice(0, 2).join(" ")}</text>
           </g>
         );
       })}
