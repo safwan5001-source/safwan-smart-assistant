@@ -5,7 +5,7 @@
  *
  * Units are metres. World axes: x → east (screen right in the default view), z → south (towards the default camera), y up.
  */
-import { AGENT_IDS, type AgentId } from "./roster";
+import { AGENT_IDS, ROSTER, type AgentId } from "./roster";
 
 export type Vec2 = readonly [number, number]; // [x, z]
 export type Rect = { x0: number; x1: number; z0: number; z1: number };
@@ -377,5 +377,7 @@ export function exportPlan() {
     walls: WALLS,
     furniture: FURNITURE,
     meetingSeats: MEETING_SEATS,
+    /** character looks for the generator (roster.ts is the source) */
+    characters: ROSTER.map((a) => ({ id: a.id, tint: a.tint, look: a.look })),
   };
 }

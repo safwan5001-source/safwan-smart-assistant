@@ -51,6 +51,13 @@ try {
   check("names can be hidden", await page.locator(".hq-labels.off").count() === 1);
   await page.getByRole("button", { name: "إظهار الأسماء" }).click();
 
+  // 3D → plan → 3D (switching to the plan must not count as a WebGL failure)
+  await page.getByRole("button", { name: "عرض المخطط" }).click();
+  await page.waitForSelector(".hq-plan");
+  await page.getByRole("button", { name: "عرض ثلاثي الأبعاد" }).click();
+  await page.waitForSelector(".hq-canvas-wrap canvas", { timeout: 60_000 });
+  check("plan → 3D round trip works", await page.locator(".hq-fallback-note").count() === 0);
+
   // directory + Arabic-normalised search + card
   await page.locator(".hq-search input").fill("الامن");
   const found = await page.locator(".hq-person strong").allInnerTexts();
@@ -67,8 +74,9 @@ try {
   await page.getByRole("button", { name: "اعتماد تجريبي" }).click();
   check("trial approval produces a simulated report", await page.locator(".hq-report").isVisible());
   await page.screenshot({ path: `${OUT}/phone-hq-report.png`, fullPage: true });
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-  check("no horizontal overflow on the phone", overflow <= 1, `overflow=${overflow}`);
+  // measured against the device width, not innerWidth (which itself grows when a page overflows)
+  const ov = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth, inner: window.innerWidth }));
+  check("no horizontal overflow on the phone", ov.scroll <= 390 && ov.client <= 390 && ov.inner <= 390, JSON.stringify(ov));
   check("no page errors", errors.length === 0, errors.slice(0, 3).join(" | "));
   await ctx.close();
 

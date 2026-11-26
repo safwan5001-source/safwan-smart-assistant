@@ -101,6 +101,8 @@ export type Snapshot = {
   statuses: Readonly<Record<AgentId, Status>>;
   events: readonly SimEvent[];
   approvedCount: number;
+  /** the last scenario approved in this visit (its report stays readable after the stage returns to idle) */
+  lastApproved: ScenarioId | null;
 };
 
 export class HqSim {
@@ -110,6 +112,7 @@ export class HqSim {
   scenario: ScenarioId | null = null;
   events: SimEvent[] = [];
   approvedCount = 0;
+  lastApproved: ScenarioId | null = null;
   private stageT = 0;
   private acc = 0;
   private rand: () => number;
@@ -156,6 +159,7 @@ export class HqSim {
     const sc = SCENARIO_BY_ID[this.scenario];
     for (const a of sc.team) this.setStatus(this.walkers[a], "done");
     this.approvedCount++;
+    this.lastApproved = this.scenario;
     this.setStage("approved");
     this.log("اعتمدتَ النتيجة تجريبيًا — لم يُنفَّذ أي إجراء خارج المحاكاة", sc.team);
     return true;
@@ -289,6 +293,6 @@ export class HqSim {
   snapshot(): Snapshot {
     const statuses = {} as Record<AgentId, Status>;
     for (const id of AGENT_IDS) statuses[id] = this.walkers[id].status;
-    return { t: this.t, stage: this.stage, scenario: this.scenario, statuses, events: [...this.events], approvedCount: this.approvedCount };
+    return { t: this.t, stage: this.stage, scenario: this.scenario, statuses, events: [...this.events], approvedCount: this.approvedCount, lastApproved: this.lastApproved };
   }
 }

@@ -3,10 +3,12 @@
  * The 3D view of BASHT HQ (loaded on demand, client only). Owns the WebGL canvas, the camera, picking, adaptive quality and
  * the floating-name layer. Reads the simulation every frame; never writes to it.
  */
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame, useLoader, useThree } from "@react-three/fiber";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { Component, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as THREE from "three";
 import CameraControls from "camera-controls";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
 import { BUILDING, FRAMES, OFFICES, VIEWS, WALLS, ZONES, inward, type ViewId } from "@/lib/hq/layout";
 import { labelSize, labelWidth, placeLabels, segmentHitsBox, type LabelBox } from "@/lib/hq/labels";
@@ -14,14 +16,17 @@ import type { HqSim } from "@/lib/hq/sim";
 import { useHq, type HqStore } from "../hq-state";
 import Building from "./building";
 import People from "./people";
+import BuildingGlb from "./building-glb";
+import PeopleGlb from "./people-glb";
+import { ALL_GLTF_URLS, ASSETS, assetUrl } from "./assets";
 
 CameraControls.install({ THREE });
 
 type LabelRefs = { agents: Partial<Record<AgentId, HTMLSpanElement | null>>; rooms: (HTMLSpanElement | null)[] };
-const ROOM_LABELS: { text: string; sub?: string; at: [number, number, number] }[] = [
+const ROOM_LABELS: { text: string; at: [number, number, number] }[] = [
   ...OFFICES.filter((o) => !o.exec).map((o) => {
     const f = FRAMES[o.id], d = inward(o.door);
-    return { text: AGENTS[o.id].nameAr, sub: AGENTS[o.id].role, at: [f.door[0] + d[0] * 0.2, 2.55, f.door[1] + d[1] * 0.2] as [number, number, number] };
+    return { text: AGENTS[o.id].role, at: [f.door[0] - d[0] * 0.35, 2.85, f.door[1] - d[1] * 0.35] as [number, number, number] };
   }),
   { text: ZONES.meeting.label, at: [ZONES.meeting.doorAt, 2.4, ZONES.meeting.rect.z0] },
   { text: ZONES.library.label, at: [ZONES.library.doorAt + 3, 2.4, ZONES.library.rect.z0] },
@@ -36,21 +41,31 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
   const ui = useHq(store, (s) => s);
   const labels = useRef<LabelRefs>({ agents: {}, rooms: [] });
   const [hidden, setHidden] = useState(false);
+  const [offscreen, setOffscreen] = useState(false);
+  const wrap = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const on = () => setHidden(document.hidden);
     document.addEventListener("visibilitychange", on);
-    return () => document.removeEventListener("visibilitychange", on);
+    // battery: stop rendering while the 3D view is scrolled out of sight (the panels below are long on a phone)
+    const io = new IntersectionObserver(([e]) => setOffscreen(!e.isIntersecting), { threshold: 0.02 });
+    if (wrap.current) io.observe(wrap.current);
+    return () => { document.removeEventListener("visibilitychange", on); io.disconnect(); };
+  }, []);
+  // leaving the HQ releases the parsed models and the lightmap held by the loader cache (they come back from the HTTP cache)
+  useEffect(() => () => {
+    for (const url of ALL_GLTF_URLS) useLoader.clear(GLTFLoader, url);
+    useLoader.clear(THREE.TextureLoader, assetUrl(ASSETS.building.lightmap));
   }, []);
   const low = ui.quality === "low";
   const maxDpr = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);
 
   return (
-    <div className={"hq-canvas-wrap" + (ui.night ? " night" : "")}>
+    <div ref={wrap} className={"hq-canvas-wrap" + (ui.night ? " night" : "")}>
       <Canvas
         dpr={low ? 1 : [1, maxDpr]}
         gl={{ antialias: !low, alpha: true, powerPreference: "high-performance", preserveDrawingBuffer: false }}
         camera={{ fov: 38, near: 0.3, far: 220, position: [...VIEWS.overview.pos] }}
-        frameloop={hidden ? "never" : low ? "demand" : "always"}
+        frameloop={hidden || offscreen ? "never" : low ? "demand" : "always"}
         onCreated={({ gl }) => {
           gl.setClearColor(0x000000, 0);
           gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -64,11 +79,10 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
       </Canvas>
       <div className={"hq-labels" + (ui.labels ? "" : " off")} aria-hidden="true">
         {ROOM_LABELS.map((r, i) => (
-          <span key={r.text} ref={(el) => { labels.current.rooms[i] = el; }} className="hq-room-label">{r.text}{r.sub && <small>{r.sub}</small>}</span>
+          <span key={r.text} ref={(el) => { labels.current.rooms[i] = el; }} className="hq-room-label">{r.text}</span>
         ))}
         {AGENT_IDS.map((id) => (
-          <span key={id} ref={(el) => { labels.current.agents[id] = el; }} className={"hq-name" + (id === "BASHT" ? " ceo" : "")}
-            onClick={() => store.set({ selected: id, panel: "people", viewNonce: store.get().viewNonce + 1 })}>{AGENTS[id].nameAr}</span>
+          <span key={id} ref={(el) => { labels.current.agents[id] = el; }} className={"hq-name" + (id === "BASHT" ? " ceo" : "")}>{AGENTS[id].nameAr}</span>
         ))}
       </div>
     </div>
@@ -78,13 +92,24 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
 function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: React.RefObject<LabelRefs> }) {
   const ui = useHq(store, (s) => s);
   const { camera, gl, invalidate, setDpr, size } = useThree();
-  const controls = useMemo(() => new CameraControls(camera, gl.domElement), [camera, gl]);
+  const [controls, setControls] = useState<CameraControls | null>(null);
   const hitGroup = useRef<THREE.Group>(null);
   const reduceMotion = useMemo(() => typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches, []);
   const debug = useMemo(() => typeof window !== "undefined" && new URLSearchParams(window.location.search).has("hqdebug"), []);
-
-  // camera limits
+  // soft studio reflections for gold, glass and lacquer — generated on the GPU once, no HDR file to download
+  const scene = useThree((s) => s.scene);
   useEffect(() => {
+    const pmrem = new THREE.PMREMGenerator(gl);
+    const env = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = env;
+    pmrem.dispose();
+    return () => { scene.environment = null; env.dispose(); };
+  }, [gl, scene]);
+
+  // camera controls + limits
+  useEffect(() => {
+    const controls = new CameraControls(camera, gl.domElement);
+    setControls(controls);
     controls.minDistance = 3.5;
     controls.maxDistance = 75;
     controls.minPolarAngle = 0.12;
@@ -94,12 +119,13 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     controls.setBoundary(new THREE.Box3(new THREE.Vector3(BUILDING.x0 - 2, 0, BUILDING.z0 - 2), new THREE.Vector3(BUILDING.x1 + 2, 8, BUILDING.z1 + 2)));
     controls.addEventListener("control", () => invalidate());
     controls.addEventListener("update", () => invalidate());
-    return () => controls.dispose();
-  }, [controls, invalidate, reduceMotion]);
+    return () => { controls.dispose(); setControls(null); };
+  }, [camera, gl, invalidate, reduceMotion]);
 
   // views and focus
   const aspect = size.width / Math.max(size.height, 1);
   useEffect(() => {
+    if (!controls) return;
     const animate = !reduceMotion && ui.viewNonce > 0;
     if (ui.selected) {
       const f = FRAMES[ui.selected], d = inward(f.office.door);
@@ -109,11 +135,17 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
       return;
     }
     const v = VIEWS[ui.view as ViewId];
-    // portrait phones: look at the overview from the east so the building's long side runs up the screen
     const portrait = aspect < 0.85;
-    const base = ui.view === "overview" && portrait ? [30, 44, 1] : v.pos;
-    const k = ui.view === "overview" ? (portrait ? Math.min(1.6, Math.max(1, 0.75 / aspect)) : Math.min(2.2, Math.max(1, 1.15 / aspect))) : portrait ? 1.3 : 1;
-    const p = base.map((c, i) => v.target[i] + (c - v.target[i]) * k);
+    if (ui.view === "overview") {
+      // fit the whole floor in frame, whatever the screen shape; portrait phones look from the east so the long side of the
+      // building runs up the screen. Padding keeps the executive suite clear of the toolbar and the view chips.
+      void controls.setLookAt(...(portrait ? [26, 40, 0.5] : [0, 34, 30]) as [number, number, number], 0, 0, 0.5, false);
+      const box = new THREE.Box3(new THREE.Vector3(BUILDING.x0, 0, BUILDING.z0), new THREE.Vector3(BUILDING.x1, 2.4, BUILDING.z1));
+      void controls.fitToBox(box, animate, { paddingTop: 2.2, paddingBottom: 2.6, paddingLeft: 0.8, paddingRight: 0.8 });
+      return;
+    }
+    const k = portrait ? 1.3 : 1;
+    const p = v.pos.map((c, i) => v.target[i] + (c - v.target[i]) * k);
     void controls.setLookAt(p[0], p[1], p[2], v.target[0], v.target[1], v.target[2], animate);
   }, [controls, ui.view, ui.viewNonce, ui.selected, aspect, reduceMotion]);
 
@@ -144,10 +176,11 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     return () => window.clearInterval(id);
   }, [ui.quality, invalidate]);
 
-  const frames = useRef({ n: 0, acc: 0, dpr: gl.getPixelRatio() });
+  const frames = useRef({ n: 0, acc: 0, dpr: 1 });
+  useEffect(() => { frames.current.dpr = gl.getPixelRatio(); }, [gl]);
   const v = useMemo(() => new THREE.Vector3(), []);
   useFrame((state, dt) => {
-    controls.update(dt);
+    controls?.update(dt);
     // adaptive resolution: if the last ~2 s averaged under 26 fps, step the pixel ratio down (never below 1)
     const F = frames.current;
     F.n++; F.acc += dt;
@@ -160,9 +193,9 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
     // hit volumes follow the people
     hitGroup.current?.children.forEach((m) => { const w = sim.walkers[m.userData.id as AgentId]; m.position.set(w.pos[0], 0.9, w.pos[1]); });
 
-    // floating names
+    // floating names (no work at all while they are switched off)
     const L = labels.current;
-    if (!L) return;
+    if (!L || !store.get().labels) return;
     const W = state.size.width, H = state.size.height;
     const cam: [number, number, number] = [camera.position.x, camera.position.y, camera.position.z];
     const boxes: LabelBox[] = [];
@@ -188,8 +221,14 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
       const y = id === "BASHT" ? (standing ? 2.25 : 1.92) : (standing ? 1.98 : 1.58) * k;
       place(id, L.agents[id], w.pos[0], y, w.pos[1], id === sel ? 3 : id === "BASHT" ? 2 : 1, AGENTS[id].nameAr);
     }
-    ROOM_LABELS.forEach((r, i) => place("room" + i, L.rooms[i], r.at[0], r.at[1], r.at[2], 0, r.sub && r.sub.length > r.text.length ? r.sub : r.text, 0.78));
-    const shown = placeLabels(boxes);
+    ROOM_LABELS.forEach((r, i) => place("room" + i, L.rooms[i], r.at[0], r.at[1], r.at[2], 0, r.text, 0.82));
+    // the toolbar and the view chips sit over the canvas: nothing may be drawn underneath them
+    const host = gl.domElement.getBoundingClientRect();
+    const blockers = [...document.querySelectorAll<HTMLElement>(".hq-toolbar, .hq-views")].map((el) => {
+      const r = el.getBoundingClientRect();
+      return { id: "", x: r.left - host.left + r.width / 2, y: r.bottom - host.top, w: r.width, h: r.height, priority: 99, dist: 0 };
+    });
+    const shown = placeLabels([...blockers, ...boxes]);
     for (const b of boxes) {
       const el = b.id.startsWith("room") ? L.rooms[Number(b.id.slice(4))] : L.agents[b.id as AgentId];
       if (el) el.style.visibility = shown.has(b.id) ? "visible" : "hidden";
@@ -202,8 +241,13 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
       <hemisphereLight args={[night ? "#8b7bd6" : "#fbf8ff", night ? "#1b1230" : "#cdbfa8", night ? 0.6 : 2.1]} />
       <directionalLight position={[14, 26, 18]} intensity={night ? 0.25 : 1.9} color={night ? "#9fb4ff" : "#fff3dc"} />
       <directionalLight position={[-18, 14, -10]} intensity={night ? 0.15 : 0.45} color="#d9cfff" />
-      <Building night={night} />
-      <People sim={sim} quality={ui.quality === "low" ? "low" : "high"} />
+      {/* authored art (tools/hq-assets); the procedural greybox shows while it streams in, and if it ever fails to load */}
+      <AssetBoundary fallback={<Building night={night} />}>
+        <Suspense fallback={<Building night={night} />}><BuildingGlb night={night} /></Suspense>
+      </AssetBoundary>
+      <AssetBoundary fallback={<People sim={sim} />}>
+        <Suspense fallback={<People sim={sim} />}><PeopleGlb sim={sim} paused={ui.paused || ui.reducedMotion} /></Suspense>
+      </AssetBoundary>
       <group ref={hitGroup} visible={false}>
         {AGENT_IDS.map((id) => (
           <mesh key={id} userData={{ id }}><cylinderGeometry args={[0.45, 0.45, 1.9, 8]} /><meshBasicMaterial /></mesh>
@@ -211,4 +255,11 @@ function Scene({ sim, store, labels }: { sim: HqSim; store: HqStore; labels: Rea
       </group>
     </>
   );
+}
+
+/** A failed asset download (offline, blocked) falls back to the procedural greybox instead of breaking the view. */
+class AssetBoundary extends Component<{ fallback: ReactNode; children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? this.props.fallback : this.props.children; }
 }

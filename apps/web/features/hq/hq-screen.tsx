@@ -45,7 +45,12 @@ export default function HqScreen() {
   const [glLost, setGlLost] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { store.hydrate(); setGl(webglAvailable()); }, [store]);
+  useEffect(() => {
+    store.hydrate();
+    setGl(webglAvailable());
+    // QA hook (only with ?hqdebug): lets visual tests step the deterministic simulation to an exact moment
+    if (new URLSearchParams(window.location.search).has("hqdebug")) Object.assign(window, { __hqSim: sim, __hqStore: store });
+  }, [store, sim]);
 
   // Simulation clock: real time, paused when the user pauses motion or the page is hidden.
   useEffect(() => {
@@ -73,13 +78,24 @@ export default function HqScreen() {
     return () => { window.removeEventListener("keydown", onKey); document.documentElement.classList.remove("hq-immersive-on"); };
   }, [ui.immersive, store]);
 
+  /** user actions update the lists at once (the 4 Hz refresh is for the simulation's own progress) */
+  const act = (fn: () => unknown) => { const r = fn(); setSnap(sim.snapshot()); return r; };
   const select = (id: AgentId | null) => store.set({ selected: id, ...(id ? { panel: "people" as Panel } : {}) });
-  const scenario = SCENARIO_BY_ID[ui.scenario];
   const counts = useMemo(() => {
     const v = Object.values(snap.statuses);
     return { working: v.filter((s) => s === "working").length, meeting: v.filter((s) => s === "meeting" || s === "walking").length, awaiting: v.filter((s) => s === "awaiting").length };
   }, [snap]);
   const use3d = ui.mode === "3d" && gl === true && !glLost;
+  const PANELS: Panel[] = ["people", "tasks", "approvals", "reports", "log"];
+  // RTL tablist: ArrowLeft moves to the next tab, ArrowRight to the previous; Home/End jump
+  const onTabKey = (e: React.KeyboardEvent<HTMLButtonElement>) => {
+    const i = PANELS.indexOf(ui.panel);
+    const next = e.key === "ArrowLeft" ? (i + 1) % PANELS.length : e.key === "ArrowRight" ? (i - 1 + PANELS.length) % PANELS.length : e.key === "Home" ? 0 : e.key === "End" ? PANELS.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    store.set({ panel: PANELS[next] });
+    document.getElementById("hq-tab-" + PANELS[next])?.focus();
+  };
 
   return (
     <div className="page hq-page">
@@ -96,7 +112,7 @@ export default function HqScreen() {
       <div ref={rootRef} className={"hq-stage" + (ui.immersive ? " immersive" : "")}>
         <div className="hq-viewport" data-mode={use3d ? "3d" : "plan"}>
           {gl === null ? <div className="hq-loading" role="status"><span className="hq-spinner" aria-hidden="true" />تهيئة العرض…</div>
-            : use3d ? <HqCanvas sim={sim} store={store} onContextLost={() => setGlLost(true)} />
+            : use3d ? <HqCanvas sim={sim} store={store} onContextLost={() => { if (store.get().mode === "3d") setGlLost(true); }} />
             : <div className="hq-plan-wrap"><HqPlan sim={sim} selected={ui.selected} onSelect={(id) => select(id)} paused={ui.paused} /></div>}
           {(gl === false || glLost) && ui.mode === "3d" && (
             <p className="hq-fallback-note" role="status">
@@ -105,12 +121,12 @@ export default function HqScreen() {
             </p>
           )}
           <Toolbar store={store} has3d={gl === true && !glLost} />
-          <nav className="hq-views" aria-label="الانتقال داخل المقر">
+          {use3d && <nav className="hq-views" aria-label="الانتقال داخل المقر">
             {(Object.keys(VIEWS) as ViewId[]).map((v) => (
               <button key={v} type="button" className={"chip" + (ui.view === v && !ui.selected ? " on" : "")} aria-pressed={ui.view === v && !ui.selected}
                 onClick={() => store.set({ view: v, viewNonce: ui.viewNonce + 1, selected: null })}>{VIEWS[v].label}</button>
             ))}
-          </nav>
+          </nav>}
         </div>
       </div>
 
@@ -133,21 +149,24 @@ export default function HqScreen() {
               {SCENARIOS.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </label>
-          <button className="btn btn-primary btn-sm" onClick={() => { if (sim.start(ui.scenario)) store.set({ panel: "tasks", paused: false }); }} disabled={snap.stage !== "idle" && snap.stage !== "approved"}>
+          <button className="btn btn-primary btn-sm" onClick={() => { if (act(() => sim.start(ui.scenario))) store.set({ panel: "tasks" }); }} disabled={snap.stage !== "idle" && snap.stage !== "approved"}>
             <Icon name="play" size={16} />بدء المحاكاة
           </button>
-          <button className="btn btn-sm" onClick={() => sim.reset()} disabled={snap.stage === "idle"}><Icon name="repeat" size={16} />إعادة ضبط</button>
+          <button className="btn btn-sm" onClick={() => act(() => sim.reset())} disabled={snap.stage === "idle"}><Icon name="repeat" size={16} />إعادة ضبط</button>
         </div>
         <p className="hq-stage-line" role="status"><SimTag /> {STAGE_AR[snap.stage]}{snap.scenario ? ` — ${SCENARIO_BY_ID[snap.scenario].goal}` : ""}</p>
       </section>
 
-      {ui.selected && <AgentCard id={ui.selected} status={snap.statuses[ui.selected]} onClose={() => select(null)} onVisit={() => store.set({ viewNonce: ui.viewNonce + 1 })} />}
+      <p className="sr-only" role="status" aria-live="polite">{ui.selected ? `تم اختيار ${AGENTS[ui.selected].nameAr} — ${AGENTS[ui.selected].role}` : ""}</p>
+      {ui.selected && <AgentCard id={ui.selected} status={snap.statuses[ui.selected]} onClose={() => select(null)}
+        onVisit={() => { store.set({ viewNonce: ui.viewNonce + 1 }); rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }} />}
 
       <section className="card hq-panels">
         <div className="hq-tabs" role="tablist" aria-label="أقسام المقر">
           {([["people", "الموظفون"], ["tasks", "المهام"], ["approvals", "الموافقات"], ["reports", "التقارير"], ["log", "السجل"]] as [Panel, string][]).map(([id, label]) => (
-            <button key={id} role="tab" id={"hq-tab-" + id} aria-selected={ui.panel === id} aria-controls={"hq-panel-" + id} className={ui.panel === id ? "on" : ""} onClick={() => store.set({ panel: id })}>
-              {label}{id === "approvals" && snap.stage === "awaiting" && <span className="hq-dot" aria-label="بند بانتظارك" />}
+            <button key={id} role="tab" id={"hq-tab-" + id} aria-selected={ui.panel === id} aria-controls={"hq-panel-" + id} tabIndex={ui.panel === id ? 0 : -1}
+              className={ui.panel === id ? "on" : ""} onClick={() => store.set({ panel: id })} onKeyDown={onTabKey}>
+              {label}{id === "approvals" && snap.stage === "awaiting" && <><span className="hq-dot" aria-hidden="true" /><span className="sr-only"> (بند بانتظارك)</span></>}
             </button>
           ))}
         </div>
@@ -168,16 +187,16 @@ export default function HqScreen() {
               <div className="hq-approval">
                 <strong>{SCENARIO_BY_ID[snap.scenario].approval.title}</strong>
                 <small className="muted">{SCENARIO_BY_ID[snap.scenario].approval.impact}</small>
-                <button className="btn btn-primary btn-sm" onClick={() => { if (sim.approve()) store.set({ panel: "reports" }); }}><Icon name="check" size={16} />اعتماد تجريبي</button>
+                <button className="btn btn-primary btn-sm" onClick={() => { if (act(() => sim.approve())) store.set({ panel: "reports" }); }}><Icon name="check" size={16} />اعتماد تجريبي</button>
                 <small className="muted">الاعتماد هنا لا يرسل شيئًا ولا ينفّذ أي إجراء؛ ينهي المحاكاة فقط.</small>
               </div>
             ) : <p className="muted hq-empty">لا شيء بانتظار اعتمادك في المحاكاة.</p>
           )}
           {ui.panel === "reports" && (
-            snap.approvedCount > 0 || snap.stage === "approved" ? (
+            snap.lastApproved ? (
               <div className="hq-report">
-                <strong>{(snap.scenario ? SCENARIO_BY_ID[snap.scenario] : scenario).report.title}</strong>
-                <ul>{(snap.scenario ? SCENARIO_BY_ID[snap.scenario] : scenario).report.lines.map((l) => <li key={l}>{l}</li>)}</ul>
+                <strong>{SCENARIO_BY_ID[snap.lastApproved].report.title}</strong>
+                <ul>{SCENARIO_BY_ID[snap.lastApproved].report.lines.map((l) => <li key={l}>{l}</li>)}</ul>
                 <small className="muted">تقرير توضيحي من المحاكاة؛ لا يستند إلى بيانات حقيقية.</small>
               </div>
             ) : <p className="muted hq-empty">تظهر التقارير التجريبية هنا بعد اعتماد نتيجة محاكاة.</p>
@@ -246,12 +265,14 @@ function People({ store, snap, onSelect }: { store: HqStore; snap: Snapshot; onS
 function AgentCard({ id, status, onClose, onVisit }: { id: AgentId; status: Status; onClose: () => void; onVisit: () => void }) {
   const a = AGENTS[id];
   const f = FRAMES[id];
+  const head = useRef<HTMLHeadingElement>(null);
+  useEffect(() => { head.current?.focus({ preventScroll: true }); }, [id]);
   return (
     <section className="card hq-agent-card" aria-labelledby="hq-agent-name" style={{ ["--tint" as string]: a.tint }}>
       <div className="hq-agent-top">
         <span className={"hq-avatar lg" + (id === "BASHT" ? " exec" : "")} aria-hidden="true">{a.nameAr.slice(0, 1)}</span>
         <div className="grow">
-          <h2 id="hq-agent-name" className={id === "BASHT" ? "gold-name" : ""}>{a.nameAr} <small className="muted mono">{a.id}</small></h2>
+          <h2 id="hq-agent-name" ref={head} tabIndex={-1} className={id === "BASHT" ? "gold-name" : ""}>{a.nameAr} <small className="muted mono">{a.id}</small></h2>
           <p className="muted">{a.role}{f.office.exec ? " · الجناح التنفيذي" : ""}</p>
         </div>
         <button className="icon-btn" onClick={onClose} aria-label="إغلاق البطاقة"><Icon name="close" size={18} /></button>

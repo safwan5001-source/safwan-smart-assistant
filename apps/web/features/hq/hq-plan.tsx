@@ -3,20 +3,34 @@
  * 2D floor plan of the HQ — the same data as the 3D scene. Shown when WebGL is unavailable, when the user prefers it, and as the
  * accessible alternative (every office is a real button). Character dots move with the simulation via direct DOM updates.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
 import { BUILDING, OFFICES, WALLS, ZONES, FURNITURE, footprint } from "@/lib/hq/layout";
 import type { HqSim } from "@/lib/hq/sim";
 import { STATUS_AR } from "@/lib/hq/sim";
 
 const PAD = 1;
-const VB = `${BUILDING.x0 - PAD} ${BUILDING.z0 - PAD} ${BUILDING.x1 - BUILDING.x0 + PAD * 2} ${BUILDING.z1 - BUILDING.z0 + PAD * 2}`;
+const W = BUILDING.x1 - BUILDING.x0 + PAD * 2, H = BUILDING.z1 - BUILDING.z0 + PAD * 2;
+const VB = `${BUILDING.x0 - PAD} ${BUILDING.z0 - PAD} ${W} ${H}`;
+// portrait screens: the plan is turned a quarter so the building's long side runs down the screen (text stays upright)
+const VB_PORTRAIT = `${-(BUILDING.z1 + PAD)} ${BUILDING.x0 - PAD} ${H} ${W}`;
 
 export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim; selected: AgentId | null; onSelect: (id: AgentId) => void; paused: boolean }) {
   const dots = useRef<Partial<Record<AgentId, SVGGElement | null>>>({});
+  const svg = useRef<SVGSVGElement>(null);
+  const [portrait, setPortrait] = useState(false);
+  useEffect(() => {
+    const el = svg.current?.parentElement;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setPortrait(e.contentRect.height > e.contentRect.width * 1.05));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const up = (x: number, y: number) => (portrait ? `rotate(-90 ${x} ${y})` : undefined);
   useEffect(() => {
     let raf = 0;
     const draw = () => {
+      if (paused) { raf = requestAnimationFrame(draw); return; }
       for (const id of AGENT_IDS) {
         const g = dots.current[id], w = sim.walkers[id];
         if (g) g.setAttribute("transform", `translate(${w.pos[0].toFixed(3)} ${w.pos[1].toFixed(3)})`);
@@ -28,7 +42,8 @@ export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim
   }, [sim, paused]);
 
   return (
-    <svg className="hq-plan" viewBox={VB} role="group" aria-label="مخطط المقر من الأعلى">
+    <svg ref={svg} className={"hq-plan" + (portrait ? " portrait" : "")} viewBox={portrait ? VB_PORTRAIT : VB} role="group" aria-label="مخطط المقر من الأعلى">
+     <g transform={portrait ? "rotate(90)" : undefined}>
       <rect x={BUILDING.x0} y={BUILDING.z0} width={BUILDING.x1 - BUILDING.x0} height={BUILDING.z1 - BUILDING.z0} rx={0.4} className="hq-plan-floor" />
       {Object.values(ZONES).filter((z) => "rect" in z).map((z) => {
         const r = (z as { rect: { x0: number; x1: number; z0: number; z1: number } }).rect;
@@ -51,15 +66,15 @@ export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim
               role="button" tabIndex={0} aria-label={`مكتب ${a.nameAr} — ${a.role}`} aria-pressed={selected === o.id}
               onClick={() => onSelect(o.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(o.id); } }}
             />
-            <text x={cx} y={cz - (o.exec ? 1.4 : 0.6)} className={"hq-plan-name" + (o.exec ? " exec" : "")}>{a.nameAr}</text>
-            <text x={cx} y={cz + (o.exec ? -0.4 : 0.35)} className="hq-plan-role">{a.role}</text>
+            <text x={cx} y={cz - (o.exec ? 1.4 : 0.45)} transform={up(cx, cz - (o.exec ? 1.4 : 0.45))} className={"hq-plan-name" + (o.exec ? " exec" : "")}>{a.nameAr}</text>
+            <text x={cx} y={cz + (o.exec ? -0.2 : 0.55)} transform={up(cx, cz + (o.exec ? -0.2 : 0.55))} className={"hq-plan-role" + (o.exec ? "" : " office")}>{a.role}</text>
           </g>
         );
       })}
-      <text x={(ZONES.meeting.rect.x0 + ZONES.meeting.rect.x1) / 2} y={ZONES.meeting.rect.z1 - 0.5} className="hq-plan-role">{ZONES.meeting.label}</text>
-      <text x={(ZONES.library.rect.x0 + ZONES.library.rect.x1) / 2} y={ZONES.library.rect.z1 - 0.5} className="hq-plan-role">{ZONES.library.label}</text>
-      <text x={(ZONES.reception.rect.x0 + ZONES.reception.rect.x1) / 2} y={ZONES.reception.rect.z1 - 0.5} className="hq-plan-role">{ZONES.reception.label}</text>
-      <text x={0} y={ZONES.command.rect.z0 + 0.1} className="hq-plan-role">{ZONES.command.label}</text>
+      <text x={(ZONES.meeting.rect.x0 + ZONES.meeting.rect.x1) / 2} y={ZONES.meeting.rect.z1 - 0.5} transform={up((ZONES.meeting.rect.x0 + ZONES.meeting.rect.x1) / 2, ZONES.meeting.rect.z1 - 0.5)} className="hq-plan-role">{ZONES.meeting.label}</text>
+      <text x={(ZONES.library.rect.x0 + ZONES.library.rect.x1) / 2} y={ZONES.library.rect.z1 - 0.5} transform={up((ZONES.library.rect.x0 + ZONES.library.rect.x1) / 2, ZONES.library.rect.z1 - 0.5)} className="hq-plan-role">{ZONES.library.label}</text>
+      <text x={(ZONES.reception.rect.x0 + ZONES.reception.rect.x1) / 2} y={ZONES.reception.rect.z1 - 0.5} transform={up((ZONES.reception.rect.x0 + ZONES.reception.rect.x1) / 2, ZONES.reception.rect.z1 - 0.5)} className="hq-plan-role">{ZONES.reception.label}</text>
+      <text x={0} y={ZONES.command.rect.z0 + 0.1} transform={up(0, ZONES.command.rect.z0 + 0.1)} className="hq-plan-role">{ZONES.command.label}</text>
       {AGENT_IDS.map((id) => (
         <g key={id} ref={(el) => { dots.current[id] = el; }} aria-hidden="true">
           <circle r={id === "BASHT" ? 0.5 : 0.38} className={"hq-plan-dot" + (id === "BASHT" ? " exec" : "") + (selected === id ? " selected" : "")} style={{ ["--tint" as string]: AGENTS[id].tint }}>
@@ -67,6 +82,7 @@ export default function HqPlan({ sim, selected, onSelect, paused }: { sim: HqSim
           </circle>
         </g>
       ))}
+     </g>
     </svg>
   );
 }

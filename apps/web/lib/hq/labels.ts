@@ -4,8 +4,8 @@
  */
 export type LabelBox = { id: string; x: number; y: number; w: number; h: number; priority: number; dist: number };
 
-/** Font size in CSS px for a label `dist` metres from the camera: large when close, never below 10px or above 16px. */
-export const labelSize = (dist: number) => Math.max(10, Math.min(16, 18.5 - dist * 0.22));
+/** Font size in CSS px for a label `dist` metres from the camera: large when close, never below 11.5px or above 16px. */
+export const labelSize = (dist: number) => Math.max(11.5, Math.min(16, 18.5 - dist * 0.2));
 /** Approximate rendered width of an Arabic name in IBM Plex Sans Arabic (600) at `size` px. */
 export const labelWidth = (text: string, size: number) => text.length * size * 0.62 + 6;
 

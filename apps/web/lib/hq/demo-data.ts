@@ -5,10 +5,6 @@
  */
 import type { AgentId } from "./roster";
 
-/** A value that exists only inside the simulation. The UI must render these with the «محاكاة» marker. */
-export type Simulated<T> = { readonly simulated: true; readonly value: T };
-export const simulated = <T,>(value: T): Simulated<T> => ({ simulated: true, value });
-
 export type ScenarioId = "fleet" | "marketing" | "finance" | "tech";
 export type Scenario = {
   id: ScenarioId;

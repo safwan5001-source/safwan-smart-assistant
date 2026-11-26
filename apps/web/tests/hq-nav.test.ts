@@ -22,8 +22,10 @@ describe("navigation with the HQ flag", () => {
     expect(hrefs(navFor(true))).toContain("/files");
     expect(hrefs(navFor(true))).toContain("/hq");
   });
-  it("is off unless the build sets NEXT_PUBLIC_HQ_ENABLED=1", () => {
-    expect(HQ_ENABLED).toBe(process.env.NEXT_PUBLIC_HQ_ENABLED === "1");
+  it("is off unless the build sets NEXT_PUBLIC_HQ_ENABLED=1 (and the test run does not set it)", () => {
+    expect(process.env.NEXT_PUBLIC_HQ_ENABLED).toBeUndefined();
+    expect(HQ_ENABLED).toBe(false);
+    expect(readFileSync(join(WEB, "lib/hq/flag.ts"), "utf8")).toMatch(/process\.env\.NEXT_PUBLIC_HQ_ENABLED === "1"/);
   });
 });
 
@@ -37,13 +39,19 @@ describe("HQ isolation (simulation only — no real data, no network)", () => {
   it("never imports the owner's stores, commands, server code or assistant client", () => {
     for (const f of hqFiles) {
       const src = readFileSync(f, "utf8");
-      expect(src, f).not.toMatch(/from\s+["']@\/lib\/(stores|commands|storage|assistant|files-db|notifications|reminders|push-client|browser-client)["']/);
-      expect(src, f).not.toMatch(/from\s+["']@\/server\//);
+      // static AND dynamic imports, including sub-paths
+      expect(src, f).not.toMatch(/(from\s+|import\s*\(\s*)["']@\/lib\/(stores|commands|storage|assistant|files-db|notifications|reminders|push-client|browser-client|agent-activity)(["'/])/);
+      expect(src, f).not.toMatch(/(from\s+|import\s*\(\s*)["'](@\/server|@\/app\/api)/);
       expect(src, f).not.toMatch(/\bfetch\s*\(|XMLHttpRequest|WebSocket|EventSource|sendBeacon/);
     }
   });
-  it("loads no third-party script or asset at runtime (no CDN)", () => {
-    for (const f of hqFiles) expect(readFileSync(f, "utf8"), f).not.toMatch(/https?:\/\/(?!www\.w3\.org)/);
+  it("loads no third-party script or asset at runtime (no CDN, only same-origin paths)", () => {
+    for (const f of hqFiles) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).not.toMatch(/https?:\/\/(?!www\.w3\.org)|\/\/cdn\./);
+      // every loader input is a same-origin path from the generated manifest or the brand assets
+      for (const m of src.matchAll(/useLoader\([^,]+,\s*([^,)]+)/g)) expect(m[1], f).toMatch(/assetUrl|URLS|BRAND_ASSETS/);
+    }
   });
   it("adds exactly one storage key, for display preferences only", () => {
     expect(PREFS_KEY).toBe("safwan-hq-prefs");

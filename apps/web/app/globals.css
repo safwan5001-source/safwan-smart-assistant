@@ -710,7 +710,8 @@ tr:last-child td { border-bottom: 0; }
 
 /* ── BASHT HQ (المقر) ─────────────────────────────────────────────────────
    Everything below is scoped to .hq-* and only used on /hq and the home entry card. */
-.hq-page { gap: 12px; }
+.hq-page { gap: 12px; overflow-x: clip; }
+.hq-page > * { min-width: 0; }
 .hq-head { display: flex; align-items: center; gap: 12px; }
 .hq-head h1 { font-size: clamp(20px, 5.4vw, 26px); }
 .hq-head p { font-size: 13.5px; }
@@ -729,7 +730,11 @@ tr:last-child td { border-bottom: 0; }
 .hq-viewport { position: relative; height: min(64svh, 560px); min-height: 340px; border-radius: var(--radius-xl); overflow: hidden; border: 1px solid var(--border);
   background: radial-gradient(120% 90% at 50% 0%, #f6f2ff 0%, #e6def6 55%, #d9cdee 100%); box-shadow: var(--shadow); isolation: isolate; }
 :root[data-theme="dark"] .hq-viewport { background: radial-gradient(120% 90% at 50% 0%, #2a1f4a 0%, #1a1233 60%, #120c24 100%); }
-@media (orientation: landscape) and (max-height: 520px) { .hq-viewport { height: calc(100svh - 24px); } }
+/* phone landscape: the stage takes the screen between the top bar and the tab bar; the title row steps aside */
+@media (orientation: landscape) and (max-height: 520px) {
+  .hq-viewport { height: calc(100svh - var(--topbar-h) - var(--bottom-nav-h) - env(safe-area-inset-bottom) - 20px); min-height: 220px; }
+  .hq-head { display: none; }
+}
 @media (min-width: 900px) { .hq-viewport { height: min(68vh, 680px); } }
 .hq-stage.immersive { position: fixed; inset: 0; z-index: 80; background: var(--bg); padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .hq-stage.immersive .hq-viewport { height: 100%; min-height: 0; border-radius: 0; border: 0; }
@@ -747,10 +752,9 @@ html.hq-immersive-on .bottom-nav { display: none; }
 .hq-labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 1; }
 .hq-labels.off { display: none; }
 .hq-name, .hq-room-label { position: absolute; top: 0; left: 0; right: auto; white-space: nowrap; will-change: transform; visibility: hidden; line-height: 1.15; }
-.hq-name { font-weight: 700; color: rgba(255, 255, 255, .93); text-shadow: 0 0 3px rgba(20, 10, 40, .95), 0 1px 6px rgba(20, 10, 40, .7); pointer-events: auto; cursor: pointer; padding: 2px 3px; }
+.hq-name { font-weight: 700; color: rgba(255, 255, 255, .95); text-shadow: 0 0 2px rgba(20, 10, 40, 1), 0 0 4px rgba(20, 10, 40, .95), 0 1px 8px rgba(20, 10, 40, .75); pointer-events: none; padding: 2px 3px; }
 .hq-name.ceo { color: #f6cf5a; text-shadow: 0 0 3px rgba(30, 15, 0, .98), 0 1px 7px rgba(25, 10, 45, .85); }
-.hq-room-label { display: grid; justify-items: center; font-weight: 600; color: rgba(255, 255, 255, .78); text-shadow: 0 0 3px rgba(20, 10, 40, .9); }
-.hq-room-label small { font-size: .78em; font-weight: 500; opacity: .85; line-height: 1.2; }
+.hq-room-label { font-weight: 600; color: rgba(255, 255, 255, .86); text-shadow: 0 0 2px rgba(20, 10, 40, 1), 0 0 5px rgba(20, 10, 40, .85); }
 
 .hq-toolbar { position: absolute; z-index: 2; inset-block-start: 10px; inset-inline-end: 10px; display: grid; gap: 6px; padding: 5px; border-radius: 14px; background: var(--glass); border: 1px solid var(--border); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); box-shadow: var(--shadow); }
 .hq-tool { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; color: var(--text); transition: background var(--t-fast), color var(--t-fast); }
@@ -773,12 +777,13 @@ html.hq-immersive-on .bottom-nav { display: none; }
 .hq-plan-office { fill: color-mix(in srgb, var(--tint) 14%, var(--surface)); stroke: color-mix(in srgb, var(--tint) 55%, transparent); stroke-width: .08; cursor: pointer; }
 .hq-plan-office:hover, .hq-plan-office:focus-visible { fill: color-mix(in srgb, var(--tint) 26%, var(--surface)); outline: none; stroke-width: .16; }
 .hq-plan-office.selected { stroke: var(--tint); stroke-width: .22; }
-.hq-plan-name { font-size: .78px; font-weight: 700; fill: var(--text); } .hq-plan-name.exec { font-size: 1.1px; fill: var(--gold-ink); }
-.hq-plan-role { font-size: .5px; fill: var(--muted); }
+.hq-plan-name { font-size: 1.05px; font-weight: 700; fill: var(--text); } .hq-plan-name.exec { font-size: 1.4px; fill: var(--gold-ink); }
+.hq-plan-role { font-size: .62px; fill: var(--muted); } .hq-plan.portrait .hq-plan-role.office { display: none; }
 .hq-plan-dot { fill: var(--tint); stroke: var(--surface); stroke-width: .1; } .hq-plan-dot.exec { fill: var(--gold); } .hq-plan-dot.selected { stroke: var(--text); stroke-width: .16; }
 
 .hq-sim-bar { padding: 12px; display: grid; gap: 8px; }
 .hq-sim-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+@media (max-width: 520px) { .hq-sim-row .hq-field { flex: 1 0 100%; } }
 .hq-field select { width: 100%; min-height: 40px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); padding: 0 12px; }
 .hq-stage-line { font-size: 13.5px; color: var(--muted); display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 

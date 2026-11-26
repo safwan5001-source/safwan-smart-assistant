@@ -108,7 +108,7 @@ const tmpM = new THREE.Matrix4();
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 const scaleM = new THREE.Matrix4();
 
-export default function People({ sim, quality }: { sim: HqSim; quality: "high" | "low" }) {
+export default function People({ sim }: { sim: HqSim }) {
   const meshes = useRef<Partial<Record<PartName, THREE.InstancedMesh | null>>>({});
   const robot = useRef<THREE.Group>(null);
   const robotLegs = useRef<(THREE.Object3D | null)[]>([]);
@@ -191,7 +191,7 @@ export default function People({ sim, quality }: { sim: HqSim; quality: "high" |
   return (
     <group>
       {PARTS.map((n) => (
-        <instancedMesh key={n} ref={(m) => { meshes.current[n] = m; }} args={[geos[n], material, HUMANS.length]} castShadow={quality === "high"} frustumCulled={false} />
+        <instancedMesh key={n} ref={(m) => { meshes.current[n] = m; }} args={[geos[n], material, HUMANS.length]} frustumCulled={false} />
       ))}
       <group ref={robot}>
         <group>

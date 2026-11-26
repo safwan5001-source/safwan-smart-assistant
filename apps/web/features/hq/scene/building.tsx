@@ -185,11 +185,11 @@ export default function Building({ night }: { night: boolean }) {
   const brand = FURNITURE.find((f) => f.kind === "brand-wall")!;
   return (
     <group>
-      <mesh geometry={shell.floors} material={mats.vc} receiveShadow />
-      <mesh rotation-x={-Math.PI / 2} position={[0, 0.001, 0]} material={mats.floor} receiveShadow>
+      <mesh geometry={shell.floors} material={mats.vc} />
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.001, 0]} material={mats.floor}>
         <planeGeometry args={[BUILDING.x1 - BUILDING.x0, BUILDING.z1 - BUILDING.z0]} />
       </mesh>
-      <mesh geometry={shell.solid} material={mats.vc} castShadow receiveShadow />
+      <mesh geometry={shell.solid} material={mats.vc} />
       <mesh geometry={shell.glow} material={mats.glow} />
       {instanced.map(({ kind, mesh }) => <primitive key={kind} object={mesh} />)}
       <primitive object={screens} />

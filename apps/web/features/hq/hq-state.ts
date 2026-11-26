@@ -22,6 +22,8 @@ export type HqUi = {
   mode: "3d" | "plan";
   immersive: boolean;
   panel: Panel;
+  /** OS "reduce motion": the simulation still runs (it is the feature), but camera moves are instant and idle motion stops */
+  reducedMotion: boolean;
   scenario: ScenarioId;
   query: string;
 };
@@ -32,7 +34,7 @@ const PREF_KEYS: (keyof Prefs)[] = ["labels", "night", "quality", "mode"];
 
 const DEFAULTS: HqUi = {
   selected: null, view: "overview", viewNonce: 0, labels: true, night: false, paused: false, quality: "auto", mode: "3d",
-  immersive: false, panel: "people", scenario: "fleet", query: "",
+  immersive: false, panel: "people", reducedMotion: false, scenario: "fleet", query: "",
 };
 
 function readPrefs(): Partial<Prefs> {
@@ -65,7 +67,7 @@ export function createHqStore(initial?: Partial<HqUi>) {
     /** Load saved prefs + system hints once on the client. */
     hydrate() {
       const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      this.set({ ...readPrefs(), ...(reduce ? { paused: true } : {}) });
+      this.set({ ...readPrefs(), reducedMotion: !!reduce });
     },
   };
 }

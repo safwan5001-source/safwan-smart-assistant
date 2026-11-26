@@ -2764,5 +2764,245 @@
    ],
    "yaw": 3.141592653589793
   }
+ ],
+ "characters": [
+  {
+   "id": "BASHT",
+   "tint": "#d4a017",
+   "look": {
+    "kind": "robot"
+   }
+  },
+  {
+   "id": "MIZAN",
+   "tint": "#15803d",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "ghutra",
+    "outfit": "#f4f1ea",
+    "accent": "#1f6f4a",
+    "skin": "#c99a6e",
+    "height": 1.76,
+    "build": "regular",
+    "extras": [
+     "glasses",
+     "beard"
+    ]
+   }
+  },
+  {
+   "id": "RAWAJ",
+   "tint": "#db2777",
+   "look": {
+    "kind": "human",
+    "attire": "abaya",
+    "head": "hijab",
+    "outfit": "#2b1f3a",
+    "accent": "#c026d3",
+    "skin": "#d7a982",
+    "height": 1.64,
+    "build": "slim",
+    "extras": [
+     "tablet"
+    ]
+   }
+  },
+  {
+   "id": "MIMAR",
+   "tint": "#2563eb",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "shemagh",
+    "outfit": "#e9edf2",
+    "accent": "#1d4ed8",
+    "skin": "#b98660",
+    "height": 1.81,
+    "build": "slim",
+    "extras": [
+     "headset",
+     "moustache"
+    ]
+   }
+  },
+  {
+   "id": "MASAR",
+   "tint": "#ea580c",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "shemagh",
+    "outfit": "#ede6d8",
+    "accent": "#c2410c",
+    "skin": "#a8764f",
+    "height": 1.79,
+    "build": "broad",
+    "extras": [
+     "beard",
+     "watch"
+    ]
+   }
+  },
+  {
+   "id": "NASAQ",
+   "tint": "#7c3aed",
+   "look": {
+    "kind": "human",
+    "attire": "abaya",
+    "head": "hijab",
+    "outfit": "#1c1a2b",
+    "accent": "#6d28d9",
+    "skin": "#e0b48f",
+    "height": 1.62,
+    "build": "regular",
+    "extras": [
+     "glasses"
+    ]
+   }
+  },
+  {
+   "id": "MIYAR",
+   "tint": "#0891b2",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "ghutra",
+    "outfit": "#f7f7f4",
+    "accent": "#0e7490",
+    "skin": "#c48d63",
+    "height": 1.73,
+    "build": "regular",
+    "extras": [
+     "glasses",
+     "moustache"
+    ]
+   }
+  },
+  {
+   "id": "FURAS",
+   "tint": "#ca8a04",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "ghutra",
+    "outfit": "#efe9dc",
+    "accent": "#a16207",
+    "skin": "#b07a52",
+    "height": 1.84,
+    "build": "broad",
+    "extras": [
+     "bisht",
+     "beard"
+    ]
+   }
+  },
+  {
+   "id": "BASIRA",
+   "tint": "#0d9488",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "shemagh",
+    "outfit": "#e6ebee",
+    "accent": "#0f766e",
+    "skin": "#cf9d73",
+    "height": 1.7,
+    "build": "slim",
+    "extras": [
+     "glasses",
+     "beard"
+    ]
+   }
+  },
+  {
+   "id": "RAFID",
+   "tint": "#65a30d",
+   "look": {
+    "kind": "human",
+    "attire": "abaya",
+    "head": "hijab",
+    "outfit": "#3a2a1f",
+    "accent": "#4d7c0f",
+    "skin": "#c08a62",
+    "height": 1.67,
+    "build": "regular",
+    "extras": [
+     "lanyard"
+    ]
+   }
+  },
+  {
+   "id": "SANAD",
+   "tint": "#475569",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "ghutra",
+    "outfit": "#f2efe8",
+    "accent": "#334155",
+    "skin": "#ba8a64",
+    "height": 1.78,
+    "build": "regular",
+    "extras": [
+     "bisht",
+     "glasses",
+     "beard"
+    ]
+   }
+  },
+  {
+   "id": "WISAL",
+   "tint": "#e11d48",
+   "look": {
+    "kind": "human",
+    "attire": "abaya",
+    "head": "hijab",
+    "outfit": "#2a1d2e",
+    "accent": "#be123c",
+    "skin": "#d9aa86",
+    "height": 1.66,
+    "build": "slim",
+    "extras": [
+     "headset"
+    ]
+   }
+  },
+  {
+   "id": "HASEEN",
+   "tint": "#dc2626",
+   "look": {
+    "kind": "human",
+    "attire": "thobe",
+    "head": "shemagh",
+    "outfit": "#dfe3e8",
+    "accent": "#991b1b",
+    "skin": "#a77450",
+    "height": 1.82,
+    "build": "broad",
+    "extras": [
+     "moustache",
+     "watch"
+    ]
+   }
+  },
+  {
+   "id": "KAFAAT",
+   "tint": "#9333ea",
+   "look": {
+    "kind": "human",
+    "attire": "abaya",
+    "head": "hijab",
+    "outfit": "#241b33",
+    "accent": "#a855f7",
+    "skin": "#c99872",
+    "height": 1.6,
+    "build": "regular",
+    "extras": [
+     "glasses",
+     "lanyard"
+    ]
+   }
+  }
  ]
 }
