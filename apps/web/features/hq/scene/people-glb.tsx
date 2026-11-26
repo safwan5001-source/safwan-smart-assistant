@@ -11,16 +11,19 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
 import { WALK_SPEED, type Clip, type HqSim } from "@/lib/hq/sim";
-import { SEAT_PELVIS, bodyScale, keepTrack, walkRate as rateFor } from "@/lib/hq/people";
+import { bodyScale, keepTrack, seatLift, walkRate as rateFor } from "@/lib/hq/people";
 import { ANIM_LIBS, PEOPLE_URLS, animLib, characterEntry, withMeshopt } from "./assets";
 
 const FADE = 0.28;
+const FADE_SEAT = 0.5;
 const SEATED = new Set<string>(["sit", "type", "talk"]);
 
 type Rig = {
   root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string;
   /** uniform body scale (roster height) and the lift that keeps a scaled person on the chair cushion */
   scale: number; walkRate: number;
+  /** the seated clips' actions (their summed weight scales the seat lift) and every skeleton this mount owns */
+  seated: THREE.AnimationAction[]; skeletons: THREE.Skeleton[];
 };
 
 export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
@@ -71,15 +74,26 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       const start = actions.sit ?? actions.idle;
       start?.play();
       // the capture walks at its own pace: play it at the simulation's speed so feet don't slide
-      const walkRate = human ? rateFor(WALK_SPEED, animLib(entry.anims!).walkSpeed, scale) : 1;
+      const walkRate = human ? rateFor(WALK_SPEED, animLib(entry.anims!).walkSpeed, body ? body.z : 1) : 1;
       actions.walk?.setEffectiveTimeScale(walkRate);
-      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate };
+      const skeletons = new Set<THREE.Skeleton>();
+      model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((o as THREE.SkinnedMesh).skeleton); });
+      const seated = Object.entries(actions).filter(([n, a]) => a && SEATED.has(n)).map(([, a]) => a!);
+      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate, seated, skeletons: [...skeletons] };
       // de-synchronise idle loops
       mixer.setTime(i * 0.37);
     });
     return out;
   }, [loaded]);
-  useEffect(() => () => { for (const id of AGENT_IDS) { rigs[id].mixer.stopAllAction(); rigs[id].mixer.uncacheRoot(rigs[id].root.children[0]); } shadowTex.dispose(); }, [rigs, shadowTex]);
+  useEffect(() => () => {
+    for (const id of AGENT_IDS) {
+      const r = rigs[id];
+      r.mixer.stopAllAction();
+      r.mixer.uncacheRoot(r.root.children[0]);
+      for (const sk of r.skeletons) sk.dispose(); // the per-mount bone textures (geometry/materials stay with the loader cache)
+    }
+    shadowTex.dispose();
+  }, [rigs, shadowTex]);
 
   const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4() }), []);
   useFrame((_, dt) => {
@@ -93,21 +107,23 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
         const next = r.actions[want as Clip];
         if (next) {
           // exactly one target clip: every other running action fades out (rotations blended at a total weight > 1 over-rotate)
-          for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isRunning()) a.fadeOut(FADE);
           // a clip still fading out is picked up where it is (reset() would jump its pose)
           if (!next.isRunning()) next.reset();
-          next.stopFading().setEffectiveTimeScale(want === "walk" ? r.walkRate : 1).fadeIn(FADE).play();
+          // getting up from / down onto a chair blends longer, so the body rises while it is already clear of the cushion
+          const fade = SEATED.has(r.current) !== SEATED.has(want) ? FADE_SEAT : FADE;
+          for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isRunning()) a.fadeOut(fade);
+          next.stopFading().setEffectiveTimeScale(want === "walk" ? r.walkRate : 1).fadeIn(fade).play();
           r.current = want;
         }
       }
       // paused: everyone holds still (the simulation is stopped too); reduced motion: no idle motion, walking still animates
       r.mixer.timeScale = paused ? 0 : reducedMotion && w.clip !== "walk" ? 0 : 1;
       r.mixer.update(Math.min(dt, 0.1));
-      // a person scaled below their avatar's size would sink into the cushion: lift by what the scale took off the seat
+      // a scaled person on the chair: lifted by seatLift() in proportion to how seated the current blend is
       if (r.scale !== 1) {
         let seated = 0;
-        for (const [name, a] of Object.entries(r.actions)) if (a && SEATED.has(name)) seated += a.getEffectiveWeight();
-        r.root.position.y = SEAT_PELVIS * (1 - r.scale) * Math.min(1, seated);
+        for (const a of r.seated) seated += a.getEffectiveWeight();
+        r.root.position.y = seatLift(r.scale) * Math.min(1, seated);
       }
     }
     const sh = shadows.current;

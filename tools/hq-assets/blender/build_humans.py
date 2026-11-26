@@ -44,12 +44,13 @@ PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
 # clip key → (folder, file stem without the m_/f_ prefix, start second, length seconds)
 ROOT_NODE = "RB_ROOT"
 SEATED = ("sit", "type", "talk")
-# seated clips are placed against the HQ chair (build_building.py: cushion top 0.54 m, front edge 0.24 m ahead of the chair
-# centre = the person's origin in the simulation): feet flat on the floor, knees just past the cushion's front edge
-KNEE_FORWARD = 0.30
+# seated clips are placed against the HQ chair (build_building.py: cushion top 0.50 m, front edge 0.24 m ahead of the chair
+# centre = the person's origin in the simulation, backrest 0.19–0.27 m behind it): feet flat on the floor, knees past the
+# cushion's front edge
+KNEE_FORWARD = {"m": 0.34, "f": 0.42}  # women further forward: a hijab / abaya drape must clear the backrest
 # the male captures were taken on a lower chair than the female ones: men sit this much higher (feet barely clear the
 # floor) so the hips rest on the 0.50 m cushion instead of sinking into it
-SEAT_LIFT = {"m": 0.02, "f": 0.0}
+SEAT_LIFT = {"m": 0.01, "f": 0.0}
 COPYRIGHT = "Microsoft Rocketbox (MIT licence, see LICENSE-rocketbox.txt); composed for BASHT HQ"
 # only these nodes keep translation keys: every other bone's length comes from the avatar wearing the clip, so tall and
 # short people keep their own proportions
@@ -347,6 +348,15 @@ def hijab_shell(arm, tint_hex):
     tex.image = new_image_np("hijab_color", a2)
     slot.material.name = "hijab_cloth"
     slot.material.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = 0.85
+    # the drape (below the chin) stands 1.5 cm off the body: shoulders and lapels moving with the arms stay under it
+    chin = eye_level(h_arm) - 0.12
+    h.data.update()
+    mw, mwi = h.matrix_world, h.matrix_world.inverted()
+    for v in h.data.vertices:
+        p = mw @ v.co
+        if p.z < chin:
+            n = (mw.to_3x3() @ v.normal).normalized()
+            v.co = mwi @ (p + n * 0.015 * min(1.0, (chin - p.z) / 0.06))
     old = move_to(h, arm)
     drop([old])
     return h
@@ -403,14 +413,8 @@ def compose(model, look):
         f_arm, f = import_avatar(look["face"])
         keep_parts(f, {"head", "opacity"})
         drop([move_to(f, arm)])
-        if head in ("ghutra", "shemagh"):
-            # the outfit's own head carries the crown of the headdress (cloth above the brows): keep only that
-            _above, cloth = head_regions(mesh, arm)
-            parts = [part_of(s.material.name) for s in mesh.material_slots]
-            delete_faces(mesh, {p.index for p in mesh.data.polygons
-                                if parts[p.material_index] in ("head", "opacity") and p.index not in cloth})
-        else:
-            keep_parts(mesh, {"body", "keffiyeh"})
+        # the outfit's own head goes entirely (the headdress crown is part of the keffiyeh mesh)
+        keep_parts(mesh, {"body", "keffiyeh"})
         extra.append(f)
         wearer = f
     if head == "ghutra":
@@ -543,7 +547,7 @@ def build_anims(sex):
             ankle = min(joint(host, "Bip01 L Foot").z, joint(host, "Bip01 R Foot").z)
             knee = (joint(host, "Bip01 L Calf") + joint(host, "Bip01 R Calf")) / 2
             # the person faces -Y here (+Z in the app): knees KNEE_FORWARD ahead of the chair centre, centred sideways
-            shift = (-knee.x, -KNEE_FORWARD - knee.y, ankle_stand - ankle + SEAT_LIFT[sex])
+            shift = (-knee.x, -KNEE_FORWARD[sex] - knee.y, ankle_stand - ankle + SEAT_LIFT[sex])
             for fc in action_fcurves(baked):
                 if fc.data_path == "location":
                     for kp in fc.keyframe_points:

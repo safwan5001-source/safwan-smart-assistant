@@ -54,7 +54,7 @@ covered Rocketbox avatars of each sex.
 | SANAD | القانونية | thobe + white ghutra | Male_Adult_19 | own |
 | MIMAR | التقنية | shirt and trousers | Business_Male_06 | own |
 | BASIRA | ذكاء الأعمال | suit | Business_Male_05 | own |
-| HASEEN | الأمن السيبراني | suit | Business_Male_01 | own |
+| HASEEN | الأمن السيبراني | suit | Business_Male_03 | own |
 | RAWAJ | التسويق | trouser suit + hijab (rose) | Business_Female_01 | own |
 | NASAQ | الإدارة | long cardigan, trousers + hijab (navy) | Female_Adult_09 | own |
 | RAFID | المشتريات | trouser suit + hijab (beige) | Business_Female_04 | own |
@@ -97,8 +97,29 @@ An independent reviewer subagent checked the visuals, code, licence and performa
 | P2 | About 60 MB GPU texture memory. | Open: KTX2 needs the encoder tool (owner approval). |
 | P3 | Walk rate ignored body scale; label height; docstring; extras; copyright. | All fixed. `extras` are documented as greybox-only, and the GLBs carry `asset.copyright`. |
 
+### Round 2 (review of 86d353d) and fixes
+
+Round 2 confirmed several round-1 fixes: seamless loops, full joint tracks, the shared skeleton, the licence and the faces.
+
+| # | Finding | Fix |
+|---|---|---|
+| P1 | Seated women: the hijab or abaya stuck out about 10 cm behind the chair backrest. | Seat depth set per sex: knees 0.42 m forward for women, 0.34 m for men. A test keeps the hips in front of the backrest. Checked in the app from behind the meeting table. |
+| P2 | The jacket showed through the hijab drape while the arms moved. | The drape below the chin is inflated 1.5 cm. |
+| P2 | Scaled-down men's feet floated 4–5.5 cm when seated. | `seatLift(s)` splits the difference: hips at most about 1.5 cm into the cushion, feet at most about 1.5 cm off the floor. The male capture lift is now 1 cm. A test covers body scales 0.93, 1 and 1.03. |
+| P2 | Standing up and sitting down blended through the chair in 0.28 s. | Seated↔walking blends take 0.5 s, so the body rises while it moves clear. A proper stand-up phase needs the simulation to pause at the seat: listed below. |
+| P2 | Build width stretched faces (±5–6 %). | Reduced to ±3–4 %. |
+| P2 | HASEEN's hair cards looked ragged. | Recast to Business_Male_03, which has modelled hair. |
+| P2 | Leftover crown faces cost a 512² texture and a draw call each for 3 people. | Removed (the crown belongs to the keffiyeh mesh). Now 60–64 draw calls and 62 textures. |
+| P3 | Walk rate ignored build width. The walk test only checked a formula. The knee threshold was below the cushion edge. Stale comment. Skeleton textures were never freed. | All fixed. The walk test now measures the planted foot's speed from the shipped clip. Knees must reach past 0.24 m. Skeletons are disposed on unmount, and seated actions are precomputed. |
+
+Still open:
+- Cloth (thobe or abaya hem) hangs through the cushion when seated. This needs cloth simulation; it is hidden at normal camera angles.
+- Body textures are not shared between people who wear the same outfit (separate files).
+- KTX2.
+
 ## 6. Open items for the owner
 
 1. Approve the casting and attire mix above. Any person can be re-cast by editing `look` in `roster.ts` and running `build.sh humans`.
 2. Optional: allow KTX2 texture encoding (needs the KTX-Software tool). This cuts GPU memory by about 4–6× on phones.
 3. Optional: a seated typing clip (CMU or Quaternius CC0, retargeted with the same bake step).
+4. Optional: a stand-up / sit-down phase. The simulation would hold a person at the chair for about 0.8 s, and Rocketbox's sit-down and stand-up takes would play. It changes the simulation's timing, so it is proposed rather than done.

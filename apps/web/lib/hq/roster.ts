@@ -89,7 +89,7 @@ export const ROSTER: readonly Agent[] = [
     look: human("abaya", "hijab", "#16131c", "#1a171f", "#d9aa86", 1.66, "slim", ["headset"], "Adults/Female_Adult_10"),
     duties: ["متابعة طلبات العملاء", "قياس رضا العملاء", "تنسيق الردود والشكاوى"] },
   { id: "HASEEN", nameAr: "حصين", role: "الأمن السيبراني", tint: "#dc2626",
-    look: human("suit", "none", "#1f1f24", "#991b1b", "#e0b392", 1.82, "broad", ["watch"], "Professions/Business_Male_01"),
+    look: human("suit", "none", "#1f1f24", "#991b1b", "#e6c2a4", 1.82, "broad", ["watch"], "Professions/Business_Male_03"),
     duties: ["مراقبة الحماية والصلاحيات", "مراجعة الثغرات والتحديثات", "إدارة الاستجابة للحوادث"] },
   { id: "KAFAAT", nameAr: "كفاءات", role: "الموارد البشرية", tint: "#9333ea",
     look: human("abaya", "hijab", "#8a7a45", "#f2f0ea", "#c99872", 1.60, "regular", ["lanyard"], "Adults/Female_Adult_06"),

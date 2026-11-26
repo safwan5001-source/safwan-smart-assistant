@@ -6,7 +6,7 @@ import { GLTFLoader, type GLTF } from "three/examples/jsm/loaders/GLTFLoader.js"
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { HQ_ASSETS } from "@/lib/hq/assets.generated";
 import { AGENT_IDS } from "@/lib/hq/roster";
-import { keepTrack, walkRate } from "@/lib/hq/people";
+import { keepTrack, seatLift, walkRate } from "@/lib/hq/people";
 
 /**
  * The motion the people actually play: decodes the shipped clip libraries (meshopt) and checks what a viewer would see —
@@ -62,27 +62,52 @@ describe("HQ people — motion-capture clips as played", () => {
       }
     }
   });
-  it("sit on the HQ chair: feet on the floor, pelvis just above the 0.50 m cushion, knees past its front edge", () => {
+  it("sit on the HQ chair at every body scale the app uses: feet on the floor, hips on the 0.50 m cushion, knees past its front edge, back clear of the backrest", () => {
     for (const [k, g] of Object.entries(parsed)) {
       const stand = pose(g, "idle", 0).ankle;
-      for (const clip of ["sit", "type", "talk"]) for (const t of [0, 1.5, 3]) {
+      for (const clip of ["sit", "type", "talk"]) for (const t of [0, 1.5, 3, 5]) {
         const p = pose(g, clip, t);
-        expect(Math.abs(p.ankle - stand), `${k} ${clip} @${t}s feet vs floor`).toBeLessThan(0.04);
-        expect(p.pelvis.y, `${k} ${clip} pelvis height`).toBeGreaterThan(0.56);
-        expect(p.pelvis.y, `${k} ${clip} pelvis height`).toBeLessThan(0.66);
-        expect(p.knee.z, `${k} ${clip} knees forward of the chair centre`).toBeGreaterThan(0.2); // the person faces +z
+        for (const s of [0.93, 1, 1.03]) { // people-glb: model scaled about the floor by s, root lifted by seatLift(s)
+          const lift = seatLift(s);
+          expect(Math.abs(p.ankle * s + lift - stand * s), `${k} ${clip} @${t}s ×${s} feet vs floor`).toBeLessThan(0.035);
+          expect(p.pelvis.y * s + lift, `${k} ${clip} ×${s} pelvis on the cushion`).toBeGreaterThan(0.55);
+          expect(p.pelvis.y * s + lift, `${k} ${clip} ×${s} pelvis on the cushion`).toBeLessThan(0.66);
+        }
+        // the person faces +z; chair (build_building.py): cushion z −0.22…0.24, backrest z −0.27…−0.19
+        expect(p.knee.z, `${k} ${clip} knees past the cushion's front edge`).toBeGreaterThan(0.24);
         expect(Math.abs(p.knee.x), `${k} ${clip} centred on the chair`).toBeLessThan(0.06);
-        expect(p.pelvis.z, `${k} ${clip} hips over the cushion`).toBeLessThan(0.05);
-        expect(p.pelvis.z, `${k} ${clip} hips over the cushion`).toBeGreaterThan(-0.2);
+        expect(p.pelvis.z - 0.14, `${k} ${clip} seat of the hips on the cushion, in front of the backrest`).toBeGreaterThan(-0.24);
+        expect(p.pelvis.z, `${k} ${clip} hips over the cushion`).toBeLessThan(0.12);
       }
     }
   });
-  it("walk in place at the simulation's pace (any body scale keeps the stride matched)", () => {
+  it("walk in place at the simulation's pace: the planted foot slides back at the manifest's capture speed", () => {
     for (const [k, g] of Object.entries(parsed)) {
-      const a = pose(g, "walk", 0).pelvis, b = pose(g, "walk", 0.5).pelvis;
+      const clip = g.animations.find((a) => a.name === "walk")!;
+      const a = pose(g, "walk", 0).pelvis, b = pose(g, "walk", clip.duration / 2).pelvis;
       expect(Math.hypot(a.x - b.x, a.z - b.z), `${k} root stays in place`).toBeLessThan(0.05);
-      expect(libs[k].walkSpeed).toBeGreaterThan(1.1);
-      for (const s of [0.93, 1, 1.03]) expect(walkRate(1.35, libs[k].walkSpeed, s) * libs[k].walkSpeed * s).toBeCloseTo(1.35, 2);
+      // measure the capture speed independently: while a foot is planted (lowest), it moves backwards at walking speed
+      const n = 40, dt = clip.duration / n, samples: { y: number; z: number }[] = [];
+      for (let i = 0; i <= n; i++) {
+        const c = g.animations.find((x) => x.name === "walk")!;
+        const mixer = new THREE.AnimationMixer(g.scene);
+        mixer.clipAction(new THREE.AnimationClip(c.name, c.duration, c.tracks.filter((tr) => keepTrack(tr.name)))).play();
+        mixer.setTime(i * dt);
+        g.scene.updateMatrixWorld(true);
+        const f = g.scene.getObjectByName("Bip01_L_Foot")!.getWorldPosition(new THREE.Vector3());
+        samples.push({ y: f.y, z: f.z });
+        mixer.stopAllAction(); mixer.uncacheRoot(g.scene);
+      }
+      const low = Math.min(...samples.map((q) => q.y));
+      const speeds: number[] = [];
+      for (let i = 1; i < samples.length; i++)
+        if (samples[i].y < low + 0.015 && samples[i - 1].y < low + 0.015) speeds.push(Math.abs(samples[i].z - samples[i - 1].z) / dt);
+      expect(speeds.length, `${k} planted samples`).toBeGreaterThan(5);
+      const measured = speeds.reduce((x, y) => x + y, 0) / speeds.length;
+      expect(measured / libs[k].walkSpeed, `${k} measured ${measured.toFixed(2)} m/s vs manifest ${libs[k].walkSpeed}`).toBeGreaterThan(0.85);
+      expect(measured / libs[k].walkSpeed, `${k} measured ${measured.toFixed(2)} m/s vs manifest ${libs[k].walkSpeed}`).toBeLessThan(1.15);
+      // and the app's playback rate turns that into the simulation's 1.35 m/s for any stride scale
+      for (const s of [0.9, 1, 1.07]) expect(walkRate(1.35, libs[k].walkSpeed, s) * libs[k].walkSpeed * s).toBeCloseTo(1.35, 2);
     }
   });
 });

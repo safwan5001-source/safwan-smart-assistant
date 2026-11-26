@@ -2989,13 +2989,13 @@
     "head": "none",
     "outfit": "#1f1f24",
     "accent": "#991b1b",
-    "skin": "#e0b392",
+    "skin": "#e6c2a4",
     "height": 1.82,
     "build": "broad",
     "extras": [
      "watch"
     ],
-    "model": "Professions/Business_Male_01"
+    "model": "Professions/Business_Male_03"
    }
   },
   {
