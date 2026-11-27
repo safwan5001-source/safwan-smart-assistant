@@ -10,7 +10,7 @@ import Icon from "@/components/icon";
 import Modal from "@/components/modal";
 import { Badge, Empty, ListSkeleton, Notice, PageHeader } from "@/components/ui";
 import { bashtClient } from "@/lib/basht-client";
-import { controlClient, controlErrorText, isUnavailable, MEMORY_STATE, type MemoryHit, type MemoryStatus, type MemoryText } from "@/lib/basht-control";
+import { controlClient, controlErrorText, isUnavailable, latestOnly, MEMORY_STATE, type MemoryHit, type MemoryStatus, type MemoryText } from "@/lib/basht-control";
 import { formatSize, formatTime } from "@/lib/format";
 
 type Doc = { title: string; load: (part: number) => Promise<MemoryText & { exists?: boolean }> };
@@ -33,14 +33,18 @@ export default function MemoryScreen() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
+  // only the newest search (or page) may update the results: a slower, superseded answer is dropped
+  const latest = useRef(latestOnly()).current;
   const run = async (text: string, page: number) => {
     const t = text.trim();
     if (!t) return;
+    const token = latest.begin();
     setSearching(true); setSearchError("");
     try {
       const r = await controlClient.memorySearch(t, page);
+      if (!latest.current(token)) return;
       setSearch((prev) => ({ q: t, page, hits: page > 0 && prev?.q === t ? [...prev.hits, ...r.results] : r.results, more: r.more, stale: r.stale }));
-    } catch (e) { setSearchError(controlErrorText(e)); } finally { setSearching(false); }
+    } catch (e) { if (latest.current(token)) setSearchError(controlErrorText(e)); } finally { if (latest.current(token)) setSearching(false); }
   };
 
   const st = status ? MEMORY_STATE[status.state] ?? MEMORY_STATE.unknown : null;

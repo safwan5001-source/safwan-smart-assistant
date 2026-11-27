@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BASHT_COOKIE, handleBashtChat, readBashtGate, resetBashtLimits, type Deps } from "@/server/basht-chat";
 import { issueCookieValue } from "@/server/assistant-chat-gate";
-import { channelState, clock, count, createControlClient, duration, everyLabel, formatCost, formatTokens, missingText, relative, scheduleLabel, toolGroupLabel } from "@/lib/basht-control";
+import { channelState, clock, count, createControlClient, duration, everyLabel, formatCost, formatTokens, latestOnly, missingText, relative, scheduleLabel, toolGroupLabel } from "@/lib/basht-control";
 import { morePathsFor, navFor } from "@/lib/nav";
 
 const CODE = "basht-owner-code-0123456789-abcdefghijkl";
@@ -130,5 +130,23 @@ describe("formatters", () => {
   it("memory is reachable from المزيد and lights its tab", () => {
     expect(navFor(false).some((n) => n.href === "/memory")).toBe(true);
     expect(morePathsFor(false)).toContain("/memory");
+  });
+});
+
+describe("memory search: latest request wins (Codex review on #63)", () => {
+  it("a superseded search or page never counts as current", async () => {
+    const latest = latestOnly();
+    const shown: string[] = [];
+    const search = async (q: string, ms: number) => {
+      const t = latest.begin();
+      await new Promise((r) => setTimeout(r, ms));
+      if (latest.current(t)) shown.push(q);
+    };
+    await Promise.all([search("old", 30), search("new", 5)]); // the older request finishes last
+    expect(shown).toEqual(["new"]);
+    const page = latest.begin();
+    const fresh = latest.begin(); // a new search started while page 2 of the previous one was loading
+    expect(latest.current(page)).toBe(false);
+    expect(latest.current(fresh)).toBe(true);
   });
 });

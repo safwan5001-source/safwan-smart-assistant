@@ -73,6 +73,15 @@ export function createControlClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
 }
 export const controlClient = createControlClient();
 
+/**
+ * Latest-request-wins: `begin()` starts a request and returns its token; `current(token)` is true only while no newer request has
+ * started. A superseded answer (an older search, or a page of a previous query) must never overwrite newer results.
+ */
+export function latestOnly() {
+  let gen = 0;
+  return { begin: () => ++gen, current: (token: number) => token === gen };
+}
+
 // ───────────────────────── formatting ─────────────────────────
 const LOCALE = "ar-SA-u-ca-gregory-nu-latn";
 const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
