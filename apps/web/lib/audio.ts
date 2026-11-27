@@ -103,6 +103,13 @@ export const enterVoiceSession = (kind: VoiceSessionKind = "playback", token?: V
 };
 /** Call when that voice experience ends. A superseded token does nothing. */
 export const leaveVoiceSession = (token: VoiceToken | null | undefined): void => { try { audioSession().leaveVoice(token); } catch { /* best effort */ } };
+/**
+ * Inside a gesture of an experience that may already own the session: keep its token (changing the kind) when it is still the
+ * owner, otherwise become the owner again. Returns the token to keep.
+ */
+export const claimVoiceSession = (kind: VoiceSessionKind, token: VoiceToken | null | undefined): VoiceToken => {
+  try { const s = audioSession(); return s.isOwner(token) ? s.enterVoice(kind, token) : s.enterVoice(kind); } catch { return NO_TOKEN; }
+};
 /** Whether a voice experience owns the audio session right now. */
 export const voiceSessionActive = (): boolean => { try { return audioSession().voiceActive(); } catch { return false; } };
 

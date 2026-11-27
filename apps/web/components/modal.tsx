@@ -31,7 +31,8 @@ export default function Modal({ open, onClose, label, children, variant = "cente
       className={variant === "sheet" ? "sheet-dialog" : variant === "top" ? "top-dialog" : variant === "voice" ? "voice-dialog" : undefined}
       aria-modal="true"
       onClose={() => closeRef.current()}
-      onClick={(e) => { if (e.target === ref.current) closeRef.current(); }}
+      // a backdrop click closes a dialog — but never the voice screen (closing it ends the conversation): its own buttons do that
+      onClick={(e) => { if (variant !== "voice" && e.target === ref.current) closeRef.current(); }}
     >
       {children}
     </dialog>

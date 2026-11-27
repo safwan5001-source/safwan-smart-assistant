@@ -9,7 +9,7 @@
  * A failed /speak is never retried on its own: the provider call may already be billed — the owner decides.
  */
 import Icon from "@/components/icon";
-import { enterVoiceSession, leaveVoiceSession } from "@/lib/audio";
+import { enterVoiceSession, leaveVoiceSession, type VoiceToken } from "@/lib/audio";
 import { usePlayer, useVoiceAvailability, voicePlayer, type PlayerState } from "@/lib/basht-voice";
 import { speakGate, voiceStatusStore } from "@/lib/voice-status";
 import { useSyncExternalStore } from "react";
@@ -31,6 +31,15 @@ export function listenLabel(state: ListenState, resumable: boolean): { text: str
 }
 
 const SERVER_STATUS = voiceStatusStore.get();
+/** The audio-session token of the latest «استمع» tap: given back only by its own owner (a live session that took over keeps its). */
+let listenToken: VoiceToken | null = null;
+/** Called inside the «استمع» tap; `after` gives the session back when this reply is over (unless someone else owns it by then). */
+export function listenSession(enter = enterVoiceSession, leave = leaveVoiceSession) {
+  const t = enter("playback");
+  listenToken = t;
+  return { token: t, after: () => { leave(t); if (listenToken === t) listenToken = null; } };
+}
+export const stopListenSession = (leave = leaveVoiceSession) => { leave(listenToken); listenToken = null; };
 export default function ListenButton({ id, text }: { id: string; text: string }) {
   const player = usePlayer();
   const avail = useVoiceAvailability();
@@ -41,11 +50,10 @@ export default function ListenButton({ id, text }: { id: string; text: string })
   const tap = () => {
     const p = voicePlayer();
     // inside the tap: the playback audio session and the element unlock, so iOS plays the reply once its audio has arrived
-    if (state === "preparing" || state === "playing") { p.stop(); leaveVoiceSession(); return; }
-    enterVoiceSession("playback");
-    // when this reply is over (done, failed or stopped), the page's audio session goes back to "auto" — unless another voice
-    // (the live session, another reply) has taken the player meanwhile
-    const after = () => { const s = voicePlayer().getSnapshot(); if (s.id === null || s.id === id) leaveVoiceSession(); };
+    if (state === "preparing" || state === "playing") { p.stop(); stopListenSession(); return; }
+    // when this reply is over (done, failed or stopped), the page's audio session goes back to "auto" — only if this tap still
+    // owns it (the live session, or another reply, may have taken it meanwhile: their token wins)
+    const { after } = listenSession();
     if (resumable) { void p.resume().then(after); return; }
     p.unlock();
     void p.play(id, text).then(after);

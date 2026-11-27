@@ -52,6 +52,7 @@ import { clock, createVoiceNotes, MAX_NOTE_MS, parseVoiceNote, usePlayer, useVoi
 import { isDurableVoiceFailure, useVoiceStatus } from "@/lib/voice-status";
 import { stripMediaMarkers } from "@/lib/speakable";
 import { OPEN_VOICE_EVENT, primeVoiceFromGesture } from "@/lib/voice-launch";
+import { overlayHistory } from "@/lib/overlay-history";
 import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
 import type { BrowserRef } from "@/lib/domain";
 import { focusKey, focusTarget, newFocusScroll, nextScroll } from "@/lib/chat-scroll";
@@ -170,16 +171,10 @@ export default function ChatScreen() {
     return () => window.removeEventListener(OPEN_VOICE_EVENT, on);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   // the phone's back gesture/button closes the voice screen (and so ends the session) instead of leaving the conversation
+  // (not pushed when the screen was opened by its address: that entry is being replaced; back then returns where the owner was)
   useEffect(() => {
     if (!voice) return;
-    // (not when the screen was opened by its address: that entry is being replaced, and back then simply returns where the owner was)
-    try { if (!location.search.includes("voice=1")) history.pushState({ ...(history.state ?? {}), bashtVoice: 1 }, ""); } catch { /* no history API */ }
-    const onPop = () => setVoice(false);
-    window.addEventListener("popstate", onPop);
-    return () => {
-      window.removeEventListener("popstate", onPop);
-      try { if ((history.state as { bashtVoice?: number } | null)?.bashtVoice) history.back(); } catch { /* ignore */ }
-    };
+    return overlayHistory().open(() => setVoice(false), { push: !location.search.includes("voice=1") });
   }, [voice]);
 
   // One timeline: engine messages (server) + this device's events (local), ordered by time.
@@ -554,7 +549,7 @@ export default function ChatScreen() {
             </div>
             {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={() => { refreshHealth(); basht.refresh(); }} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
             {view.kind === "main" && model.supported && <button className="icon-btn" onClick={() => { setModelOpen(true); void model.reload(); }} aria-label="النموذج والقدرات" aria-haspopup="dialog"><Icon name="spark" size={20} /></button>}
-            {view.kind === "main" && <button className="icon-btn" onClick={() => { primeVoiceFromGesture(); openVoice(true); }} aria-label="محادثة صوتية بالتناوب مع باشت" title="محادثة صوتية (أو اضغط مطولًا على زر باشت في الأسفل)"><Icon name="wave" size={21} /></button>}
+            {view.kind === "main" && <button className="icon-btn" onClick={() => { primeVoiceFromGesture(); openVoice(true); }} aria-label="محادثة صوتية بالتناوب مع باشت — يبدأ الاستماع فورًا" title="محادثة صوتية: يبدأ الاستماع فورًا (أو اضغط مطولًا على زر باشت في الأسفل)"><Icon name="wave" size={21} /></button>}
           </div>
 
           {view.kind === "main" && bashtOn && basht.gate === "locked" && auth && !auth.owner_auth && (

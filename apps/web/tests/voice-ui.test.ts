@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { createElement } from "react";
@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { BashtError, createBashtClient, parseVoiceStatus, voiceReasonText } from "@/lib/basht-client";
 import { speakableText, stripMediaMarkers } from "@/lib/speakable";
 import { createVoiceStatusStore, isDurableVoiceFailure, speakGate } from "@/lib/voice-status";
-import ListenButton, { listenLabel, listenState } from "@/features/chat/listen-button";
+import ListenButton, { listenLabel, listenSession, listenState, stopListenSession } from "@/features/chat/listen-button";
 import type { PlayerState } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
@@ -117,11 +117,17 @@ describe("«استمع»: states, labels and a stable id", () => {
     expect(chat).toMatch(/<ListenButton id=\{m\.id \|\| key\}/);
     expect(chat).not.toMatch(/engineBubble\(it\.m, `e-\$\{it\.i\}-\$\{it\.at\}`\)/);
   });
-  it("the tap enters the playback session and unlocks inside the gesture, never re-requests by itself", () => {
-    const btn = src("features/chat/listen-button.tsx");
-    expect(btn).toMatch(/enterVoiceSession\("playback"\);[\s\S]*?p\.unlock\(\);\s*void p\.play\(id, text\)/);
-    expect(btn).not.toMatch(/setTimeout|setInterval/);
+  it("the tap owns a playback session and gives back exactly that token when the reply is over", () => {
+    const tok = { id: 7, ok: true };
+    const enter = vi.fn(() => tok), leave = vi.fn();
+    const l = listenSession(enter, leave);
+    expect(enter).toHaveBeenCalledWith("playback");
+    l.after();
+    expect(leave).toHaveBeenCalledWith(tok);
+    stopListenSession(leave);
+    expect(leave).toHaveBeenLastCalledWith(null);
   });
+
 });
 
 describe("honest labels: browser dictation vs BASHT's engine transcription", () => {
@@ -132,5 +138,34 @@ describe("honest labels: browser dictation vs BASHT's engine transcription", () 
   });
   it("the streaming bubble never shows a MEDIA marker", () => {
     expect(chat).toMatch(/const liveText = live \? stripMediaMarkers\(live\.text, \{ streaming: true \}\) : "";/);
+  });
+});
+
+describe("/speak cannot hang the UI", () => {
+  const hanging = (seen: AbortSignal[]) => ((_u: unknown, init?: RequestInit) => new Promise<Response>((_r, reject) => {
+    const s = init!.signal!; seen.push(s);
+    s.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+  })) as typeof fetch;
+  it("a request that never answers fails as «timeout» after the client watchdog", async () => {
+    const seen: AbortSignal[] = [];
+    const e = await createBashtClient(hanging(seen), { speakTimeoutMs: 20 }).speak("نص").catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(BashtError);
+    expect((e as BashtError).code).toBe("timeout");
+    expect(seen[0].aborted).toBe(true);
+  });
+  it("the caller's abort (stop / session end) still aborts it, reported as an abort, not a timeout", async () => {
+    const seen: AbortSignal[] = [];
+    const ctl = new AbortController();
+    const p = createBashtClient(hanging(seen), { speakTimeoutMs: 10_000 }).speak("نص", ctl.signal).catch((x: unknown) => x);
+    ctl.abort();
+    const e = await p;
+    expect((e as Error).name).toBe("AbortError");
+    expect(seen[0].aborted).toBe(true);
+  });
+});
+
+describe("the wave button says it starts listening at once", () => {
+  it("accessible name", () => {
+    expect(src("features/chat/chat-screen.tsx")).toContain('aria-label="محادثة صوتية بالتناوب مع باشت — يبدأ الاستماع فورًا"');
   });
 });

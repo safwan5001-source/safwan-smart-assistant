@@ -13,7 +13,7 @@ import { useAssistant } from "./assistant-context";
 import { OwnerGateProvider } from "./owner-gate";
 import { LOGIN_PATH } from "@/lib/login-path";
 import LongPressLink from "./long-press-link";
-import { OPEN_VOICE_EVENT, primeVoiceFromGesture, TAB_VOICE_HINT, VOICE_URL } from "@/lib/voice-launch";
+import { launchVoice as launch, TAB_VOICE_HINT } from "@/lib/voice-launch";
 
 export const OPEN_SEARCH_EVENT = "safwan:open-search";
 
@@ -29,11 +29,7 @@ function Shell({ children, pathname }: { children: ReactNode; pathname: string }
   const router = useRouter();
   const { status, refresh } = useAssistant();
   /** Long-press on the BASHT tab (runs inside the pointerup / keydown gesture): unlock audio + mic there, then open the voice. */
-  const launchVoice = () => {
-    primeVoiceFromGesture();
-    if (pathname === "/chat") window.dispatchEvent(new CustomEvent(OPEN_VOICE_EVENT, { detail: { autostart: true } }));
-    else router.push(VOICE_URL);
-  };
+  const launchVoice = () => launch({ pathname, push: (u) => router.push(u), dispatch: (e) => window.dispatchEvent(e) });
   const state = agentState(status, useAgentActivity());
   const st = AGENT_STATE_TEXT[state];
 

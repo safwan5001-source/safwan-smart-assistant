@@ -3,11 +3,11 @@
  * A link with a long-press action (lib/long-press). A short tap navigates exactly like a plain link. Holding ≥ 450 ms shows a
  * progress ring; releasing after that runs `onLongPress` INSIDE the pointerup handler (iOS user activation for audio/mic) and the
  * following click is swallowed. No context menu, link preview, callout or text selection while pressing (CSS + contextmenu).
- * Keyboard/AT: Shift+Enter on the focused link runs the same action (described by `hint`).
+ * Keyboard/AT: Shift+Enter on the focused link runs the same action (described once, by `hint` via aria-describedby).
  */
 import Link from "next/link";
-import { useEffect, useId, useRef, useState, type ComponentProps, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { createLongPress, LONG_PRESS_MS } from "@/lib/long-press";
+import { useEffect, useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { createLongPress, longPressHandlers, LONG_PRESS_MS } from "@/lib/long-press";
 
 type Props = Omit<ComponentProps<typeof Link>, "onClick" | "onPointerDown" | "onPointerUp" | "onPointerMove" | "onPointerCancel" | "onPointerLeave" | "onContextMenu" | "onKeyDown"> & {
   onLongPress: () => void;
@@ -38,27 +38,12 @@ export default function LongPressLink({ onLongPress, hint, children, className, 
     return () => window.removeEventListener("scroll", stop, { capture: true });
   }, [hold]);
 
-  const down = (e: PointerEvent<HTMLAnchorElement>) => {
-    if (e.pointerType === "mouse" && e.button !== 0) return;
-    ctl.current?.down(e.pointerId, e.clientX, e.clientY);
-  };
-  const up = (e: PointerEvent<HTMLAnchorElement>) => {
-    if (ctl.current?.up(e.pointerId) === "activate") e.preventDefault();
-  };
-  const key = (e: KeyboardEvent<HTMLAnchorElement>) => {
-    if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); act.current(); }
-  };
+  const handlers = longPressHandlers(ctl.current, () => act.current());
 
   return (
     <Link {...rest} className={(className ? className + " " : "") + "long-press"} data-hold={hold} draggable={false}
       style={{ ["--hold-ms" as string]: `${LONG_PRESS_MS}ms` }}
-      aria-describedby={hintId} aria-description={hint}
-      onPointerDown={down} onPointerUp={up}
-      onPointerMove={(e) => ctl.current?.move(e.pointerId, e.clientX, e.clientY)}
-      onPointerCancel={() => ctl.current?.cancel()} onPointerLeave={() => ctl.current?.cancel()}
-      onContextMenu={(e) => e.preventDefault()}
-      onClick={(e) => { if (ctl.current?.click()) { e.preventDefault(); e.stopPropagation(); } }}
-      onKeyDown={key}>
+      aria-describedby={hintId} {...handlers}>
       {children}
       <span className="hold-ring" aria-hidden="true" />
       <span id={hintId} className="sr-only">{hint}</span>

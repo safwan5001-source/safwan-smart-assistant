@@ -227,7 +227,7 @@ describe("live voice session (restart race)", () => {
     const replies: ReturnType<typeof deferred<string>>[] = [];
     const calls = { ask: [] as string[], play: [] as string[], errors: [] as string[], phases: [] as string[] };
     const d: LiveDeps = {
-      record: (onStarted) => { const x = deferred<RecordResult>(); records.push(x); onStarted(); return x.promise; },
+      record: (onStarted) => { const x = deferred<RecordResult>(); records.push(x); onStarted(true); return x.promise; },
       cancelRecord: vi.fn(), stopPlay: vi.fn(),
       transcribe: () => { const x = deferred<string>(); transcripts.push(x); return x.promise; },
       ask: (t) => { calls.ask.push(t); const x = deferred<string>(); replies.push(x); return x.promise; },

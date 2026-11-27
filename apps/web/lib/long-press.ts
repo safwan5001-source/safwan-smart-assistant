@@ -68,3 +68,24 @@ export function createLongPress(d: LongPressDeps) {
   };
 }
 export type LongPress = ReturnType<typeof createLongPress>;
+
+/** The minimal event shapes the handlers need (React synthetic events, or plain objects in tests). */
+type Ev = { preventDefault: () => void; stopPropagation?: () => void };
+type PEv = Ev & { pointerId: number; pointerType: string; button: number; clientX: number; clientY: number };
+type KEv = Ev & { key: string; shiftKey: boolean };
+/**
+ * The link's event handlers for a long press `lp` and its action `act` (also run by Shift+Enter). Activation happens inside
+ * `onPointerUp` (the user gesture), never in a timer; the context menu is suppressed; the click after a long press is swallowed.
+ */
+export function longPressHandlers(lp: LongPress, act: () => void) {
+  return {
+    onPointerDown: (e: PEv) => { if (e.pointerType === "mouse" && e.button !== 0) return; lp.down(e.pointerId, e.clientX, e.clientY); },
+    onPointerMove: (e: PEv) => lp.move(e.pointerId, e.clientX, e.clientY),
+    onPointerUp: (e: PEv) => { if (lp.up(e.pointerId) === "activate") e.preventDefault(); },
+    onPointerCancel: () => lp.cancel(),
+    onPointerLeave: () => lp.cancel(),
+    onContextMenu: (e: Ev) => e.preventDefault(),
+    onClick: (e: Ev) => { if (lp.click()) { e.preventDefault(); e.stopPropagation?.(); } },
+    onKeyDown: (e: KEv) => { if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); act(); } },
+  };
+}

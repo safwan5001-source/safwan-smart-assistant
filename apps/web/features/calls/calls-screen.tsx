@@ -6,14 +6,14 @@ import { VOICE_TEXT, voiceState, type VoiceState } from "@/lib/voice-state";
 import { useDictation } from "@/lib/speech";
 import { useStore } from "@/lib/hooks";
 import { earcon, voiceFxStore } from "@/lib/earcons";
-import { enterVoiceSession, leaveVoiceSession } from "@/lib/audio";
+import { claimVoiceSession, enterVoiceSession, leaveVoiceSession, type VoiceToken } from "@/lib/audio";
 import { bashtClient, BashtError } from "@/lib/basht-client";
 import {
-  clock, createLiveSession, MAX_NOTE_MS, prepareCapture, primeAudioInput, releaseAudioInput, settleAfterCapture, useInputLevel,
+  BACKGROUND_TEXT, browserSettle, recorderSupported, clock, createLiveSession, endOnBackground, MAX_NOTE_MS, prepareCapture, primeAudioInput, releaseAudioInput, useInputLevel,
   usePlayerProgress, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voicePlayer, type LivePhase, type LiveStep,
 } from "@/lib/basht-voice";
 import { isDurableVoiceFailure, speakGate, useVoiceStatus } from "@/lib/voice-status";
-import { takeVoiceAutostart } from "@/lib/voice-launch";
+import { releaseVoicePress, takeVoiceAutostart, voiceAutostartDeadline, voiceAutostartPending } from "@/lib/voice-launch";
 
 /** What the live session needs from the conversation: send one owner turn (as a voice note) and get BASHT's reply text back. */
 export type LiveVoice = { ready: boolean; ask: (text: string) => Promise<string> };
@@ -34,19 +34,33 @@ export default function VoicePanel({ onUse, live, autostart = false, onClose }: 
   const rec = useVoiceRecorder();
   const status = useVoiceStatus(false); // fetched by the conversation; read here
   const gate = speakGate(avail, status);
-  const engineVoice = !!live?.ready && rec.supported && avail.transcribe !== "no" && gate.show;
+  // read synchronously (the hook learns it in an effect): a first render must not mistake "not checked yet" for "unsupported"
+  const recOk = rec.supported || recorderSupported();
+  const engineVoice = !!live?.ready && recOk && avail.transcribe !== "no" && gate.show;
   const close = onClose ?? (() => {});
-  // opened by a press while the conversation is still connecting: wait a moment for BASHT (instead of flashing the dictation
-  // fallback), then fall back honestly
-  const [connecting, setConnecting] = useState(autostart);
-  useEffect(() => { if (!connecting) return; const t = setTimeout(() => setConnecting(false), 8000); return () => clearTimeout(t); }, [connecting]);
-  // leaving the voice screen (any variant) gives the page its normal audio session back and drops the probe's context
-  useEffect(() => () => { leaveVoiceSession(); releaseAudioInput(); }, []);
-  if (engineVoice) return <LiveSession live={live!} rec={rec} autostart={autostart} onClose={close} note={gate.note} />;
   const reason = !live?.ready ? "" : !gate.show ? gate.note || "صوت باشت غير مفعّل في المحرك الآن."
-    : avail.transcribe === "no" ? "تفريغ الصوت غير مفعّل في محرك باشت الآن." : !rec.supported ? "هذا المتصفح لا يدعم تسجيل الصوت لباشت." : "";
-  if (connecting && !reason) return <Connecting onClose={close} />;
+    : avail.transcribe === "no" ? "تفريغ الصوت غير مفعّل في محرك باشت الآن." : !recOk ? "هذا المتصفح لا يدعم تسجيل الصوت لباشت." : "";
+  // ONE deadline (the press's): while it runs and BASHT is still connecting, wait; once it passes — or the dictation fallback is
+  // what the owner sees — the press is given back, so a late «ready» can never start recording behind that screen
+  const [, rerender] = useState(0);
+  const view = panelView({ engineVoice, reason, autostart, pending: voiceAutostartPending() });
+  useEffect(() => {
+    if (view === "dictation") { releaseVoicePress(); return; }
+    if (view !== "connecting") return;
+    const t = setTimeout(() => rerender((n) => n + 1), Math.max(0, voiceAutostartDeadline() - Date.now()) + 20);
+    return () => clearTimeout(t);
+  }, [view]);
+  // leaving the voice screen (any variant) gives back an unclaimed press and drops the probe's context
+  useEffect(() => () => { releaseVoicePress(); releaseAudioInput(); }, []);
+  if (view === "live") return <LiveSession live={live!} rec={rec} autostart={autostart} onClose={close} note={gate.note} />;
+  if (view === "connecting") return <Connecting onClose={close} />;
   return <DictationPanel onUse={onUse} reason={reason} onClose={close} />;
+}
+
+/** Which voice screen to show: the live loop, a short wait for BASHT (only while a fresh press is pending), or dictation. */
+export function panelView(p: { engineVoice: boolean; reason: string; autostart: boolean; pending: boolean }): "live" | "connecting" | "dictation" {
+  if (p.engineVoice) return "live";
+  return p.autostart && p.pending && !p.reason ? "connecting" : "dictation";
 }
 
 /** A short wait for the conversation (opened by a long-press from another screen). Nothing is recorded meanwhile. */
@@ -67,10 +81,12 @@ function Connecting({ onClose }: { onClose: () => void }) {
 }
 
 type Turn = { you: string; basht?: string };
-const LIVE_TEXT: Record<Exclude<LivePhase, "thinking">, { title: string; sub: string }> & { thinking: Record<Exclude<LiveStep, "">, { title: string; sub: string }> } = {
+const LIVE_TEXT: Record<Exclude<LivePhase, "thinking">, { title: string; sub: string }> & { thinking: Record<Exclude<LiveStep, "" | "manual">, { title: string; sub: string }>; manual: { title: string; sub: string } } = {
   idle: { title: "محادثة صوتية بالتناوب", sub: "اضغط «ابدأ المحادثة» وتحدّث؛ يرد باشت بصوته ثم يستمع إليك من جديد. كل دور يظهر في المحادثة." },
   starting: { title: "يفتح الميكروفون…", sub: "اسمح باستخدام الميكروفون إن طُلب منك. لم يبدأ التسجيل بعد." },
   listening: { title: "يستمع…", sub: "تحدّث بالعربية. ينتهي دورك حين تصمت قليلًا، أو اضغط «أنهِ دورك»." },
+  // no input level on this device right now: a pause does NOT end the turn — say so
+  manual: { title: "يستمع…", sub: "اضغط «أنهِ دورك» حين تنتهي (حتى 60 ثانية). الصمت لا يُنهي دورك هنا." },
   muted: { title: "الميكروفون مكتوم", sub: "لا يُسجَّل شيء. اضغط «ألغِ الكتم» حين تريد التحدث." },
   speaking: { title: "يتحدث…", sub: "باشت يرد بصوته. اضغط «أوقفه وتحدّث» لمقاطعته." },
   blocked: { title: "الصوت متوقف", sub: "منع المتصفح التشغيل أو قاطعته مكالمة. اضغط «شغّل الصوت» للمتابعة بنفس الرد." },
@@ -80,7 +96,8 @@ const LIVE_TEXT: Record<Exclude<LivePhase, "thinking">, { title: string; sub: st
     voice: { title: "يجهّز الصوت…", sub: "رد باشت جاهز ويظهر في المحادثة؛ يُجهَّز بصوته الآن." },
   },
 };
-const textOf = (p: LivePhase, s: LiveStep) => (p === "thinking" ? LIVE_TEXT.thinking[s || "waiting"] : LIVE_TEXT[p]);
+export const liveText = (p: LivePhase, s: LiveStep) =>
+  p === "thinking" ? LIVE_TEXT.thinking[s === "transcribing" || s === "voice" ? s : "waiting"] : p === "listening" && s === "manual" ? LIVE_TEXT.manual : LIVE_TEXT[p];
 /** The voice face shows the microphone only (never an agent state). */
 const orbOf = (p: LivePhase, failed: boolean): VoiceState => (failed ? "error" : p === "listening" ? "listening" : "ready");
 
@@ -97,56 +114,66 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
   const latest = useRef({ live, rec, fx });
   latest.current = { live, rec, fx };
   const session = useRef<ReturnType<typeof createLiveSession> | null>(null);
+  /** this screen's audio-session owner token (from the start tap, or claimed from the long-press) */
+  const owner = useRef<VoiceToken | null>(null);
+  const claim = (kind: "playback" | "play-and-record") => { owner.current = claimVoiceSession(kind, owner.current); };
+  const release = () => { leaveVoiceSession(owner.current); owner.current = null; releaseAudioInput(); };
   session.current ??= createLiveSession({
     record: (onStarted) => latest.current.rec.record({ maxMs: MAX_NOTE_MS, silence: true, onStart: onStarted }),
     cancelRecord: () => latest.current.rec.cancel(),
-    transcribe: async (audio) => {
-      try { const t = await bashtClient.transcribe(audio); voiceAvailability.set("transcribe", "yes"); return t; }
+    transcribe: async (audio, signal) => {
+      try { const t = await bashtClient.transcribe(audio, signal); voiceAvailability.set("transcribe", "yes"); return t; }
       catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
     },
     ask: (text) => latest.current.live.ask(text),
     play: (text, onPlayer) => voicePlayer().play("live", text, { onPhase: onPlayer }),
     stopPlay: () => voicePlayer().stop(),
     canResume: () => voicePlayer().getSnapshot().canResume,
-    resume: (onPlayer) => { enterVoiceSession("playback"); return voicePlayer().resume({ onPhase: onPlayer }); },
+    resume: (onPlayer) => { claim("playback"); return voicePlayer().resume({ onPhase: onPlayer }); },
     playError: () => voicePlayer().getSnapshot().error,
     recordError: () => latest.current.rec.errorNow(),
-    beforeCapture: prepareCapture,
-    afterCapture: () => settleAfterCapture(),
+    beforeCapture: (live) => prepareCapture(owner.current, live),
+    afterCapture: (live) => browserSettle(() => owner.current, live),
     onPhase: (p, s) => { setPhase(p); setStep(s); },
     onHeard: (t) => { if (t) setTurns((ts) => [...ts, { you: t }].slice(-20)); },
     onReply: (t) => setTurns((ts) => (ts.length ? [...ts.slice(0, -1), { ...ts[ts.length - 1], basht: t }] : ts)),
     onError: setError,
-    onEnd: () => { leaveVoiceSession(); releaseAudioInput(); },
-    cue: (kind) => { if (latest.current.fx) earcon(kind); },
+    onEnd: release,
+    cue: (kind) => { if (!latest.current.fx) return false; earcon(kind); return true; },
   });
   // closing the screen ends the session: no mic, no voice, nothing sent afterwards
-  useEffect(() => () => { session.current?.end(); leaveVoiceSession(); releaseAudioInput(); }, []);
-  // opened by a press (long-press / wave button) that already unlocked audio and the probe: start listening right away. A reload
-  // or a stale link never records on its own — the big «ابدأ المحادثة» button is shown instead.
-  useEffect(() => { if (autostart && takeVoiceAutostart()) session.current?.start(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { session.current?.end(); release(); }, []);
+  // backgrounding (lock screen, app switch) ends it too: the partial turn is discarded, nothing waits on a blocked playback
+  useEffect(() => endOnBackground(() => { if (session.current && session.current.phase() !== "idle") session.current.end(BACKGROUND_TEXT); }), []);
+  // opened by a press (long-press / wave button) that already unlocked audio and the probe: start listening right away, owning
+  // that press's audio session. A reload or a stale link never records on its own — «ابدأ المحادثة» is shown instead.
+  useEffect(() => {
+    const press = autostart ? takeVoiceAutostart() : null;
+    if (press) { owner.current = press.token; session.current?.start(); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const s = session.current;
   /** Inside the tap: the record-capable session, the playback unlock and the level probe (iOS allows them only here). */
   const start = () => {
-    enterVoiceSession("play-and-record"); voicePlayer().unlock(); primeAudioInput();
+    owner.current = enterVoiceSession("play-and-record"); voicePlayer().unlock(); primeAudioInput();
     setError(""); setMicMuted(false); s.setMicMuted(false); s.setSpeakerMuted(spkMuted);
     s.start();
   };
   const end = () => { s.end(); onClose(); };
-  const toggleMic = () => { const m = !micMuted; setMicMuted(m); if (!m) enterVoiceSession("play-and-record"); s.setMicMuted(m); };
+  // unmuting is a tap: the record session and the probe's context are (re)claimed inside it
+  const toggleMic = () => { const m = !micMuted; setMicMuted(m); if (!m) { claim("play-and-record"); primeAudioInput(); } s.setMicMuted(m); };
   const toggleSpk = () => { const m = !spkMuted; setSpkMuted(m); s.setSpeakerMuted(m); };
   const failed = phase === "idle" && !!error;
   const main: { label: string; icon: string; run?: () => void; aria: string } =
     phase === "idle" ? { label: failed ? "ابدأ من جديد" : "ابدأ المحادثة", icon: "mic", run: start, aria: "ابدأ المحادثة الصوتية (يبدأ التسجيل)" }
       : phase === "starting" ? { label: "إلغاء", icon: "close", run: () => s.end(), aria: "إلغاء فتح الميكروفون" }
-        : phase === "listening" ? { label: "أنهِ دورك", icon: "send", run: () => rec.stop(), aria: "أنهِ دورك الآن وأرسل كلامك" }
+        : phase === "listening" ? { label: "أنهِ دورك", icon: "send", run: () => { primeAudioInput(); rec.stop(); }, aria: "أنهِ دورك الآن وأرسل كلامك" }
           : phase === "muted" ? { label: "ألغِ الكتم", icon: "mic", run: toggleMic, aria: "ألغِ الكتم وتحدّث" }
             : phase === "speaking" ? { label: "أوقفه وتحدّث", icon: "stop", run: () => s.interrupt(), aria: "أوقفه وتحدّث (يوقف رد باشت)" }
               : phase === "blocked" ? { label: "شغّل الصوت", icon: "play", run: () => s.resumePlayback(), aria: "شغّل الصوت (رد باشت نفسه)" }
                 : step === "voice" ? { label: "تخطَّ الصوت", icon: "stop", run: () => s.interrupt(), aria: "تخطَّ الصوت وتحدّث" }
                   : { label: "يفكّر…", icon: "hourglass", aria: "باشت يفكّر" };
-  const t = failed ? { title: "توقّفت المحادثة", sub: error } : textOf(phase, step);
+  const t = failed ? { title: "توقّفت المحادثة", sub: error } : liveText(phase, step);
   const active = phase !== "idle";
 
   return (

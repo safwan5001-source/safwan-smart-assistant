@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
-import { AFTER_CAPTURE_MS, createLiveSession, settleAfterCapture, type LiveDeps, type LivePhase, type LiveStep, type PlayerPhase, type PlayResult, type RecordResult } from "@/lib/basht-voice";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import VoicePanel, { liveText, panelView, TURN_NOTE } from "@/features/calls/calls-screen";
+import { AFTER_CAPTURE_MS, BACKGROUND_TEXT, createLiveSession, endOnBackground, settleAfterCapture, type LiveDeps, type LivePhase, type LiveStep, type PlayerPhase, type PlayResult, type RecordResult } from "@/lib/basht-voice";
 import { deferred, flush } from "./voice-fakes";
 
 const audio: RecordResult = { audio: new Blob([new Uint8Array(2000)]), ended: "silence", ms: 1500 };
@@ -10,7 +11,7 @@ const quiet: RecordResult = { audio: null, ended: "no_speech", ms: 12_000 };
 
 /** A live session on fakes the test drives step by step. */
 function rig(over: Partial<LiveDeps> = {}) {
-  const records: { d: ReturnType<typeof deferred<RecordResult>>; started: () => void }[] = [];
+  const records: { d: ReturnType<typeof deferred<RecordResult>>; started: (handsFree: boolean) => void }[] = [];
   const transcripts: ReturnType<typeof deferred<string>>[] = [];
   const replies: ReturnType<typeof deferred<string>>[] = [];
   const plays: { text: string; onPlayer: (p: PlayerPhase) => void; d: ReturnType<typeof deferred<PlayResult>> }[] = [];
@@ -37,7 +38,7 @@ function rig(over: Partial<LiveDeps> = {}) {
 }
 /** One full turn up to BASHT's reply being handed to the player. */
 async function toPlay(t: ReturnType<typeof rig>, n = 0) {
-  await flush(); t.records[n].started(); t.records[n].d.resolve(audio); await flush();
+  await flush(); t.records[n].started(true); t.records[n].d.resolve(audio); await flush();
   t.transcripts[n].resolve("سؤال"); await flush();
   t.replies[n].resolve("الرد"); await flush();
 }
@@ -49,7 +50,7 @@ describe("live session: phases only reflect real activity", () => {
     const t = rig();
     t.s.start(); await flush();
     expect(t.last()).toEqual({ phase: "starting", step: "" }); // the mic is opening: not "listening" yet
-    t.records[0].started();
+    t.records[0].started(true);
     expect(t.last().phase).toBe("listening");
     t.records[0].d.resolve(audio); await flush();
     expect(t.last()).toEqual({ phase: "thinking", step: "transcribing" });
@@ -77,19 +78,78 @@ describe("live session: phases only reflect real activity", () => {
     expect(t.log.indexOf("beforeCapture")).toBeLessThan(t.log.indexOf("record"));
   });
 
-  it("settleAfterCapture: park the probe graph, wait ~300 ms, then enter the playback session", async () => {
+  it("settleAfterCapture: let the stop earcon end (~350 ms), park the probe graph, then enter the playback session", async () => {
     vi.useFakeTimers();
     const order: string[] = [];
     const p = settleAfterCapture({ suspend: async () => { order.push("suspend"); }, wait: (ms) => new Promise((r) => setTimeout(() => { order.push("wait:" + ms); r(); }, ms)), enter: () => order.push("enter") });
     await flush();
-    expect(order).toEqual(["suspend"]);
+    expect(order).toEqual([]); // the earcon is still playing: nothing is suspended under it
     await vi.advanceTimersByTimeAsync(AFTER_CAPTURE_MS);
     await p;
-    expect(order).toEqual(["suspend", "wait:300", "enter"]);
+    expect(order).toEqual(["wait:350", "suspend", "enter"]);
     // a failing suspend never blocks the reply
     const o2: string[] = [];
     await settleAfterCapture({ suspend: async () => { throw new Error("x"); }, wait: async () => { o2.push("wait"); }, enter: () => o2.push("enter") });
     expect(o2).toEqual(["wait", "enter"]);
+  });
+
+  it("a STALE settle (session ended, or the next recording began) never switches the page to playback afterwards", async () => {
+    let live = true;
+    const o: string[] = [];
+    const w = deferred<void>();
+    const p = settleAfterCapture({ suspend: async () => { o.push("suspend"); }, wait: () => w.promise, enter: () => o.push("enter"), live: () => live });
+    live = false; w.resolve(); await p;
+    expect(o).toEqual([]);
+    // in the loop: the session's own staleness check is what it gets
+    const seenLive: (() => boolean)[] = [];
+    const t = rig({ afterCapture: async (l) => { seenLive.push(l); } });
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
+    expect(seenLive[0]()).toBe(true);
+    t.s.end();
+    expect(seenLive[0]()).toBe(false);
+  });
+
+  it("the previous turn's settle is awaited before the next turn asks for the microphone", async () => {
+    const settle = deferred<void>();
+    const t = rig({ afterCapture: () => settle.promise });
+    t.s.setSpeakerMuted(true); // reply stays text: the loop goes straight back to listening
+    t.s.start(); await toPlay(t);
+    expect(t.records).toHaveLength(1);
+    expect(t.log.filter((x) => x === "beforeCapture")).toHaveLength(1);
+    settle.resolve(); await flush();
+    expect(t.log.filter((x) => x === "beforeCapture")).toHaveLength(2);
+    expect(t.records).toHaveLength(2);
+  });
+
+  it("the start earcon plays before the microphone opens (never into the recording)", async () => {
+    const w = deferred<void>();
+    const t = rig({ cue: (k) => { t.log.push("cue:" + k); return true; }, wait: () => w.promise });
+    t.s.start(); await flush();
+    expect(t.log.slice(-1)).toEqual(["cue:start"]);
+    expect(t.records).toHaveLength(0);
+    w.resolve(); await flush();
+    expect(t.records).toHaveLength(1);
+    expect(t.log.indexOf("cue:start")).toBeLessThan(t.log.indexOf("record"));
+  });
+
+  it("without an input level the turn is manual: the UI says so, and a turn nobody ended (60 s limit) ends the session unsent", async () => {
+    const t = rig();
+    t.s.start(); await flush();
+    t.records[0].started(false);
+    expect(t.last()).toEqual({ phase: "listening", step: "manual" });
+    t.records[0].d.resolve({ audio: new Blob([new Uint8Array(9)]), ended: "limit", ms: 60_000, handsFree: false }); await flush();
+    expect(t.log).not.toContain("transcribe");
+    expect(t.errors[0]).toMatch(/60 ثانية/);
+    expect(t.last().phase).toBe("idle");
+  });
+
+  it("transcription is aborted when the session ends", async () => {
+    let signal: AbortSignal | null = null;
+    const t = rig({ transcribe: (_a, s) => { signal = s; return new Promise<string>(() => {}); } });
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
+    expect(signal!.aborted).toBe(false);
+    t.s.end();
+    expect(signal!.aborted).toBe(true);
   });
 
   it("a tap interrupts BASHT (stop) and the loop listens again", async () => {
@@ -107,7 +167,7 @@ describe("live session: phases only reflect real activity", () => {
 describe("live session: mute controls", () => {
   it("muting the mic while listening discards the turn and waits; unmuting (a tap) listens again", async () => {
     const t = rig();
-    t.s.start(); await flush(); t.records[0].started();
+    t.s.start(); await flush(); t.records[0].started(true);
     t.s.setMicMuted(true);
     expect(t.d.cancelRecord).toHaveBeenCalled();
     t.records[0].d.resolve({ audio: null, ended: "cancel", ms: 100 }); await flush();
@@ -138,7 +198,7 @@ describe("live session: errors end it with a clear message, never a stuck screen
   });
   it("a transcription refused by the engine says why (reason text)", async () => {
     const t = rig();
-    t.s.start(); await flush(); t.records[0].started(); t.records[0].d.resolve(audio); await flush();
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
     t.transcripts[0].reject(new BashtError("voice_unavailable", "unconfigured")); await flush();
     expect(t.errors[0]).toMatch(/لم يُضبط صوت باشت/);
     expect(t.last().phase).toBe("idle");
@@ -152,10 +212,22 @@ describe("live session: errors end it with a clear message, never a stuck screen
   });
   it("a network/provider failure while asking BASHT ends with its message", async () => {
     const t = rig();
-    t.s.start(); await flush(); t.records[0].started(); t.records[0].d.resolve(audio); await flush();
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
     t.transcripts[0].resolve("سؤال"); await flush();
     t.replies[0].reject(new BashtError("network")); await flush();
     expect(t.errors).toEqual(["انقطع الاتصال بالخادم."]);
+  });
+  it("«no speech» from the engine counts toward the two quiet turns (steady noise never loops billed transcriptions)", async () => {
+    const t = rig();
+    t.s.start(); await flush();
+    t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
+    t.transcripts[0].reject(new BashtError("no_speech")); await flush(); await flush();
+    expect(t.records).toHaveLength(2);
+    t.records[1].started(true); t.records[1].d.resolve(audio); await flush();
+    t.transcripts[1].reject(new BashtError("no_speech")); await flush(); await flush();
+    expect(t.records).toHaveLength(2);
+    expect(t.errors[0]).toMatch(/لم أسمع كلامًا/);
+    expect(t.transcripts).toHaveLength(2);
   });
   it("two silent turns still end the session (one is forgiven)", async () => {
     const t = rig();
@@ -191,21 +263,48 @@ describe("live session: errors end it with a clear message, never a stuck screen
   });
 });
 
-describe("the voice screen wires the honest loop", () => {
-  const panel = readFileSync(join(resolve(__dirname, ".."), "features/calls/calls-screen.tsx"), "utf8");
+describe("backgrounding ends the session", () => {
+  const host = () => { const ls = new Map<string, () => void>(); return { ls, addEventListener: (t: string, f: () => void) => ls.set(t, f), removeEventListener: (t: string) => ls.delete(t) }; };
+  it("visibilitychange → hidden and pagehide call onHidden; visible does not; unbinding removes both listeners", () => {
+    const doc = { ...host(), visibilityState: "visible" }, win = host();
+    const hidden = vi.fn();
+    const off = endOnBackground(hidden, { doc, win });
+    doc.ls.get("visibilitychange")!(); expect(hidden).not.toHaveBeenCalled();
+    doc.visibilityState = "hidden"; doc.ls.get("visibilitychange")!(); expect(hidden).toHaveBeenCalledTimes(1);
+    win.ls.get("pagehide")!(); expect(hidden).toHaveBeenCalledTimes(2);
+    off(); expect(doc.ls.size + win.ls.size).toBe(0);
+  });
+  it("ending while listening discards the partial turn (nothing transcribed or sent) and stops playback", async () => {
+    const t = rig();
+    t.s.start(); await flush(); t.records[0].started(true);
+    t.s.end(BACKGROUND_TEXT);
+    expect(t.d.cancelRecord).toHaveBeenCalled(); expect(t.d.stopPlay).toHaveBeenCalled();
+    t.records[0].d.resolve(audio); await flush();
+    expect(t.log).not.toContain("transcribe");
+    expect(t.errors).toEqual([BACKGROUND_TEXT]);
+  });
+});
+
+describe("the voice screen (rendered / pure)", () => {
   it("labels it a turn-by-turn conversation, never a real-time call", () => {
-    expect(panel).toContain("محادثة صوتية بالتناوب — ليست مكالمة لحظية");
-    const shown = panel.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, ""); // what the owner can read (no comments)
-    expect(shown).not.toMatch(/full[- ]duplex|realtime|real-time|مكالمة فورية/i);
+    expect(TURN_NOTE).toBe("محادثة صوتية بالتناوب — ليست مكالمة لحظية");
+    const all = JSON.stringify(["idle", "starting", "listening", "muted", "speaking", "blocked"].map((p) => liveText(p as LivePhase, ""))) + JSON.stringify(liveText("listening", "manual"));
+    expect(all).not.toMatch(/realtime|real-time|مكالمة فورية/i);
+    expect(liveText("listening", "manual").sub).toMatch(/اضغط «أنهِ دورك»/);
+    expect(liveText("listening", "").sub).toMatch(/حين تصمت/);
+    expect(liveText("thinking", "voice").title).toBe("يجهّز الصوت…");
   });
-  it("record → onStart, settle after capture, and a tap-only start (autostart only with a fresh press)", () => {
-    expect(panel).toMatch(/record: \(onStarted\) => latest\.current\.rec\.record\(\{ maxMs: MAX_NOTE_MS, silence: true, onStart: onStarted \}\)/);
-    expect(panel).toMatch(/afterCapture: \(\) => settleAfterCapture\(\)/);
-    expect(panel).toMatch(/if \(autostart && takeVoiceAutostart\(\)\) session\.current\?\.start\(\)/);
-    expect(panel).toMatch(/const start = \(\) => \{\s*enterVoiceSession\("play-and-record"\); voicePlayer\(\)\.unlock\(\); primeAudioInput\(\);/);
+  it("one deadline: connecting only while a fresh press is pending; otherwise dictation, never a late autostart behind it", () => {
+    expect(panelView({ engineVoice: true, reason: "", autostart: true, pending: false })).toBe("live");
+    expect(panelView({ engineVoice: false, reason: "", autostart: true, pending: true })).toBe("connecting");
+    expect(panelView({ engineVoice: false, reason: "", autostart: true, pending: false })).toBe("dictation");
+    expect(panelView({ engineVoice: false, reason: "معطّل", autostart: true, pending: true })).toBe("dictation");
+    expect(panelView({ engineVoice: false, reason: "", autostart: false, pending: true })).toBe("dictation");
   });
-  it("the dictation fallback says it is the browser's, not BASHT's voice", () => {
-    expect(panel).toContain("إملاء المتصفح — ليس صوت باشت");
-    expect(panel).toMatch(/badge="ليس صوت باشت"/);
+  it("the dictation fallback renders as the browser's, not BASHT's voice", () => {
+    const html = renderToStaticMarkup(createElement(VoicePanel, { onUse: () => {} }));
+    expect(html).toContain("إملاء المتصفح — ليس صوت باشت");
+    expect(html).toContain("ليس صوت باشت");
+    expect(html).not.toContain("يستمع…");
   });
 });
