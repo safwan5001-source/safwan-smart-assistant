@@ -20,18 +20,26 @@ export function wipeLeftovers(r: WipeResult): string[] {
 
 /** Wipe the private local data. Reports (never hides) what could not be cleared. */
 export async function clearPrivateData(): Promise<WipeResult> {
-  // push server first (needs the device credentials we are about to wipe); an unreachable server is reported, never hidden
-  const serverErased = await eraseRemoteDevice().catch(() => false);
+  // local stores first and synchronously: nothing (a slow network, a closed tab) can leave them behind
   tasksStore.reset(); threadsStore.reset(); activityStore.reset();
   remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset();
-  if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried
   const filesCleared = await clearFiles().then(() => true, () => false);
+  // then the push server (it needs the device credentials, so they go last); an unreachable server is reported, never hidden
+  const serverErased = await eraseRemoteDevice().catch(() => false);
+  if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried
   return { filesCleared, serverErased };
 }
+
+/** Set while this page is signing out on purpose: the login gate must not redirect mid-wipe (or over the "what stayed" notice).
+ * The page leaves for the login page itself when it is done. */
+let leaving = false;
+export const isLeaving = () => leaving;
+export const markLeaving = () => { leaving = true; };
 
 /** Sign out (this device, or every device) and then clear this device's private data. A failed sign-out throws and clears nothing.
  * Returns what the wipe managed, so the caller can tell the owner when something stayed on the device. */
 export async function signOut(everywhere = false): Promise<WipeResult> {
-  await authClient.logout(everywhere);
+  leaving = true; // before the cookie goes: a gate check landing during the wipe must not unload the page
+  try { await authClient.logout(everywhere); } catch (e) { leaving = false; throw e; }
   return clearPrivateData();
 }
