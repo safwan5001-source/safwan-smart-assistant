@@ -14,7 +14,8 @@ import { callBackend as realCallBackend, type Env } from "./backend";
 export const SESSION_COOKIE = "safwan_session";
 export const REMEMBER_S = 30 * 24 * 3600; // "remember this device"
 export type OwnerDeps = { env: Env; callBackend: typeof realCallBackend; now: () => number };
-export type AuthConfig = { owner_auth: boolean; passkeys: boolean };
+/** `reachable`: the API answered (false = it could not be asked; never cached). */
+export type AuthConfig = { owner_auth: boolean; passkeys: boolean; reachable: boolean };
 
 const SECRET = /^[A-Za-z0-9_-]{43}$/;
 const CACHE_MS = 15_000;
@@ -46,29 +47,34 @@ export const ownerAuthOn = (env: Env) => env.OWNER_AUTH === "on";
 
 /** Is owner login (and are passkeys) switched on in the API? Cached briefly; any failure reads as "off" (fail closed). */
 export async function ownerAuthConfig(deps: OwnerDeps): Promise<AuthConfig> {
-  if (!ownerAuthOn(deps.env)) return { owner_auth: false, passkeys: false };
+  if (!ownerAuthOn(deps.env)) return { owner_auth: false, passkeys: false, reachable: true };
   const now = deps.now();
   if (config && now - config.at < CACHE_MS) return config.value;
   const r = await deps.callBackend({ path: "/internal/v1/auth/config", method: "POST", body: {}, env: deps.env, timeoutMs: 5_000, maxBytes: 4096 });
   const j = (r.kind === "ok" && r.status === 200 ? r.json : null) as Partial<AuthConfig> | null;
-  const value = { owner_auth: j?.owner_auth === true, passkeys: j?.owner_auth === true && j?.passkeys === true };
+  const value = { owner_auth: j?.owner_auth === true, passkeys: j?.owner_auth === true && j?.passkeys === true, reachable: r.kind === "ok" };
   if (r.kind === "ok") config = { at: now, value }; // do not cache an outage
   return value;
 }
 
 /** The owner's account id when the request carries a valid owner session, else null. */
 export async function ownerSessionAccount(req: Request, deps: OwnerDeps): Promise<string | null> {
+  return (await checkOwnerSession(req, deps)).account;
+}
+
+/** Same lookup, telling "not signed in" apart from "the API could not be asked" (`outage`, never cached). */
+export async function checkOwnerSession(req: Request, deps: OwnerDeps): Promise<{ account: string | null; outage: boolean }> {
   const secret = readSessionCookie(req);
-  if (!secret) return null;
+  if (!secret) return { account: null, outage: false };
   const key = digest(secret), now = deps.now();
   const hit = seen.get(key);
-  if (hit && hit.until > now) return hit.account;
+  if (hit && hit.until > now) return { account: hit.account, outage: false };
   const r = await deps.callBackend({ path: "/internal/v1/auth/session", method: "POST", body: { session: secret }, env: deps.env, timeoutMs: 5_000, maxBytes: 4096 });
-  if (r.kind !== "ok") return null; // outage: not signed in, and not cached
+  if (r.kind !== "ok") return { account: null, outage: true }; // outage: not signed in, and not cached
   const account = r.status === 200 && typeof (r.json as { account_id?: unknown })?.account_id === "string" ? (r.json as { account_id: string }).account_id : null;
   if (seen.size > 1000) seen.clear();
   seen.set(key, { until: now + CACHE_MS, account });
-  return account;
+  return { account, outage: false };
 }
 
 /**
@@ -76,12 +82,13 @@ export async function ownerSessionAccount(req: Request, deps: OwnerDeps): Promis
  * `legacy` = the door's own code gate (kept during the transition): `on` when configured, `ok` when its cookie is valid.
  * `ok` counts only while unified sign-in is off.
  */
-export async function doorAccess(req: Request, deps: OwnerDeps, legacy: { on: boolean; ok: boolean }): Promise<{ enabled: boolean; authenticated: boolean; account: string | null }> {
+export async function doorAccess(req: Request, deps: OwnerDeps, legacy: { on: boolean; ok: boolean }): Promise<{ enabled: boolean; authenticated: boolean; account: string | null; outage: boolean }> {
   const owner = ownerAuthOn(deps.env);
   // With unified sign-in on, the owner session is the ONLY credential: a per-door cookie issued before the switch no longer
   // opens anything, so signing out of the app really closes every door on this device.
-  if (legacy.ok && !owner) return { enabled: true, authenticated: true, account: null };
+  if (legacy.ok && !owner) return { enabled: true, authenticated: true, account: null, outage: false };
   // no session cookie → no lookup at all (an anonymous request, or a door that is off, never reaches the API)
-  const account = owner && readSessionCookie(req) ? await ownerSessionAccount(req, deps) : null;
-  return { enabled: legacy.on || owner, authenticated: account !== null, account };
+  // `outage`: the session could not be checked (API/DB down) — a door answers "unavailable", never "signed out"
+  const { account, outage } = owner && readSessionCookie(req) ? await checkOwnerSession(req, deps) : { account: null, outage: false };
+  return { enabled: legacy.on || owner, authenticated: account !== null, account, outage };
 }

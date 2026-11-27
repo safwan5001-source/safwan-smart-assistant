@@ -34,9 +34,11 @@ def digest_secret(secret: str) -> bytes:
     return hashlib.sha256(secret.encode("ascii")).digest()
 
 
-def create_session(conn: psycopg.Connection, account_id: UUID, *, remember: bool = False) -> tuple[str, datetime]:
-    """Create a session for an account the CALLER has already authenticated. Returns (secret, expires_at)."""
+def create_session(conn: psycopg.Connection, account_id: UUID, *, remember: bool = False, device: str | None = None) -> tuple[str, datetime]:
+    """Create a session for an account the CALLER has already authenticated. Returns (secret, expires_at).
+    `device` is a short display name of the device (never used for any decision)."""
     account_id = verified_account_id(account_id)
+    device = _device_label(device)
     ttl = SESSION_REMEMBER_TTL if remember else SESSION_DEFAULT_TTL
     secret = issue_secret()
     with owner_transaction(conn, account_id):
@@ -44,9 +46,9 @@ def create_session(conn: psycopg.Connection, account_id: UUID, *, remember: bool
         if active is None:
             raise PermissionError("account unavailable")
         row = conn.execute(
-            "INSERT INTO sessions (account_id, token_hash, remember, expires_at) "
-            "VALUES (%s, %s, %s, now() + make_interval(secs => %s)) RETURNING expires_at",
-            (account_id, digest_secret(secret), remember, int(ttl.total_seconds())),
+            "INSERT INTO sessions (account_id, token_hash, remember, expires_at, device_label) "
+            "VALUES (%s, %s, %s, now() + make_interval(secs => %s), %s) RETURNING expires_at",
+            (account_id, digest_secret(secret), remember, int(ttl.total_seconds()), device),
         ).fetchone()
     assert row is not None
     return secret, row[0]
@@ -80,3 +82,39 @@ def revoke_session(conn: psycopg.Connection, account_id: UUID, secret: str) -> b
 def revoke_all_sessions(conn: psycopg.Connection, account_id: UUID) -> int:
     with owner_transaction(conn, verified_account_id(account_id)):
         return conn.execute("UPDATE sessions SET revoked_at = now() WHERE revoked_at IS NULL").rowcount
+
+
+def _device_label(v: str | None) -> str | None:
+    if not isinstance(v, str):
+        return None
+    t = " ".join("".join(ch for ch in v if ch.isprintable()).split())[:80]
+    return t or None
+
+
+def list_sessions(conn: psycopg.Connection, account_id: UUID, current_secret: str) -> list[dict]:
+    """The account's live sessions (not revoked, not expired), most recently used first; `current` marks the caller's own."""
+    current = digest_secret(current_secret)
+    with owner_transaction(conn, verified_account_id(account_id)):
+        rows = conn.execute(
+            "SELECT id, device_label, remember, created_at, last_seen_at, expires_at, token_hash = %s "
+            "FROM sessions WHERE revoked_at IS NULL AND expires_at > now() "
+            "ORDER BY coalesce(last_seen_at, created_at) DESC LIMIT 50", (current,)).fetchall()
+    return [{"id": str(r[0]), "device": r[1], "remember": r[2], "created_at": r[3].isoformat(),
+             "last_seen_at": r[4].isoformat() if r[4] else None, "expires_at": r[5].isoformat(), "current": r[6]} for r in rows]
+
+
+def revoke_session_by_id(conn: psycopg.Connection, account_id: UUID, session_id: UUID, current_secret: str) -> bool | None:
+    """End one session of this account by its id (from list_sessions). Another account's id matches nothing (RLS).
+    Returns None when nothing was ended, else whether it was the caller's OWN session (so the caller signs out too)."""
+    current = digest_secret(current_secret)
+    with owner_transaction(conn, verified_account_id(account_id)):
+        row = conn.execute("UPDATE sessions SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL RETURNING token_hash = %s",
+                           (session_id, current)).fetchone()
+    return None if row is None else bool(row[0])
+
+
+def touch_session(conn: psycopg.Connection, account_id: UUID, secret: str) -> None:
+    """Record activity, at most every 5 minutes per session (the BFF already caches lookups for 15 s)."""
+    with owner_transaction(conn, verified_account_id(account_id)):
+        conn.execute("UPDATE sessions SET last_seen_at = now() WHERE token_hash = %s "
+                     "AND (last_seen_at IS NULL OR last_seen_at < now() - interval '5 minutes')", (digest_secret(secret),))

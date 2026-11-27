@@ -51,18 +51,18 @@ beforeEach(() => {
 describe("unified owner sign-in: switch", () => {
   it("OWNER_AUTH off: status says off, every route is disabled and the API is never called", async () => {
     const d = deps({ env: base });
-    expect(await (await call("GET", "status", same, undefined, d)).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false });
+    expect(await (await call("GET", "status", same, undefined, d)).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false, gate: false, unavailable: false });
     expect((await call("POST", "login/code", same, { code: api.code }, d)).status).toBe(503);
     expect((await call("GET", "passkeys", withSession(), undefined, d)).status).toBe(503);
     expect(backend).not.toHaveBeenCalled();
   });
   it("on in the web but off in the API reads as off (fail closed); an outage is not cached", async () => {
     api.config = { owner_auth: false, passkeys: true };
-    expect(await (await call("GET", "status")).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false });
+    expect(await (await call("GET", "status")).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false, gate: true, unavailable: false }); // gate on + API answered "off" → login page says "unconfigured"
     resetOwnerSessionCache(); api.down = true;
-    expect((await (await call("GET", "status")).json()).owner_auth).toBe(false);
+    expect(await (await call("GET", "status")).json()).toMatchObject({ owner_auth: false, unavailable: true }); // could not ask ≠ "off"
     api.down = false; api.config = { owner_auth: true, passkeys: false };
-    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true });
+    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true, gate: true, unavailable: false });
   });
 });
 
@@ -76,7 +76,7 @@ describe("unified owner sign-in: owner code", () => {
     expect(await r.text()).not.toContain(SECRET); // the secret only ever travels in the cookie
     const remembered = (await call("POST", "login/code", same, { code: api.code, remember: true })).headers.get("set-cookie")!;
     expect(remembered).toContain(`Max-Age=${30 * 24 * 3600}`);
-    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false });
+    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false, device: "جهاز" });
   });
   it("wrong code → 401, then throttled per client before reaching the API again", async () => {
     for (let i = 0; i < 5; i++) expect((await call("POST", "login/code", same, { code: "nope" })).status).toBe(401);
@@ -179,12 +179,12 @@ describe("one session opens every door", () => {
   it("doorAccess: with OWNER_AUTH on only the owner session counts; a legacy cookie works only while it is off; no cookie → no API call", async () => {
     const d = deps();
     // review fix: a per-door cookie from before the switch must not keep a door open after signing out of the app
-    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: true, ok: true })).toEqual({ enabled: true, authenticated: false, account: null });
-    expect(await doorAccess(new Request(`https://${HOST}/x`), deps({ env: base }), { on: true, ok: true })).toEqual({ enabled: true, authenticated: true, account: null });
-    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: false, account: null });
+    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: true, ok: true })).toEqual({ enabled: true, authenticated: false, account: null, outage: false });
+    expect(await doorAccess(new Request(`https://${HOST}/x`), deps({ env: base }), { on: true, ok: true })).toEqual({ enabled: true, authenticated: true, account: null, outage: false });
+    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: false, account: null, outage: false });
     expect(backend).not.toHaveBeenCalled();
-    expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: true, account: ACCOUNT });
-    expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), deps({ env: base }), { on: false, ok: false })).toEqual({ enabled: false, authenticated: false, account: null });
+    expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: true, account: ACCOUNT , outage: false });
+    expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), deps({ env: base }), { on: false, ok: false })).toEqual({ enabled: false, authenticated: false, account: null , outage: false });
   });
   it("the BASHT chat door accepts the owner session and ignores it when the switch is off", async () => {
     expect(await (await basht("GET", "status", withSession())).json()).toEqual({ enabled: true, authenticated: true });
@@ -197,6 +197,28 @@ describe("one session opens every door", () => {
     expect(r.status).toBe(200);
     expect(r.headers.get("set-cookie")).toMatch(new RegExp(`^${SESSION_COOKIE}=${SECRET};`));
     expect(onlyAuthPaths()).toContain("login/code");
+  });
+});
+
+describe("review fixes (gate): an outage is never a sign-out", () => {
+  const sessionDown = () => deps({ callBackend: (async (a: Call) => (a.path.endsWith("config") ? ok(200, api.config) : a.path.endsWith("/session") ? ok(503, {}) : backend(a))) as unknown as Deps["callBackend"] });
+  it("status: the database is down → unavailable, not signed out (the watcher stays put)", async () => {
+    expect(await (await call("GET", "status", withSession(), undefined, sessionDown())).json()).toMatchObject({ authenticated: false, unavailable: true });
+  });
+  it("door status during an outage is 503 (clients show offline), never authenticated:false (Codex #59)", async () => {
+    const d = { env: { ...env, BASHT_CHAT_ACCESS_CODE: "basht-owner-code-0123456789-abcdefghijkl" }, callBackend: sessionDown().callBackend, now: () => NOW };
+    const r = await handleBashtChat(new Request(`https://${HOST}/api/basht/status`, { headers: withSession() }), ["status"], d);
+    expect(r.status).toBe(503);
+  });
+  it("doors answer 503 unavailable (shown as offline), not 401", async () => {
+    const d = { env: { ...env, BASHT_CHAT_ACCESS_CODE: "basht-owner-code-0123456789-abcdefghijkl" }, callBackend: sessionDown().callBackend, now: () => NOW };
+    const r = await handleBashtChat(new Request(`https://${HOST}/api/basht/sessions`, { headers: withSession() }), ["sessions"], d);
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({ error: "unavailable" });
+  });
+  it("signed-in routes: 503 during an outage, 401 only when the API said no", async () => {
+    expect((await call("GET", "passkeys", withSession(), undefined, sessionDown())).status).toBe(503);
+    expect((await call("GET", "passkeys", withSession(OTHER))).status).toBe(401);
   });
 });
 

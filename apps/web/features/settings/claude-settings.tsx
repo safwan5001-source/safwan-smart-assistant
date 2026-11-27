@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useId, useState } from "react";
 import { Badge, Notice } from "@/components/ui";
+import { useOwnerGate } from "@/components/owner-gate";
 import { useDialogs } from "@/components/dialogs";
 import { aiReady, useAssistant } from "@/components/assistant-context";
 import { AssistantRequestError, assistantService, type ClaudeState } from "@/lib/assistant";
@@ -28,6 +29,9 @@ export default function ClaudeSettings() {
   const { prompt, toast, confirm } = useDialogs();
   const selectId = useId();
   const [phase, setPhase] = useState<Phase>("checking");
+  // login gate: with unified sign-in on, a lapsed session goes back to the login page (and returns here), not to a code form
+  const ownerGate = useOwnerGate();
+  useEffect(() => { if (ownerGate.on && phase === "locked") ownerGate.signInAgain(); }, [ownerGate, phase]);
   const [state, setState] = useState<ClaudeState | null>(null);
   const [probe, setProbe] = useState<Probe>("idle");
   const [error, setError] = useState("");

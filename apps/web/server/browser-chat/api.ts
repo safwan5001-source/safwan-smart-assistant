@@ -125,6 +125,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     // A1: the unified owner session opens this door too; the legacy browser code keeps working during the transition
     const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req), now) });
     if (route === "GET /status") {
+      if (access.outage) return err("unavailable", 503); // could not check the session: offline, never "signed out"
       const authenticated = access.authenticated;
       // the lab address is shown only to the signed-in owner
       return json({ enabled: access.enabled, authenticated, interactive: { enabled: access.enabled && scopes.length > 0, ...(iso.refused ? { reason: "same_site" } : {}), ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
@@ -154,7 +155,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     }
 
     // everything below needs a valid owner cookie
-    if (!access.authenticated) return err("unauthorized", 401);
+    if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
     const id = path[1];
 
     if (route === "POST /tasks") {

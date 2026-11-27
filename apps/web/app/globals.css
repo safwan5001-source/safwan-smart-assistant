@@ -841,3 +841,24 @@ html.hq-immersive-on .bottom-nav { display: none; }
 .hq-entry-sub { display: block; font-size: 12.5px; color: rgba(255, 255, 255, .78); }
 .hq-entry-art { flex-shrink: 0; width: 96px; } .hq-entry-art svg { width: 96px; height: auto; }
 @media (prefers-reduced-motion: reduce) { .hq-spinner { animation: none; } }
+
+/* ── Login gate: the app's front door (standalone, no app chrome) ───────────────────────────────── */
+.login-page { min-block-size: 100dvh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: radial-gradient(120% 70% at 50% -10%, var(--accent-soft) 0%, transparent 60%), var(--bg); }
+.login-panel { inline-size: 100%; max-inline-size: 400px; display: grid; gap: 22px; animation: page-in var(--t-slow) var(--ease); }
+.login-brand { display: grid; justify-items: center; gap: 10px; text-align: center; }
+.login-brand .brand-mark { inline-size: 112px; block-size: 112px; filter: drop-shadow(0 18px 32px rgba(76, 29, 149, .28)); }
+.login-word { block-size: 34px; inline-size: auto; }
+.login-tagline { margin: 0; color: var(--muted); font-size: 14px; letter-spacing: .01em; }
+.login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 22px; padding: 22px; box-shadow: var(--shadow-lg), var(--hl); }
+.login-card .input { min-block-size: 50px; font-size: 16px; }
+.login-card .btn { min-block-size: 50px; }
+.login-title { margin: 0; font-size: 21px; font-weight: 800; }
+.login-skeleton { block-size: 232px; opacity: .6; }
+.login-note { margin: 0; padding: 10px 14px; border-radius: 14px; background: var(--warn-soft); color: var(--warn); font-size: 14px; font-weight: 600; text-align: center; }
+.login-foot { margin: 0; text-align: center; color: var(--muted); font-size: 12.5px; }
+
+/* sessions & devices («الدخول والأمان») */
+.session-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.session-row { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.session-row > svg { flex-shrink: 0; color: var(--accent); }

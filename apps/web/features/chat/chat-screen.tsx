@@ -31,7 +31,7 @@ import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/bash
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
 import { AssistantRequestError, assistantService } from "@/lib/assistant";
 import { ensureClaudeSession } from "@/lib/claude-session";
-import OwnerSignIn from "@/components/owner-sign-in";
+import { useOwnerGate } from "@/components/owner-gate";
 import { authClient, type AuthStatus } from "@/lib/owner-auth";
 import { useDictation } from "@/lib/speech";
 import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/files-db";
@@ -75,6 +75,8 @@ export default function ChatScreen() {
   // one sign-in for the whole app (A1) when the server has it on; otherwise the legacy per-door code form
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   useEffect(() => { let alive = true; void authClient.status().then((s) => { if (alive) setAuth(s); }); return () => { alive = false; }; }, []);
+  // login gate: a lapsed owner session goes back to the login page (and returns to this conversation), never to a form in the chat
+  const ownerGate = useOwnerGate();
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [streaming, setStreaming] = useState<{ threadId: string; text: string } | null>(null);
@@ -96,6 +98,7 @@ export default function ChatScreen() {
   const engineUp = bashtOn && status.server === "online" && status.basht === "connected";
   const engineKey = view.kind === "main" ? APP_SESSION_KEY : view.kind === "engine" ? view.key : null;
   const basht = useBashtConversation(bashtOn, bashtOn ? engineKey : null);
+  useEffect(() => { if ((ownerGate.on || auth?.owner_auth) && basht.gate === "locked") ownerGate.signInAgain(); }, [ownerGate, auth, basht.gate]);
 
   const mainThread = threads.find((t) => t.main);
   const archive = useMemo(
@@ -396,9 +399,6 @@ export default function ChatScreen() {
             {view.kind === "main" && <button className="icon-btn" onClick={() => setVoice(true)} aria-label="الجلسة الصوتية"><Icon name="wave" size={21} /></button>}
           </div>
 
-          {view.kind === "main" && bashtOn && basht.gate === "locked" && auth?.owner_auth && (
-            <div style={{ marginBlockEnd: 8 }}><OwnerSignIn status={auth} onSignedIn={() => { setNotice(""); void basht.recheck(); }} /></div>
-          )}
           {view.kind === "main" && bashtOn && basht.gate === "locked" && auth && !auth.owner_auth && (
             <form className="card card-pad stack" onSubmit={unlock} style={{ marginBlockEnd: 8, gap: 10 }}>
               <div className="row"><BrandMark size="sm" /><strong>افتح جلسة باشت</strong></div>

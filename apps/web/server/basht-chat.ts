@@ -77,7 +77,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   const now = deps.now();
   // A1: the unified owner session opens this door too; the legacy BASHT code keeps working during the transition
   const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req, BASHT_COOKIE), now) });
-  if (req.method === "GET" && route === "status") return json({ enabled: access.enabled, authenticated: access.authenticated });
+  // a session that could not be checked (API/DB down) is "unavailable" (clients show offline), never "signed out"
+  if (req.method === "GET" && route === "status") return access.outage ? err("unavailable", 503) : json({ enabled: access.enabled, authenticated: access.authenticated });
   if (!access.enabled) return err("disabled", 503);
 
   if (route === "session") {
@@ -97,7 +98,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     return json({ authenticated: true }, 200, { "Set-Cookie": cookie(issueCookieValue(gate, now), secure) });
   }
 
-  if (!access.authenticated) return err("unauthorized", 401);
+  if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
   const write = req.method !== "GET";
   if (write && !sameOrigin(req)) return err("forbidden", 403);
   if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);
