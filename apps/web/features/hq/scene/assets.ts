@@ -27,15 +27,25 @@ export const PEOPLE_URLS = [...AGENT_IDS.map(characterUrl), ...ANIM_LIBS.map((k)
  * Textures are KTX2 / Basis Universal: the GPU keeps them compressed. One transcoder (2 workers, same origin — the files
  * ship next to the assets) per canvas, shared by the models and the lightmap; released when the HQ unmounts.
  */
-let ktx2: { loader: KTX2Loader; gl: THREE.WebGLRenderer } | null = null;
-export function hqKtx2(gl: THREE.WebGLRenderer) {
+let ktx2: { loader: KTX2Loader; gl: THREE.WebGLRenderer; ready: Promise<void> } | null = null;
+function ensureKtx2(gl: THREE.WebGLRenderer) {
   if (!ktx2 || ktx2.gl !== gl) {
     ktx2?.loader.dispose();
     const transcoder = (ASSETS as { transcoder?: string }).transcoder ?? "basis/";
-    ktx2 = { loader: new KTX2Loader().setTranscoderPath(assetUrl(transcoder)).setWorkerLimit(2).detectSupport(gl), gl };
+    const loader = new KTX2Loader().setTranscoderPath(assetUrl(transcoder)).setWorkerLimit(2).detectSupport(gl);
+    // no WebAssembly (e.g. iOS Lockdown Mode) or no transcoder → reject, so the HQ shows its simplified scene instead of
+    // untextured models (GLTFLoader would otherwise swallow the texture errors)
+    const ready = typeof WebAssembly === "undefined"
+      ? Promise.reject(new Error("WebAssembly unavailable: KTX2 textures cannot be decoded"))
+      : loader.init().then(() => undefined);
+    ready.catch(() => {}); // observed by the components through use(); avoid an unhandled-rejection report
+    ktx2 = { loader, gl, ready };
   }
-  return ktx2.loader;
+  return ktx2;
 }
+export const hqKtx2 = (gl: THREE.WebGLRenderer) => ensureKtx2(gl).loader;
+/** Resolves once the texture transcoder is usable (for React `use()`; the same promise every render). */
+export const hqKtx2Ready = (gl: THREE.WebGLRenderer) => ensureKtx2(gl).ready;
 export function releaseHqKtx2() { ktx2?.loader.dispose(); ktx2 = null; }
 
 /** R3F `useLoader` extension for the HQ GLBs: meshopt geometry + KTX2 textures. */

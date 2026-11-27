@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AGENT_IDS } from "@/lib/hq/roster";
-import { COLLIDERS, FRAMES } from "@/lib/hq/layout";
+import { COLLIDERS, FRAMES, MEETING_SEATS } from "@/lib/hq/layout";
 import { BODY_R, pointRectDistance } from "@/lib/hq/path";
 import { SCENARIOS } from "@/lib/hq/demo-data";
 import { HqSim, MIN_SEP } from "@/lib/hq/sim";
@@ -41,6 +41,29 @@ describe("HQ simulation", () => {
       expect(sim.snapshot().approvedCount).toBe(1);
     });
   }
+
+  it("people get up and sit down beside their chairs: on foot they never cross a chair, and nobody is left mid-take", () => {
+    const chairs = [...AGENT_IDS.map((a) => FRAMES[a].seat.at), ...MEETING_SEATS.map((m) => m.at)];
+    for (const sc of SCENARIOS) {
+      const sim = new HqSim(5);
+      sim.start(sc.id);
+      let closest = Infinity, phases = new Set<string>();
+      for (let f = 0; f < 30 * 240 && sim.stage !== "awaiting"; f++) {
+        sim.step(1 / 30);
+        for (const id of AGENT_IDS) {
+          const w = sim.walkers[id];
+          phases.add(w.phase);
+          // (the BASHT robot has no get-up / sit-down takes: it walks onto its seat, as before)
+          if (w.phase === "walking" && id !== "BASHT") for (const c of chairs) closest = Math.min(closest, Math.hypot(w.pos[0] - c[0], w.pos[1] - c[1]));
+        }
+      }
+      expect(sim.stage, sc.id).toBe("awaiting");
+      expect([...phases].sort(), sc.id).toEqual(["rising", "seated", "settling", "walking"]);
+      expect(closest, `${sc.id}: closest walk to a chair centre`).toBeGreaterThan(0.3);
+      for (const id of AGENT_IDS) expect(["sit", "type", "talk"], `${sc.id} ${id}`).toContain(sim.walkers[id].clip);
+      phases = new Set();
+    }
+  });
 
   it("is deterministic and frame-rate independent", () => {
     const a = runScenario("fleet", 30), b = runScenario("fleet", 30), c = runScenario("fleet", 12);

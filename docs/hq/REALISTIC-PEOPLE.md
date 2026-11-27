@@ -130,6 +130,26 @@ The third review found no blockers. Its open items were resolved by the upgrades
 | Eye blinks | Not done: Rocketbox's eyelid bones barely move these meshes. A real blink needs the `_facial` blendshape files, which are heavier and kept for a later step. |
 | Railway preview | Separate project `basht-hq-preview`, service `hq-web`: branch `feat/basht-hq-frontend`, HQ on, sleeps when idle. No database, no production variables or secrets. Production untouched. URL: https://hq-web-preview.up.railway.app/hq. E2E against it: 21/21. |
 
+### Round 4 (4bff363..e4764d9): closing this batch
+
+Fixed:
+- **P0:** the seat vertex step stretched bodies while walking. It now follows the seated clips that are actually playing, and the backrest strip is bounded.
+- **P1:** the hips swung at hand-overs. There is no turning while a get-up or sit-down take is on screen, and hand-overs use short fades.
+- **P1:** the meeting-room side was chosen by floating-point noise. The side is now chosen towards the door, with a step-back waypoint so nobody crosses their own chair. A new simulation test keeps every walk more than 0.3 m from any chair centre.
+- **P2:** the shadow now follows the pelvis.
+- **P2:** after a reset there is no glide across the building.
+- **P2:** people no longer stay frozen on the last sit-down frame.
+- **P2:** if the KTX2 transcoder or WebAssembly is unavailable, the HQ shows its simplified scene instead of white models.
+
+Deferred to a later phase (not blocking the iPhone preview):
+- Root-motion extraction for the takes, for a fully continuous hand-over.
+- Lightmap size and quality: UASTC is 2 MB; try a lower RDO setting.
+- Meeting attention in a single row: heads hit the 35° limit.
+- Frame-step sync on devices below 10 fps.
+- The preview's `/api/health` 503: the backend is deliberately not configured.
+- Blinks and lip movement.
+- A typing clip.
+
 ## 6. Open items for the owner
 
 1. Approve the casting and attire mix above. Any person can be re-cast by editing `look` in `roster.ts` and running `build.sh humans`.

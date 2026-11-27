@@ -104,6 +104,16 @@ export function planDeparture(pts: readonly Vec2[], scheduled: readonly { pts: r
   return minDelay + 60;
 }
 
+/** Which side of a chair to get up / sit down on: the side of the route's next point; when that point is straight behind
+ *  the chair (meeting rows), the side towards the meeting-room door — never floating-point noise. */
+function exitSide(seat: Vec2, yaw: number, next: Vec2): Side {
+  const dir: Vec2 = [next[0] - seat[0], next[1] - seat[1]];
+  const lateral = dir[0] * Math.cos(yaw) - dir[1] * Math.sin(yaw);
+  if (Math.abs(lateral) > 0.05) return sideOf(dir, yaw);
+  const door = GRAPH.nodes["M:in"];
+  return sideOf([door[0] - seat[0], door[1] - seat[1]], yaw);
+}
+
 export type Snapshot = {
   t: number;
   stage: Stage;
@@ -212,15 +222,28 @@ export class HqSim {
       if (tr && pts.length >= 2) {
         // get up on the side the route leaves by; walking starts where the stand-up take leaves the person
         const seat = w.pos, yaw = w.yaw;
-        w.side = sideOf([pts[1][0] - seat[0], pts[1][1] - seat[1]], yaw);
+        w.side = exitSide(seat, yaw, pts[1]);
         const up = tr.up[w.side], o = seatToWorld(up.stand, yaw, tr.k);
         pts[0] = [seat[0] + o[0], seat[1] + o[1]];
         rise = up.seconds;
         // arrive beside the destination chair on the side the route comes from; the sit-down take does the rest
         const at = GRAPH.nodes[target.node], n = pts.length;
-        const side = sideOf([pts[n - 2][0] - at[0], pts[n - 2][1] - at[1]], target.yaw);
+        const side = exitSide(at, target.yaw, pts[n - 2]);
         const down = tr.down[side], d = seatToWorld(down.stand, target.yaw, tr.k);
         pts[n - 1] = [at[0] + d[0], at[1] + d[1]];
+        // a route that leaves / arrives straight behind the chair (the meeting rows): step back from the standing point
+        // first, so the walk never cuts through the person's own chair
+        const behind = (s: Vec2, sy: number, standAt: Vec2, next: Vec2): Vec2 | null => {
+          const ax = Math.cos(sy), az = -Math.sin(sy), fx = Math.sin(sy), fz = Math.cos(sy); // seat-local x (left) and z (desk)
+          const nx = (next[0] - s[0]) * ax + (next[1] - s[1]) * az, nz = (next[0] - s[0]) * fx + (next[1] - s[1]) * fz;
+          if (Math.abs(nx) > 0.3 || nz > -0.3) return null;
+          const sx = (standAt[0] - s[0]) * ax + (standAt[1] - s[1]) * az;
+          return [s[0] + sx * ax + nz * fx, s[1] + sx * az + nz * fz];
+        };
+        const wOut = behind(seat, yaw, pts[0], pts[1]);
+        const wIn = behind(at, target.yaw, pts[n - 1], pts[n - 2]);
+        if (wIn) pts.splice(n - 1, 0, wIn);
+        if (wOut) pts.splice(1, 0, wOut);
         w.settle = { side, seconds: down.seconds };
       }
       const delay = planDeparture(pts, planned, i * 0.6 + rise);
@@ -279,6 +302,7 @@ export class HqSim {
         if (this.t >= w.typingUntil) w.typingUntil = this.t + 4 + this.rand() * 9;
         w.clip = this.t < w.typingUntil - 2.5 ? "type" : "sit";
       } else if (w.seated && w.status === "meeting") w.clip = "talk";
+      else if (w.seated) w.clip = "sit"; // e.g. awaiting approval: sat down, waiting
       return;
     }
     if (this.t < w.riseAt) return;
