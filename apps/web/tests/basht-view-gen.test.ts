@@ -92,7 +92,7 @@ describe("a later search-hit pick supersedes an earlier window request", () => {
     const fn = body(hook, /const jumpTo = useCallback/);
     const pick = fn.search(/const pick = \+\+jumpGen\.current;/);
     expect(pick).toBeGreaterThan(-1);
-    expect(pick).toBeLessThan(fn.search(/\.some\(\(m\) => m\.id === messageId\)\) \{ setFocusId\(messageId\); return; \}/));
+    expect(pick).toBeLessThan(fn.search(/\.some\(\(m\) => m\.id === messageId\)\) \{ requestFocus\(messageId\); return; \}/));
     expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current \|\| pick !== jumpGen\.current\) return;/);
   });
 });

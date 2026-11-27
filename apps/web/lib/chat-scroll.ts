@@ -24,3 +24,8 @@ export function nextScroll(
   }
   return following || unfocused ? { to: "bottom" } : null;
 }
+
+/** The focus key the screen feeds to nextScroll: the request number makes picking the same message again a NEW request. */
+export const focusKey = (id: string | null, req: number) => (id ? `${req}:${id}` : null);
+/** The message id inside a focus key. */
+export const focusTarget = (key: string) => key.slice(key.indexOf(":") + 1);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { newFocusScroll, nextScroll } from "../lib/chat-scroll";
+import { focusKey, focusTarget, newFocusScroll, nextScroll } from "../lib/chat-scroll";
 
 const all = () => true;
 
@@ -41,8 +41,30 @@ describe("the chat screen uses the once-only focus scroll", () => {
   it("scrolls into view only on nextScroll's focus decision", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
-    expect(src).toMatch(/const next = nextScroll\(focusScroll\.current, basht\.focusId \?\? null,/);
+    expect(src).toMatch(/const next = nextScroll\(focusScroll\.current, focusKey\(basht\.focusId \?\? null, basht\.focusReq\),/);
     expect(src.match(/scrollIntoView\(/g)?.length).toBe(1);
-    expect(src).toMatch(/if \(next\?\.to === "focus"\) document\.getElementById\("m-" \+ next\.id\)\?\.scrollIntoView/);
+    expect(src).toMatch(/if \(next\?\.to === "focus"\) document\.getElementById\("m-" \+ focusTarget\(next\.id\)\)\?\.scrollIntoView/);
+    expect(src).toMatch(/view, basht\.focusId, basht\.focusReq\]\);/);
+  });
+});
+
+// Review (Codex, round 13): picking the same search hit again (after scrolling away) did not scroll back to it.
+describe("every deliberate focus request scrolls once, the same message included", () => {
+  it("a repeated pick of the same message is a new request; renders in between are not", () => {
+    const s = newFocusScroll();
+    const all = () => true;
+    expect(nextScroll(s, focusKey("a", 1), all, false)).toEqual({ to: "focus", id: "1:a" });
+    expect(nextScroll(s, focusKey("a", 1), all, false)).toBeNull();
+    expect(nextScroll(s, focusKey("a", 2), all, false)).toEqual({ to: "focus", id: "2:a" });
+    expect(focusTarget("2:a")).toBe("a");
+    expect(focusTarget("12:msg:with:colons")).toBe("msg:with:colons");
+    expect(focusKey(null, 3)).toBeNull();
+  });
+  it("the hook numbers every pick and earlier page", async () => {
+    const { readFileSync } = await import("node:fs");
+    const hook = readFileSync(new URL("../features/chat/use-basht.ts", import.meta.url), "utf8");
+    expect(hook).toMatch(/const requestFocus = useCallback\(\(id: string\) => \{ setFocusId\(id\); setFocusReq\(\(n\) => n \+ 1\); \}, \[\]\);/);
+    expect(hook.match(/requestFocus\((firstShown|messageId)\)/g)?.length).toBe(3);
+    expect(hook).toMatch(/focusId, focusReq, setFocusId/);
   });
 });
