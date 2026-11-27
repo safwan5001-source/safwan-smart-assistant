@@ -62,24 +62,30 @@ const discard = (res: Response): Promise<void> => (res.body ? res.body.cancel().
 
 export type CallOptions = {
   path: string; method?: "GET" | "POST"; body?: unknown; account?: string | null;
+  /** Raw bytes instead of a JSON body (a BASHT voice note): sent as-is with its own content type, signed over the same bytes. */
+  rawBody?: { bytes: Uint8Array; type: string };
   timeoutMs?: number; maxBytes?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number;
 };
+/** Content types a raw body may carry (the voice note's MIME type, no parameters). */
+const RAW_TYPE = /^audio\/[a-z0-9.+-]{1,40}$/;
 
 export async function callBackend(opts: CallOptions): Promise<BackendResult> {
   const cfg = readConfig(opts.env);
   if (!cfg) return { kind: "unconfigured" };
   if (!PATH.test(opts.path)) throw new Error("backend path must be a fixed /internal/v1/* route");
+  if (opts.rawBody && !RAW_TYPE.test(opts.rawBody.type)) throw new Error("raw body must carry an audio/* type");
   const method = opts.method ?? "GET";
-  const body = opts.body === undefined ? "" : JSON.stringify(opts.body);
+  const body: string | Uint8Array = opts.rawBody ? opts.rawBody.bytes : opts.body === undefined ? "" : JSON.stringify(opts.body);
   // Append (never "resolve"): a base such as https://host/svc must keep its /svc prefix.
   const url = new URL(cfg.base.href.replace(/\/+$/, "") + opts.path);
   const target = url.pathname + url.search;
-  const headers = { accept: "application/json", ...(body ? { "content-type": "application/json" } : {}),
+  const contentType = opts.rawBody ? opts.rawBody.type : "application/json";
+  const headers = { accept: "application/json", ...(body.length ? { "content-type": contentType } : {}),
     ...signedHeaders(cfg.secret, { method, target, body, account: opts.account, now: opts.now }) };
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 3000);
   try {
-    const res = await (opts.fetchImpl ?? fetch)(url, { method, headers, body: body || undefined, redirect: "manual", cache: "no-store", signal: ctl.signal });
+    const res = await (opts.fetchImpl ?? fetch)(url, { method, headers, body: body.length ? (body as BodyInit) : undefined, redirect: "manual", cache: "no-store", signal: ctl.signal });
     if (res.status >= 300 && res.status < 400) { await discard(res); return { kind: "rejected", status: res.status }; }
     if (res.status === 401 || res.status === 403) { await discard(res); return { kind: "rejected", status: res.status }; }
     if (res.status >= 500 || res.status === 429) { await discard(res); return { kind: "unavailable", status: res.status }; }
@@ -100,18 +106,21 @@ export async function callBackend(opts: CallOptions): Promise<BackendResult> {
  * (<= 2 KB) only to extract the API's fixed `detail.code`; nothing else from upstream text is ever returned.
  */
 export type StreamResult =
-  | { kind: "stream"; body: ReadableStream<Uint8Array> }
+  | { kind: "stream"; body: ReadableStream<Uint8Array>; contentType: string }
   | { kind: "error"; status: number; code: string }
   | { kind: "unconfigured" }
   | { kind: "unreachable" };
 
-export async function streamBackend(opts: { path: string; body: unknown; account: string; signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number }): Promise<StreamResult> {
+/** Hard ceiling for a streamed answer: BASHT's spoken reply chunk (audio) is the largest (the API caps it at 4 MiB). */
+export const MAX_STREAM_BYTES_CEILING = 4 * 1024 * 1024;
+
+export async function streamBackend(opts: { path: string; body: unknown; account?: string | null; accept?: string; signal?: AbortSignal; timeoutMs?: number; maxBytes?: number; env?: Env; fetchImpl?: typeof fetch; now?: () => number }): Promise<StreamResult> {
   const cfg = readConfig(opts.env);
   if (!cfg) return { kind: "unconfigured" };
   if (!PATH.test(opts.path)) throw new Error("backend path must be a fixed /internal/v1/* route");
   const body = JSON.stringify(opts.body);
   const url = new URL(cfg.base.href.replace(/\/+$/, "") + opts.path);
-  const headers = { accept: "application/x-ndjson", "content-type": "application/json",
+  const headers = { accept: opts.accept ?? "application/x-ndjson", "content-type": "application/json",
     ...signedHeaders(cfg.secret, { method: "POST", target: url.pathname + url.search, body, account: opts.account, now: opts.now }) };
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? 130_000);
@@ -130,7 +139,8 @@ export async function streamBackend(opts: { path: string; body: unknown; account
     cleanup(); ctl.abort();
     return { kind: "error", status: res.status, code };
   }
-  const max = Math.min(Math.max(opts.maxBytes ?? 256 * 1024, 1), 1024 * 1024);
+  const max = Math.min(Math.max(opts.maxBytes ?? 256 * 1024, 1), MAX_STREAM_BYTES_CEILING);
+  const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   const reader = res.body.getReader();
   let total = 0;
   const out = new ReadableStream<Uint8Array>({
@@ -145,5 +155,5 @@ export async function streamBackend(opts: { path: string; body: unknown; account
     },
     cancel() { cleanup(); ctl.abort(); return reader.cancel().catch(() => {}); },
   });
-  return { kind: "stream", body: out };
+  return { kind: "stream", body: out, contentType };
 }

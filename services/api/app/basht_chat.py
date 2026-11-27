@@ -7,6 +7,9 @@
 - BASHT_APP_TOKEN is a secret of THIS service only. It is never returned, logged or sent anywhere but the engine URL.
 - Only fixed, shaped fields are passed back to the BFF; engine error text never is.
 - Every send is audited (length only, never the text) and rate limited.
+- Voice (V2/V3): /speak returns the reply spoken in BASHT's own voice (the engine's agent `tts` config: voice, model, instructions);
+  /transcribe takes a raw voice note and returns the engine's transcript (its own audio config, as for WhatsApp). The app holds no
+  voice-provider key and cannot choose a voice. Audio is never stored here; audits carry sizes and durations only, never content.
 """
 from __future__ import annotations
 
@@ -21,12 +24,14 @@ from urllib.parse import quote, urlparse
 from urllib import request as urllib_request
 from urllib.request import Request
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import Request as HttpRequest
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from .audit import audit_log
 from .basht_core import ENV_VAR as URL_VAR
-from .service_auth import ServiceCall, require_service_call
+from .service_auth import MAX_AUDIO_BODY_BYTES, ServiceCall, require_service_call, require_service_call_audio
 
 TOKEN_VAR = "BASHT_APP_TOKEN"
 MIN_TOKEN = 32
@@ -40,6 +45,17 @@ MODEL_REFUSALS = {"unknown_model", "model_unavailable", "model_not_selectable", 
 _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$")
 _LEVEL_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 _RUN_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+# ── voice ──
+MAX_SPEAK = 1500               # the app splits longer replies on sentence boundaries; the engine enforces the same cap
+MAX_SPEECH_BYTES = 4 * 1024 * 1024
+MAX_AUDIO = MAX_AUDIO_BODY_BYTES  # 10 MiB voice note (the app also stops recording at 3 minutes)
+MIN_AUDIO = 1024
+SPEAK_PER_MINUTE = 30
+TRANSCRIBE_PER_MINUTE = 20
+SPEAK_TIMEOUT = 70.0           # the engine allows the provider 60 s
+TRANSCRIBE_TIMEOUT = 100.0     # the engine's CLI is killed at 90 s
+AUDIO_TYPES = {"audio/ogg", "audio/webm", "audio/mp4", "audio/x-m4a", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave"}
+SPEECH_TYPES = {"audio/mpeg", "audio/ogg", "audio/wav"}
 
 class _NoRedirect(urllib_request.HTTPRedirectHandler):
     def redirect_request(self, *args: Any, **kwargs: Any):  # noqa: ANN401
@@ -58,6 +74,8 @@ router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
 
 _lock = threading.Lock()
 _sends: list[float] = []
+_speaks: list[float] = []
+_transcribes: list[float] = []
 
 
 class EngineError(Exception):
@@ -182,24 +200,31 @@ def _model_row(r: Any) -> dict | None:
     }
 
 
-def _allow_send(now: float) -> bool:
+def _allow(bucket: list[float], limit: int, now: float) -> bool:
     with _lock:
-        _sends[:] = [t for t in _sends if now - t < 60]
-        if len(_sends) >= SEND_PER_MINUTE:
+        bucket[:] = [t for t in bucket if now - t < 60]
+        if len(bucket) >= limit:
             return False
-        _sends.append(now)
+        bucket.append(now)
         return True
+
+
+def _allow_send(now: float) -> bool:
+    return _allow(_sends, SEND_PER_MINUTE, now)
 
 
 def reset_limits() -> None:
     with _lock:
         _sends.clear()
+        _speaks.clear()
+        _transcribes.clear()
 
 
 def _run_view(j: dict) -> dict:
+    from .basht_media import steps  # B1 tool progress (names only)
     status = j.get("status") if j.get("status") in ("running", "done", "error", "stopped") else "error"
     return {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error",
-            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs"))}
+            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs")), "steps": steps(j.get("steps"))}
 
 
 @router.get("/sessions")
@@ -216,6 +241,9 @@ class HistoryBody(BaseModel):
     key: str = Field(min_length=1, max_length=260)
     limit: int = Field(50, ge=1, le=200)
     offset: int | None = Field(None, ge=0)
+    # B1: earlier rows (also across «محادثة جديدة») by cursor, or a window around one message (a search hit). Ids only.
+    before: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{6,100}(?:\.[A-Za-z0-9_-]{6,100})?$")
+    around: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{6,100}$")
 
 
 @router.post("/history")
@@ -223,12 +251,20 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
     """POST with a JSON body: the BFF only ever calls fixed /internal/v1/* paths (no query strings, see apps/web/server/backend.ts)."""
     if not _KEY_RE.fullmatch(body.key):
         raise HTTPException(status_code=400, detail={"code": "bad_request"})
+    from .basht_media import cursor, row_extras
     q = f"/history?key={quote(body.key, safe='')}&limit={body.limit}" + (f"&offset={body.offset}" if body.offset is not None else "")
-    j = _guard(lambda: _call("GET", q))
+    if body.before or body.around:
+        q += f"&before={body.before}" if body.before else f"&around={body.around}"
+    # an anchored read runs through the engine's CLI (a few seconds)
+    j = _guard(lambda: _call("GET", q, timeout=30.0 if body.before or body.around else READ_TIMEOUT))
     msgs = j.get("messages") if isinstance(j.get("messages"), list) else []
     out: list[dict] = []
     pending_fallback: dict | None = None
     for m in msgs:
+        if isinstance(m, dict) and m.get("kind") == "reset":  # «محادثة جديدة»: a boundary, shown as a divider
+            out.append({"role": "system", "kind": "reset", "text": "", "at": m.get("at") if isinstance(m.get("at"), int) else 0, **row_extras(m)})
+            pending_fallback = None
+            continue
         if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
             continue
         if m.get("role") == "assistant" and _is_switch_notice(m):
@@ -238,7 +274,7 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
             continue
         if m.get("role") == "user":
             pending_fallback = None  # a switch belongs to the reply of ITS turn, never to a later one
-        row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0}
+        row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0, **row_extras(m)}
         if m.get("role") == "assistant":
             row.update(_reply_meta(m))
             if pending_fallback and "fallback" not in row:
@@ -246,7 +282,8 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
             pending_fallback = None
         out.append(row)
     nxt = j.get("nextOffset")
-    return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True}
+    return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True,
+            "earlier": cursor(j.get("earlier"))}
 
 
 class SendBody(BaseModel):
@@ -378,3 +415,98 @@ def set_thinking(body: ThinkingBody, _: ServiceCall = Depends(require_service_ca
 def set_fast(body: FastBody, _: ServiceCall = Depends(require_service_call)):
     _set("fast", "/fast", {"mode": body.mode}, body.mode)
     return {"mode": body.mode}
+
+
+# ── Voice (V2 speak · V3 voice notes): BASHT's own voice and transcription, both configured in the engine ──
+# "Voice is not set up / not allowed on the engine" (bridge 503 voice_unavailable, or an older bridge: 404) is a domain answer,
+# 400 voice_unavailable, like model_control_unavailable: the app explains it and falls back to browser dictation.
+_VOICE_ERRORS = {400: (400, "bad_request"), 413: (413, "too_large"), 415: (415, "unsupported_audio"), 422: (422, "no_speech"),
+                 429: (429, "rate_limited")}
+
+
+def _voice_call(path: str, data: bytes, content_type: str, *, timeout: float, max_bytes: int, env=os.environ) -> tuple[bytes, str]:
+    """One POST to the engine's voice routes with a raw body. Returns (body, content type). Never follows redirects or proxies."""
+    cfg = _config(env)
+    if cfg is None:
+        raise EngineError(503, "basht_unconfigured")
+    base, token = cfg
+    req = Request(f"{base}/app/v1{path}", data=data, method="POST",
+                  headers={"Authorization": f"Bearer {token}", "Accept": "audio/*, application/json", "User-Agent": "basht-app/1",
+                           "Content-Type": content_type})
+    try:
+        with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
+            raw = res.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise EngineError(502, "basht_unavailable")
+            return raw, (res.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+    except HTTPError as e:
+        try:
+            code = json.loads(e.read(4096)).get("error")
+        except Exception:  # noqa: BLE001 - an unreadable body keeps the status mapping
+            code = None
+        if (e.code == 503 and code == "voice_unavailable") or e.code == 404:
+            raise EngineError(400, "voice_unavailable") from None
+        status, mapped = _VOICE_ERRORS.get(e.code, (502, "basht_unavailable"))
+        raise EngineError(status, mapped) from None
+    except (URLError, TimeoutError, OSError, ValueError):
+        raise EngineError(502, "basht_unavailable") from None
+
+
+class SpeakBody(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_SPEAK)
+
+
+@router.post("/speak")
+def speak(body: SpeakBody, _: ServiceCall = Depends(require_service_call)):
+    """The text spoken in BASHT's own voice, as audio bytes (one chunk of a reply; the app chunks long replies)."""
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail={"code": "empty_message"})
+    if not _allow(_speaks, SPEAK_PER_MINUTE, time.monotonic()):
+        audit_log.record("basht.speak", status="rate_limited", chars=len(text))
+        raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+    started = time.monotonic()
+    try:
+        raw, ctype = _voice_call("/speak", json.dumps({"text": text}).encode(), "application/json",
+                                 timeout=SPEAK_TIMEOUT, max_bytes=MAX_SPEECH_BYTES)
+    except EngineError as e:
+        audit_log.record("basht.speak", status=e.code, chars=len(text))
+        raise HTTPException(status_code=e.status, detail={"code": e.code}) from None
+    if ctype not in SPEECH_TYPES or not raw:
+        audit_log.record("basht.speak", status="basht_unavailable", chars=len(text))
+        raise HTTPException(status_code=502, detail={"code": "basht_unavailable"})
+    audit_log.record("basht.speak", status="ok", chars=len(text), bytes=len(raw), ms=int((time.monotonic() - started) * 1000))
+    return Response(content=raw, media_type=ctype, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@router.post("/transcribe")
+async def transcribe(request: HttpRequest, _: ServiceCall = Depends(require_service_call_audio)):
+    """A voice note (raw audio body, signed) -> the engine's transcript. The audio is passed through and never kept."""
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if ctype not in AUDIO_TYPES:
+        raise HTTPException(status_code=415, detail={"code": "unsupported_audio"})
+    audio = await request.body()  # already read (and size-capped) by the signature check
+    if len(audio) > MAX_AUDIO:
+        raise HTTPException(status_code=413, detail={"code": "too_large"})
+    if len(audio) < MIN_AUDIO:
+        raise HTTPException(status_code=422, detail={"code": "no_speech"})
+    if not _allow(_transcribes, TRANSCRIBE_PER_MINUTE, time.monotonic()):
+        audit_log.record("basht.transcribe", status="rate_limited", bytes=len(audio))
+        raise HTTPException(status_code=429, detail={"code": "rate_limited"})
+    started = time.monotonic()
+    try:
+        raw, _ctype = await run_in_threadpool(_voice_call, "/transcribe", audio, ctype, timeout=TRANSCRIBE_TIMEOUT, max_bytes=64 * 1024)
+        j = json.loads(raw)
+    except EngineError as e:
+        audit_log.record("basht.transcribe", status=e.code, bytes=len(audio), ms=int((time.monotonic() - started) * 1000))
+        raise HTTPException(status_code=e.status, detail={"code": e.code}) from None
+    except ValueError:
+        audit_log.record("basht.transcribe", status="basht_unavailable", bytes=len(audio))
+        raise HTTPException(status_code=502, detail={"code": "basht_unavailable"}) from None
+    text = _text(j.get("text") if isinstance(j, dict) else None, MAX_MESSAGE).strip()
+    ms = int((time.monotonic() - started) * 1000)
+    if not text:
+        audit_log.record("basht.transcribe", status="no_speech", bytes=len(audio), ms=ms)
+        raise HTTPException(status_code=422, detail={"code": "no_speech"})
+    audit_log.record("basht.transcribe", status="ok", bytes=len(audio), chars=len(text), ms=ms)
+    return {"text": text}

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installBrowser } from "./setup";
-import { detectCaps, disablePush, enablePush, eraseRemoteDevice, getPushState, mergeReminders, pushUnavailableReason, sendTestPush, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
+import { detectCaps, disablePush, enablePush, eraseRemoteDevice, getPushState, mergeReminders, pushUnavailableReason, resumeSync, sendTestPush, suspendSync, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
 import { parsePushDevice, prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
 import { handleNotify } from "@/server/notify/api";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { runCommand } from "@/lib/commands";
+import { clearPrivateData } from "@/lib/sign-out";
 import { fire } from "@/lib/reminders";
 import { fakeSender, makeRuntime, makeSubscription, mkReminder, riyadh, vapid } from "./notify-helpers";
 
@@ -163,6 +164,27 @@ describe("client ⇄ server flow (real handlers, in-process transport, fake brow
     expect((await rt.store!.getDevice(d.deviceId))!.subscription).toBeNull();
     expect(await rt.store!.listReminders(d.deviceId)).toEqual([]);
     expect(remindersStore.getSnapshot()).toHaveLength(1); // local data untouched
+  });
+  it("review: a reminder sync in flight when a wipe starts cannot repopulate the cleared stores", async () => {
+    await enablePush();
+    remindersStore.set([mkReminder({}, NOW, "race1")]); await syncReminders(); // the server now holds race1
+    const real = g.fetch as typeof fetch;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    stub("fetch", async (...a: Parameters<typeof fetch>) => { await gate; return real(...a); }); // hold the next sync's answer
+    const inflight = syncReminders();
+    suspendSync(); remindersStore.reset(); // what clearPrivateData() does first
+    release();
+    expect(await inflight).toBe(false);
+    expect(remindersStore.getSnapshot()).toEqual([]); // the stale answer was not imported
+    let calls = 0;
+    stub("fetch", async (...a: Parameters<typeof fetch>) => { calls++; return real(...a); });
+    expect(await syncReminders()).toBe(false); // no new sync while suspended
+    expect(calls).toBe(0);
+    resumeSync(); stub("fetch", real);
+    const wiped = await clearPrivateData(); // and the real wipe suspends + resumes on its own
+    expect(wiped.serverErased).toBe(true);
+    expect(remindersStore.getSnapshot()).toEqual([]);
   });
   it("«مسح كل البيانات» erases the server copy too and reports it", async () => {
     await enablePush();

@@ -1,0 +1,13 @@
+/* B3 approvals (Notifications «الموافقات» + the chat's inline card). Global classes, prefixed approval-, light and dark via the theme tokens. */
+.approval-card { border-inline-start: 4px solid var(--warn); }
+.approval-card.focused { box-shadow: 0 0 0 2px var(--warn); }
+.approval-card.compact { padding: 12px 14px; gap: 8px; }
+.approval-head { display: inline-flex; align-items: center; gap: 8px; color: var(--warn); }
+.approval-head strong { color: var(--text, inherit); font-weight: 600; }
+.approval-left { font-size: 12.5px; color: var(--muted, inherit); white-space: nowrap; }
+.approval-left.urgent { color: var(--danger); font-weight: 600; }
+.approval-cmd { display: block; padding: 8px 10px; border-radius: 10px; background: var(--warn-soft); font-size: 13px; line-height: 1.5;
+  overflow-wrap: anywhere; white-space: pre-wrap; text-align: start; unicode-bidi: plaintext; }
+.approval-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.approval-actions .btn { min-height: 48px; justify-content: center; }
+.approval-inline { align-self: stretch; max-width: min(100%, 620px); }

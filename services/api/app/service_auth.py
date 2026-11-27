@@ -36,6 +36,8 @@ log = logging.getLogger("safwan.service_auth")
 SKEW_SECONDS = 60
 NONCE_TTL_SECONDS = 180          # must outlive the accepted timestamp window (2 x skew)
 MAX_BODY_BYTES = 1_048_576
+# The ONE larger body: a voice note for BASHT (/internal/v1/basht/transcribe), raw audio bytes, signed like every other body.
+MAX_AUDIO_BODY_BYTES = 10 * 1024 * 1024
 BODY_READ_DEADLINE_SECONDS = 10.0   # a slow-loris body must not keep an authentication attempt open
 MIN_SECRET_BYTES = 32
 CONTEXT = "safwan-svc-v1"
@@ -127,14 +129,14 @@ def _secrets(settings: Settings) -> list[bytes]:
     return [s for s in out if len(s) >= MIN_SECRET_BYTES]
 
 
-async def _read_body_limited(request: Request) -> bytes:
+async def _read_body_limited(request: Request, limit: int = MAX_BODY_BYTES) -> bytes:
     """Read the body incrementally and stop as soon as the limit is exceeded. `request.body()` would buffer an entire
     chunked upload (no Content-Length) before any size check, letting an unsigned caller exhaust worker memory."""
     chunks: list[bytes] = []
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
-        if total > MAX_BODY_BYTES:
+        if total > limit:
             raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
         chunks.append(chunk)
     body = b"".join(chunks)
@@ -147,6 +149,19 @@ async def require_service_call(
     settings: Settings = Depends(get_settings),
     store: NonceStore | None = Depends(get_nonce_store),
 ) -> ServiceCall:
+    return await _verify(request, settings, store, MAX_BODY_BYTES)
+
+
+async def require_service_call_audio(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    store: NonceStore | None = Depends(get_nonce_store),
+) -> ServiceCall:
+    """The same signature check, for the one route whose signed body is a voice note (up to MAX_AUDIO_BODY_BYTES)."""
+    return await _verify(request, settings, store, MAX_AUDIO_BODY_BYTES)
+
+
+async def _verify(request: Request, settings: Settings, store: NonceStore | None, max_body: int) -> ServiceCall:
     keys = _secrets(settings)
     if not keys or not settings.service_auth_secret or len(settings.service_auth_secret.encode()) < MIN_SECRET_BYTES:
         raise _unavailable("no valid SERVICE_AUTH_SECRET", "service_auth_unconfigured")
@@ -180,11 +195,11 @@ async def require_service_call(
             raise _deny("malformed account")
 
     declared = request.headers.get("content-length")
-    if declared and _CL_RE.fullmatch(declared) and int(declared) > MAX_BODY_BYTES:
+    if declared and _CL_RE.fullmatch(declared) and int(declared) > max_body:
         raise HTTPException(status_code=413, detail={"code": "payload_too_large"})
     try:
         async with asyncio.timeout(BODY_READ_DEADLINE_SECONDS):
-            body = await _read_body_limited(request)
+            body = await _read_body_limited(request, max_body)
     except TimeoutError:
         raise HTTPException(status_code=408, detail={"code": "request_timeout"}) from None
 
@@ -211,3 +226,17 @@ async def require_service_call(
     if not fresh:
         raise _deny("replayed nonce")
     return ServiceCall(account_id=account)
+
+
+# BASHT photos (B2): the one JSON body that carries images for BASHT (/internal/v1/basht/send-media, base64 inside JSON), still
+# signed like every other body. Matches the BodyLimitMiddleware entry for that path in main.py.
+MAX_MEDIA_BODY_BYTES = 19 * 1024 * 1024
+
+
+async def require_service_call_media(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    store: NonceStore | None = Depends(get_nonce_store),
+) -> ServiceCall:
+    """The same signature check, for the photo route (a body up to MAX_MEDIA_BODY_BYTES)."""
+    return await _verify(request, settings, store, MAX_MEDIA_BODY_BYTES)

@@ -23,7 +23,11 @@ export async function middleware(req: NextRequest) {
   if (!ownerAuthOn(process.env)) return NextResponse.next();
   const { pathname, search, searchParams } = req.nextUrl;
   const probe = new Request(req.url, { headers: req.headers });
-  if (pathname === LOGIN_PATH) forgetSession(readSessionCookie(probe)); // decide /login on a fresh answer, never a cached one
+  if (pathname === LOGIN_PATH) {
+    // decide /login on a fresh answer, never a cached one (only THIS cookie's entry: an anonymous /login never empties the cache)
+    const secret = readSessionCookie(probe, process.env);
+    if (secret) forgetSession(secret);
+  }
   const { account, outage } = await checkOwnerSession(probe, { env: process.env, callBackend, now: Date.now });
 
   if (pathname === LOGIN_PATH) {

@@ -9,6 +9,7 @@ import { Badge, Notice } from "@/components/ui";
 import type { BashtModel, BashtModelState } from "@/lib/basht-client";
 import { byProvider, capabilities, levelLabel, modelName, reasonLabel, replyModelName, seconds, tokens } from "@/lib/basht-model";
 import type { ModelChange } from "./use-basht-model";
+import UsageRow from "./usage-row";
 
 type Props = { models: BashtModel[] | null; state: BashtModelState | null; busy: boolean; error: string; onApply: (c: ModelChange) => void; onClose: () => void };
 
@@ -54,6 +55,8 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
               </div>
             )}
           </section>
+
+          <UsageRow />
 
           {levels.length > 1 && (
             <section className="stack" style={{ gap: 6 }} aria-labelledby="think-h">

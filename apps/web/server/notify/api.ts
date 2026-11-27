@@ -8,9 +8,10 @@ import { parseServerPrefs, type ServerPrefs } from "@/lib/notify-prefs";
 import { authenticate, bearerMatches, hashToken, newDeviceId, newToken } from "./auth";
 import { dispatchTick } from "./dispatch";
 import { deliveryOf, testPayload, topicOf, ttlOf, urgencyOf } from "./push";
-import { isReady, type Runtime } from "./runtime";
+import { isReady, pollBasht, type Runtime } from "./runtime";
 import { ReminderLimitError } from "./types";
 import { parseSubscription, parseSyncBody, readJson, SYNC_MAX_BYTES } from "./validate";
+import { clientIp } from "../client-ip";
 
 const HEADERS = { "Cache-Control": "no-store", "Content-Type": "application/json; charset=utf-8" } as const;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: HEADERS });
@@ -28,7 +29,6 @@ export function createLimiter(max: number, windowMs: number, cap = 10_000) {
     h.n++; return h.n <= max;
   };
 }
-const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
 // limiters are per runtime so tests are isolated
 const limiters = new WeakMap<Runtime, { register: ReturnType<typeof createLimiter>; test: ReturnType<typeof createLimiter>; sync: ReturnType<typeof createLimiter> }>();
@@ -51,13 +51,20 @@ export async function handleNotify(req: Request, path: string[], rt: Runtime): P
       if (!rt.cfg.dispatchSecret) return err("not_configured", 503);
       if (!bearerMatches(req, rt.cfg.dispatchSecret)) return err("unauthorized", 401);
       if (!isReady(rt)) return err("not_configured", 503);
-      return json(await dispatchTick(rt.store!, rt.send!, now));
+      const basht = await pollBasht(rt);
+      // a fresh clock after the poll (as the in-process loop does): deliveries it just queued are due now, not next minute
+      return json({ ...(await dispatchTick(rt.store!, rt.send!, rt.now())), ...(basht?.polled ? { basht } : {}) });
     }
     if (!isReady(rt)) return err("not_configured", 503);
     const store = rt.store!;
     const policy = { extraHosts: rt.cfg.extraEndpointHosts, production: rt.cfg.production };
 
     if (route === "POST /devices") {
+      // M4: with unified sign-in on, only the signed-in owner can add a device (same-origin, like every other owner write);
+      // later calls keep using the per-device bearer
+      const gate = await rt.ownerGate(req);
+      if (gate === "unavailable") return err("unavailable", 503);
+      if (gate === "unauthorized") return err("unauthorized", 401);
       if (!lim.register(clientIp(req), now)) return err("rate_limited", 429);
       if ((await store.countDevices()) >= rt.cfg.maxDevices) return err("capacity", 503);
       const id = newDeviceId(), token = newToken();

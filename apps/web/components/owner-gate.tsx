@@ -8,6 +8,7 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { authClient } from "@/lib/owner-auth";
 import { LOGIN_PATH, safeNext } from "@/lib/login-path";
+import { isLeaving } from "@/lib/sign-out";
 
 type Gate = { on: boolean; signInAgain: () => void };
 const GateContext = createContext<Gate>({ on: false, signInAgain: () => {} });
@@ -20,7 +21,8 @@ export function expiredLoginHref(current: string): string {
 
 export function OwnerGateProvider({ children }: { children: ReactNode }) {
   const [on, setOn] = useState(false);
-  const signInAgain = useCallback(() => { window.location.assign(expiredLoginHref(window.location.pathname + window.location.search)); }, []);
+  // not while this page is signing out on purpose: it is wiping local data and goes to the login page itself when done
+  const signInAgain = useCallback(() => { if (isLeaving()) return; window.location.assign(expiredLoginHref(window.location.pathname + window.location.search)); }, []);
 
   useEffect(() => {
     let alive = true;

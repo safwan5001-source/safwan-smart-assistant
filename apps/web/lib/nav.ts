@@ -14,7 +14,8 @@ const BASE_NAV: NavItem[] = [
   { href: "/reminders", label: "التذكيرات", icon: "clock", hint: "تذكيراتك المجدولة والمتكررة" },
   { href: "/notifications", label: "الإشعارات", icon: "bell", hint: "صندوق التنبيهات التي وصلتك" },
   { href: "/calls", label: "الصوت", icon: "wave", hint: "الجلسة الصوتية داخل محادثة باشت" },
-  { href: "/integrations", label: "التكاملات", icon: "integrations", hint: "الخدمات المخطط ربطها وصلاحياتها" },
+  { href: "/integrations", label: "التكاملات", icon: "integrations", hint: "ما يستطيعه باشت الآن: القنوات والمهارات والأدوات" },
+  { href: "/memory", label: "الذاكرة", icon: "archive", hint: "ما يتذكره باشت، بحث وعرض للقراءة فقط" },
   { href: "/settings", label: "الإعدادات", icon: "settings", hint: "المظهر والصلاحيات والبيانات" },
 ];
 /** Sidebar / More list. With the HQ on, it sits right after the chat. */
@@ -27,7 +28,7 @@ export const tabsFor = (hq: boolean): NavItem[] =>
   hq ? [BASE_NAV[0], BASE_NAV[2], BASE_NAV[1], HQ_ITEM, MORE_ITEM] : [BASE_NAV[0], BASE_NAV[2], BASE_NAV[1], BASE_NAV[3], MORE_ITEM];
 /** Routes that light up the "المزيد" tab. */
 export const morePathsFor = (hq: boolean): string[] =>
-  ["/more", "/integrations", "/calls", "/settings", "/reminders", "/notifications", ...(hq ? ["/files"] : [])];
+  ["/more", "/integrations", "/memory", "/calls", "/settings", "/reminders", "/notifications", ...(hq ? ["/files"] : [])];
 
 export const NAV: NavItem[] = navFor(HQ_ENABLED);
 export const TABS: NavItem[] = tabsFor(HQ_ENABLED);

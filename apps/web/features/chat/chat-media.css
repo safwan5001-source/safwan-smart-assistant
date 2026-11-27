@@ -1,0 +1,43 @@
+/* B1/B2 in the BASHT conversation: media in bubbles, composer photos, reset divider, tool steps, retry, search. RTL: logical props only. */
+.msg-media { display: grid; gap: 6px; margin-block-start: 8px; white-space: normal; }
+.media-grid { display: grid; gap: 4px; grid-template-columns: repeat(var(--cols, 1), minmax(0, 1fr)); max-width: 320px; margin-block-start: 6px; }
+.media-grid.n2 { --cols: 2; } .media-grid.n3 { --cols: 3; }
+.media-thumb { display: block; padding: 0; border: 0; border-radius: 12px; overflow: hidden; background: var(--surface-3); aspect-ratio: 1; cursor: zoom-in; }
+.media-grid.n1 .media-thumb { aspect-ratio: auto; max-height: 260px; }
+.media-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-grid.n1 .media-thumb img { object-fit: contain; max-height: 260px; }
+.media-chip { gap: 4px; padding-inline-end: 2px; }
+.media-chip small { color: var(--muted); flex: none; }
+.media-chip.unavailable { opacity: .65; padding-inline-end: 10px; }
+.bubble:not(.system):not(.assistant) .media-chip small { color: rgba(255, 255, 255, .8); }
+
+.composer-images { display: grid; gap: 4px; }
+.composer-thumb { position: relative; width: 64px; height: 64px; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-2); display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; }
+.composer-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.composer-thumb .icon-btn { position: absolute; inset-block-start: 2px; inset-inline-end: 2px; width: 24px; height: 24px; min-height: 24px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; }
+.composer-thumb.pending { width: auto; padding-inline: 10px; }
+.composer-images .model-note { color: var(--warn, #b45309); }
+
+.reset-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12.5px; margin-block: 6px; }
+.reset-divider::before, .reset-divider::after { content: ""; flex: 1; height: 1px; background: var(--border-strong); }
+.reset-divider span { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); }
+
+.run-steps { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); white-space: normal; }
+.run-steps li { display: flex; align-items: center; gap: 6px; }
+.run-steps li .spinner { width: 12px; height: 12px; border-width: 2px; }
+.run-steps li.active { color: var(--ai-ink); }
+
+.earlier-row { display: flex; justify-content: center; }
+.window-banner { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 12px;
+  background: var(--info-soft); color: var(--info); font-size: 13px; }
+.retry-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.bubble.focused { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.basht-search { display: grid; gap: 6px; }
+.basht-search h2 { font-size: var(--fs-sm, .85rem); margin: 8px 4px 0; }
+.basht-search p { margin: 0 4px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.basht-search .thread-open strong { font-weight: 500; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+
+/* iPhone width: the conversation column never grows past the card (a long model line in the head, or the photo strip, used to
+   widen the implicit grid column and push the head/composer off-screen). */
+.chat-main { grid-template-columns: minmax(0, 1fr); }

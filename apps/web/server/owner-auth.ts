@@ -7,8 +7,8 @@ import "server-only";
  *   POST login/code {code, remember}  → owner code → session cookie
  *   POST logout · POST logout-all     → this device · every device (DELETE also accepted: the doors' legacy "lock")
  *   GET  sessions · POST sessions/revoke {id}   (this account's live sessions, by device; end one)
- *   GET  passkeys · POST passkeys/delete {id}
- *   POST passkeys/register/options|verify   (signed-in owner adds Face ID on this device)
+ *   GET  passkeys · POST passkeys/delete {id} · POST passkeys/delete-all
+ *   POST passkeys/register/options {code}|verify   (signed-in owner adds Face ID on this device; the owner code again = step-up)
  *   POST passkeys/login/options|verify      (Face ID → the same owner session)
  *
  * The browser never sees the owner code's value, the session secret (HttpOnly cookie) or the sealed WebAuthn challenge
@@ -20,6 +20,7 @@ import { COOKIE_NAME as AI_COOKIE, COOKIE_PATH as AI_PATH } from "./assistant-ch
 import { COOKIE_NAME as BC_COOKIE, COOKIE_PATH as BC_PATH } from "./browser-chat/gate";
 import { deviceLabel } from "./device-label";
 import { checkOwnerSession, clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerAuthOn, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
+import { clientIp } from "./client-ip";
 
 export type Deps = OwnerDeps;
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
@@ -37,7 +38,6 @@ const json = (body: unknown, status = 200, cookies: string[] = []) => {
   return new Response(JSON.stringify(body), { status, headers: h });
 };
 const err = (code: string, status: number, cookies: string[] = []) => json({ error: code }, status, cookies);
-const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 const secure = (deps: Deps) => deps.env.NODE_ENV === "production";
 // the per-door cookies of the transition: expired on sign-out too (they no longer open anything while unified sign-in is on)
 const LEGACY_COOKIES: [string, string][] = [[AI_COOKIE, AI_PATH], [BC_COOKIE, BC_PATH], ["safwan_basht", "/api/basht"]];
@@ -74,6 +74,7 @@ async function readJson(req: Request): Promise<Record<string, unknown> | undefin
 const REFUSALS: Record<string, [string, number]> = {
   unauthorized: ["unauthorized", 401], rate_limited: ["rate_limited", 429], owner_disabled: ["forbidden", 403],
   passkey_exists: ["exists", 409], not_found: ["not_found", 404],
+  reauth_failed: ["wrong_code", 403], // step-up: a wrong code while signed in is NOT a sign-out (never 401)
 };
 const refusal = (json: unknown): [string, number] => {
   const code = (json as { detail?: { code?: unknown } } | null)?.detail?.code;
@@ -98,9 +99,11 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     if (r.status !== 200) { const [code, status] = r.status >= 400 && r.status < 500 ? refusal(r.json) : ["unavailable", 502]; return { ok: false as const, res: err(code, status) }; }
     return { ok: true as const, data: (r.json ?? {}) as Record<string, unknown> };
   };
-  const signedIn = (data: Record<string, unknown>, remember: boolean, extra: string[] = []) =>
-    typeof data.session === "string" ? json({ authenticated: true }, 200, [sessionCookieHeader(data.session, remember, secure(deps)), ...extra]) : err("unavailable", 502);
-  const session = readSessionCookie(req);
+  const signedIn = (data: Record<string, unknown>, remember: boolean, extra: string[] = []) => {
+    const cookie = typeof data.session === "string" ? sessionCookieHeader(data.session, remember, secure(deps), deps.env) : null;
+    return cookie ? json({ authenticated: true }, 200, [cookie, ...extra]) : err("unavailable", 502);
+  };
+  const session = readSessionCookie(req, deps.env);
 
   if (req.method === "POST" && route === "login/code") {
     const ip = clientIp(req), now = deps.now();
@@ -108,7 +111,7 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     const data = await readJson(req);
     if (typeof data?.code !== "string" || !data.code || data.code.length > 256) return err("bad_request", 400);
     const remember = data.remember === true;
-    const r = await api("login/code", { code: data.code, remember, device: deviceLabel(req.headers.get("user-agent")) });
+    const r = await api("login/code", { code: data.code, remember, device: deviceLabel(req.headers.get("user-agent")), client: ip });
     if (!r.ok) { if (r.res.status === 401) fails.fail(ip, now); return r.res; }
     return signedIn(r.data, remember);
   }
@@ -155,9 +158,11 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     if (typeof data?.id !== "string" || !UUID.test(data.id)) return err("bad_request", 400);
     const r = await api("sessions/revoke", { session, id: data.id });
     if (!r.ok) return r.res;
+    // the ended session is another device's: its secret is unknown here, so drop this instance's whole cache (review L2) —
+    // the next request of that device is checked afresh (single owner: a handful of entries)
+    forgetSession();
     // the API says whether the ended session was this device's own (no second lookup that could fail): then it is a sign-out
     if (r.data.current !== true) return json({ ok: true, signedOut: false });
-    forgetSession(session);
     return json({ ok: true, signedOut: true }, 200, [clearSessionCookieHeader(secure(deps))]);
   }
   if (req.method === "GET" && route === "passkeys") {
@@ -170,10 +175,19 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     const r = await api("passkeys/delete", { session, id: data.id });
     return r.ok ? json({ ok: true }) : r.res;
   }
+  if (req.method === "POST" && route === "passkeys/delete-all") {
+    const r = await api("passkeys/delete-all", { session });
+    return r.ok ? json({ ok: true, removed: typeof r.data.removed === "number" ? r.data.removed : 0 }) : r.res;
+  }
   if (req.method === "POST" && route === "passkeys/register/options") {
     if (!cfg.passkeys) return err("disabled", 503);
-    const r = await api("passkeys/register/options", { session });
-    if (!r.ok) return r.res;
+    // step-up (review M3): adding a lasting sign-in method needs the owner code again; throttled like the login
+    const ip = clientIp(req), now = deps.now();
+    if (fails.blocked(ip, now)) return err("rate_limited", 429);
+    const data = await readJson(req);
+    if (typeof data?.code !== "string" || !data.code || data.code.length > 256) return err("bad_request", 400);
+    const r = await api("passkeys/register/options", { session, code: data.code, client: ip });
+    if (!r.ok) { if (r.res.status === 403) fails.fail(ip, now); return r.res; }
     return json({ options: r.data.options }, 200, [challengeCookie(String(r.data.challenge ?? ""), deps)]);
   }
   if (req.method === "POST" && route === "passkeys/register/verify") {

@@ -10,6 +10,7 @@ import { runCommand } from "@/lib/commands";
 import type { Priority, Task } from "@/lib/domain";
 import { dueState, formatDay, localDateKey } from "@/lib/format";
 import { matches } from "@/lib/search";
+import BashtAutomations from "./basht-automations";
 
 type Filter = "all" | "pending" | "overdue" | "done";
 type Sort = "newest" | "priority" | "due";
@@ -140,6 +141,8 @@ export default function TasksScreen() {
             {tasks.length ? "غيّر التصفية أو عبارة البحث." : "أضف أول مهمة من النموذج أعلاه، أو اكتب «/مهمة عنوان» في المحادثات."}</Empty></div>
         )}
       </section>
+
+      <BashtAutomations />
 
       <EditDialog task={editing} onClose={() => setEditing(null)} />
     </div>
