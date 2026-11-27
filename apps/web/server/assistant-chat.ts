@@ -10,6 +10,8 @@ import "server-only";
 import { callBackend as realCallBackend, streamBackend as realStreamBackend } from "./backend";
 import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
+import { doorAccess, ownerAuthOn } from "./owner-session";
+import { handleAuth } from "./owner-auth";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./assistant-chat-gate";
 
 export type Deps = { env: Env; callBackend: typeof realCallBackend; streamBackend: typeof realStreamBackend; now: () => number };
@@ -53,10 +55,13 @@ export async function handleAssistantChat(req: Request, path: string[], deps: De
   const route = path.join("/");
   const gate = readGate(deps.env);
   const now = deps.now();
-  if (req.method === "GET" && route === "status") return json({ enabled: !!gate, authenticated: !!gate && verifyCookieValue(gate, readCookie(req), now) });
-  if (!gate) return err("disabled", 503);
+  const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req), now) }); // A1
+  if (req.method === "GET" && route === "status") return json({ enabled: access.enabled, authenticated: access.authenticated });
+  if (!access.enabled) return err("disabled", 503);
 
   if (route === "session") {
+    if (ownerAuthOn(deps.env) && req.method === "POST") return handleAuth(req, ["login", "code"], { env: deps.env, callBackend: deps.callBackend, now: deps.now }); // A1
+    if (!gate) return err("disabled", 503);
     if (!sameOrigin(req)) return err("forbidden", 403);
     if (req.method === "DELETE") return json({ authenticated: false }, 200, { "Set-Cookie": `${COOKIE_NAME}=; Path=${COOKIE_PATH}; Max-Age=0; HttpOnly; SameSite=Strict${deps.env.NODE_ENV === "production" ? "; Secure" : ""}` });
     if (req.method !== "POST") return err("not_found", 404);
@@ -68,8 +73,9 @@ export async function handleAssistantChat(req: Request, path: string[], deps: De
     return json({ authenticated: true }, 200, { "Set-Cookie": setCookieHeader(issueCookieValue(gate, now), deps.env.NODE_ENV === "production") });
   }
 
-  if (!verifyCookieValue(gate, readCookie(req), now)) return err("unauthorized", 401);
-  const account = ownerAccount(deps.env);
+  if (!access.authenticated) return err("unauthorized", 401);
+  // the owner session carries the verified account; the legacy gate keeps using the configured owner account
+  const account = access.account ?? ownerAccount(deps.env);
   if (!account) return err("disabled", 503);
   const write = req.method !== "GET";
   if (write && !sameOrigin(req)) return err("forbidden", 403);

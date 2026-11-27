@@ -3,7 +3,7 @@ def test_health(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["features"] == {"assistant": False, "connected_integrations": 0, "task_execution": False, "basht": "unconfigured", "basht_chat": False}
+    assert body["features"] == {"assistant": False, "connected_integrations": 0, "task_execution": False, "basht": "unconfigured", "basht_chat": False, "owner_auth": False, "passkeys": False}
 
 
 def test_task_does_not_execute(client):

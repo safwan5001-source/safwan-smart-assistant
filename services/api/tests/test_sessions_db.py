@@ -33,7 +33,7 @@ def test_default_and_remember_lifetimes(pg_app, pg_owner, accounts):
     create_session(pg_app, ACCOUNT_A, remember=True)
     days = [r[0] for r in pg_owner.execute(
         "SELECT round((extract(epoch FROM expires_at - created_at) / 86400)::numeric, 1) FROM sessions ORDER BY remember").fetchall()]
-    assert [float(d) for d in days] == [7.0, 30.0]
+    assert [float(d) for d in days] == [0.5, 30.0]  # A1: 12 h, or 30 days with "remember this device"
 
 
 def test_expired_session_is_rejected_by_the_database_clock(pg_app, pg_owner, accounts):

@@ -48,7 +48,7 @@ def test_every_definer_function_pins_a_safe_search_path_with_pg_temp_last(pg_own
     rows = pg_owner.execute(
         "SELECT proname, proconfig FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace ORDER BY 1"
     ).fetchall()
-    assert [r[0] for r in rows] == ["auth_claim_nonce", "auth_resolve_session"]
+    assert [r[0] for r in rows] == ["auth_claim_nonce", "auth_ensure_owner", "auth_passkey_lookup", "auth_passkey_used", "auth_resolve_session"]
     for name, cfg in rows:
         paths = [c for c in (cfg or []) if c.startswith("search_path=")]
         assert paths, name
@@ -57,11 +57,11 @@ def test_every_definer_function_pins_a_safe_search_path_with_pg_temp_last(pg_own
 
 
 def test_definer_bodies_reference_only_schema_qualified_relations(pg_owner):
-    for name in ("auth_claim_nonce", "auth_resolve_session"):
+    for name in ("auth_claim_nonce", "auth_resolve_session", "auth_ensure_owner", "auth_passkey_lookup", "auth_passkey_used"):
         body = pg_owner.execute("SELECT prosrc FROM pg_proc WHERE proname = %s", (name,)).fetchone()[0].lower()
         import re
 
-        for rel in ("sessions", "accounts", "service_nonces"):
+        for rel in ("sessions", "accounts", "service_nonces", "passkeys"):
             for m in re.finditer(rf"\b(from|join|into|update|delete\s+from)\s+(\S+)", body):
                 if m.group(2).strip("(,;") == rel:
                     pytest.fail(f"{name} references {rel} without a schema qualifier")

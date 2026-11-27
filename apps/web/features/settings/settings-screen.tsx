@@ -14,6 +14,7 @@ import { listFiles } from "@/lib/files-db";
 import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
 import ClaudeSettings from "./claude-settings";
+import SecuritySettings from "./security-settings";
 
 const THEMES: { id: Theme; label: string; icon: IconName }[] = [{ id: "system", label: "تلقائي", icon: "auto" }, { id: "light", label: "فاتح", icon: "sun" }, { id: "dark", label: "داكن", icon: "moon" }];
 
@@ -63,6 +64,7 @@ export default function SettingsScreen() {
         <Link href="/integrations#policy-h" className="btn btn-sm" style={{ justifySelf: "start" }}>عرض مصفوفة الصلاحيات<Icon name="forward" size={16} /></Link>
       </section>
 
+      <SecuritySettings />
       <ClaudeSettings />
 
       <section className="card card-pad" aria-labelledby="sys-h">

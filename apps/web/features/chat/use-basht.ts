@@ -98,6 +98,13 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     return () => { pollGen++; }; // leaving the App conversation or the screen stops this consumer; the turn keeps running server-side
   }, [gate, key, load, poll]);
 
+  /** After the unified owner sign-in (A1): the session cookie is set, so the gate is re-read from the server — never assumed. */
+  const recheck = useCallback(async () => {
+    const s = await bashtClient.status();
+    setGate(!s.enabled ? "disabled" : s.authenticated ? "open" : "locked");
+    if (s.authenticated) setError("");
+  }, []);
+
   const unlock = useCallback(async (code: string) => {
     const ok = await bashtClient.unlock(code);
     if (ok) { setError(""); setGate("open"); }
@@ -121,5 +128,5 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
   const refresh = useCallback(() => { if (keyRef.current) void load(keyRef.current); }, [load]);
 
-  return { gate, sessions, messages, live, error, unlock, send, stop, refresh };
+  return { gate, sessions, messages, live, error, unlock, recheck, send, stop, refresh };
 }

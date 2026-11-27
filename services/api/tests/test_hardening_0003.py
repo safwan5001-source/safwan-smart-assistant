@@ -13,7 +13,7 @@ from tests.pg_support import ACCOUNT_A, make_account
 # ── search_path of the SECURITY DEFINER functions ────────────────────────────────────────────────────────────────────────
 def test_definer_search_path_is_exactly_pg_catalog_then_pg_temp(pg_owner):
     rows = pg_owner.execute("SELECT proname, proconfig FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace ORDER BY 1").fetchall()
-    assert [r[0] for r in rows] == ["auth_claim_nonce", "auth_resolve_session"]
+    assert [r[0] for r in rows] == ["auth_claim_nonce", "auth_ensure_owner", "auth_passkey_lookup", "auth_passkey_used", "auth_resolve_session"]
     for name, cfg in rows:
         assert cfg == ["search_path=pg_catalog, pg_temp"], f"{name}: {cfg}"  # `public` is not searched
 

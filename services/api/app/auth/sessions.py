@@ -3,9 +3,9 @@
 What changed versus Phase 5 (see docs/B1-SECURITY-REVIEW.md):
   * expiry is judged by the DATABASE clock inside `auth_resolve_session`, not by the app clock;
   * accounts and sessions are under row-level security; creation/revocation run in an owner scope;
-  * TTL is 7 days by default and 30 days for "remember me" (was capped at 7 days);
+  * TTL is 12 hours by default and 30 days when the owner chooses "remember this device" (A1);
   * the secret is never stored, only its SHA-256, and malformed secrets are rejected before any query.
-There is deliberately NO HTTP endpoint here: login arrives with the passkey work in B2.
+HTTP entry points (owner code, passkeys) live in app/auth/owner.py (A1).
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import psycopg
 
 from ..db.scope import owner_transaction, verified_account_id
 
-SESSION_DEFAULT_TTL = timedelta(days=7)
+SESSION_DEFAULT_TTL = timedelta(hours=12)
 SESSION_REMEMBER_TTL = timedelta(days=30)
 _SECRET_RE = re.compile(r"[A-Za-z0-9_-]{43}")  # token_urlsafe(32) is exactly 43 chars
 

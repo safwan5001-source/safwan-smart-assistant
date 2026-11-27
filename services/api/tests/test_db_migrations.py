@@ -91,7 +91,7 @@ def test_schema_security_properties(pg_owner):
     assert forced == {"sync_records": True, "audit_log": True}
     # SECURITY DEFINER functions pin their search_path (no schema-shadowing hijack).
     defs = q("SELECT proname, proconfig FROM pg_proc WHERE prosecdef AND pronamespace = 'public'::regnamespace ORDER BY 1")
-    assert [d[0] for d in defs] == ["auth_claim_nonce", "auth_resolve_session"]
+    assert [d[0] for d in defs] == ["auth_claim_nonce", "auth_ensure_owner", "auth_passkey_lookup", "auth_passkey_used", "auth_resolve_session"]
     assert all(d[1] and any(c.startswith("search_path=pg_catalog") and c.endswith("pg_temp") for c in d[1]) for d in defs)
     # PUBLIC has no execute right on them.
     pub = q("SELECT has_function_privilege('public', 'auth_resolve_session(bytea)', 'execute'),"
