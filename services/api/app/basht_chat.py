@@ -151,6 +151,11 @@ def _fallback(v: Any) -> dict | None:
     return {"from": _short(v.get("from")), "to": _short(v.get("to")), "reason": _short(v.get("reason"), 60), "at": _int(v.get("at"))}
 
 
+def _is_switch_notice(m: dict) -> bool:
+    """OpenClaw's own model-switch notice (provider "openclaw", model "delivery-mirror"), not a reply of BASHT."""
+    return m.get("provider") == "openclaw" and m.get("model") == "delivery-mirror"
+
+
 def _reply_meta(m: dict) -> dict:
     """Which model actually wrote this reply (and a fallback record when OpenClaw switched models for it)."""
     out: dict[str, Any] = {"provider": _short(m.get("provider"), 100), "model": _short(m.get("model"))}
@@ -219,9 +224,23 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
     q = f"/history?key={quote(body.key, safe='')}&limit={body.limit}" + (f"&offset={body.offset}" if body.offset is not None else "")
     j = _guard(lambda: _call("GET", q))
     msgs = j.get("messages") if isinstance(j.get("messages"), list) else []
-    out = [{"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0,
-            **(_reply_meta(m) if m.get("role") == "assistant" else {})}
-           for m in msgs if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
+    out: list[dict] = []
+    pending_fallback: dict | None = None
+    for m in msgs:
+        if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
+            continue
+        if m.get("role") == "assistant" and _is_switch_notice(m):
+            # OpenClaw records a model fallback as its own notice ("Model switched from … to …"). It is not BASHT's reply:
+            # its record goes onto the reply that follows, and the notice itself is not shown as a message.
+            pending_fallback = _fallback(m.get("fallback")) or pending_fallback
+            continue
+        row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0}
+        if m.get("role") == "assistant":
+            row.update(_reply_meta(m))
+            if pending_fallback and "fallback" not in row:
+                row["fallback"] = pending_fallback
+            pending_fallback = None
+        out.append(row)
     nxt = j.get("nextOffset")
     return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True}
 

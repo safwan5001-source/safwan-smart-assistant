@@ -26,6 +26,7 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
     <div className="sheet-card model-panel" style={{ padding: 12, overflowY: "auto" }}>
       <div className="row"><h2 style={{ flex: 1 }}>النموذج والقدرات</h2><button className="icon-btn" onClick={onClose} aria-label="إغلاق"><Icon name="close" size={20} /></button></div>
 
+      {busy && <small role="status" className="model-busy">جارٍ التطبيق على باشت… يظهر الإعداد هنا بعد أن يؤكده المحرك.</small>}
       {!state ? <small className="muted">جارٍ قراءة إعدادات باشت…</small> : (
         <div className="stack" style={{ gap: 14 }}>
           <section className="card card-pad stack" style={{ gap: 8 }} aria-label="النموذج النشط">

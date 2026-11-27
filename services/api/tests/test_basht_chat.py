@@ -281,3 +281,17 @@ def test_history_and_runs_carry_the_answering_model_and_latency(client, engine):
     replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "done", "text": "x", "firstTokenMs": 700, "totalMs": 1900}
     r = call(client, "GET", f"/internal/v1/basht/runs/{RUN}").json()
     assert r["first_token_ms"] == 700 and r["total_ms"] == 1900
+
+
+def test_openclaws_switch_notice_is_folded_into_the_reply_it_preceded(client, engine):
+    _, replies = engine
+    replies["/history"] = {"ok": True, "messages": [
+        {"role": "user", "text": "اختبار", "at": 1},
+        {"role": "assistant", "text": "Model switched from mock/echo to mock/echo2 (server_error)", "at": 2, "provider": "openclaw",
+         "model": "delivery-mirror", "fallback": {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error"}},
+        {"role": "assistant", "text": "الرد", "at": 3, "provider": "mock", "model": "echo2"},
+        {"role": "assistant", "text": "رد لاحق", "at": 4, "provider": "mock", "model": "echo"}]}
+    msgs = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:app:owner"}).json()["messages"]
+    assert [m["text"] for m in msgs] == ["اختبار", "الرد", "رد لاحق"]  # the English notice is never shown as a BASHT reply
+    assert msgs[1]["model"] == "echo2" and msgs[1]["fallback"] == {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error", "at": None}
+    assert "fallback" not in msgs[2]  # only the reply that the switch happened for

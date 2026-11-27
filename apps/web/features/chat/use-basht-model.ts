@@ -16,10 +16,17 @@ export function useBashtModel(open: boolean, replying: boolean) {
   const [error, setError] = useState("");
   const gen = useRef(0);
 
-  const load = useCallback(async (withCatalog: boolean) => {
+  const load = useCallback(async (withCatalog: boolean, settled?: (s: BashtModelState) => boolean) => {
     const my = ++gen.current;
     try {
-      const [s, m] = await Promise.all([bashtClient.modelState(), withCatalog ? bashtClient.models() : Promise.resolve(null)]);
+      const [first, m] = await Promise.all([bashtClient.modelState(), withCatalog ? bashtClient.models() : Promise.resolve(null)]);
+      let s = first;
+      // the engine applies a session change a moment after acknowledging it: re-read (≤ ~2 s) until it shows, never assume it
+      for (let i = 0; settled && !settled(s) && i < 4; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if (my !== gen.current) return;
+        s = await bashtClient.modelState();
+      }
       if (my !== gen.current) return;
       setState(s); if (m) setModels(m); setSupported(true); setError("");
     } catch (e) {
@@ -44,7 +51,10 @@ export function useBashtModel(open: boolean, replying: boolean) {
       if (c.kind === "model") await bashtClient.setModel(c.value);
       else if (c.kind === "thinking") await bashtClient.setThinking(c.value);
       else await bashtClient.setFast(c.value);
-      await load(c.kind === "model");
+      await load(c.kind === "model", (s) =>
+        c.kind === "model" ? (c.value === "default" ? s.model.source === "default" : s.model.id === c.value)
+        : c.kind === "thinking" ? s.thinking.level === (c.value === "default" ? null : c.value)
+        : c.value === "default" || s.fast.enabled === (c.value === "on"));
       return "";
     } catch (e) {
       const msg = e instanceof BashtError ? e.message : "تعذّر تطبيق التغيير.";

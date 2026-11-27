@@ -19,6 +19,8 @@ describe("model display helpers (M)", () => {
     expect(modelName("other/thing", models)).toBe("thing");
     expect(replyModelName("mock", "echo2", models)).toBe("Echo 2"); // replies carry a bare model id plus its provider
     expect(replyModelName(null, "mock/echo2", models)).toBe("Echo 2");
+    expect(replyModelName("xai", "grok-3-fast", models)).toBe("Grok 3 · سريع"); // the provider's fast variant of a catalog model
+    expect(replyModelName("mock", "echo2-fast", models)).toBe("echo2-fast"); // no fast-mode base: shown as recorded
   });
   it("capability badges only reflect flags the engine sent", () => {
     expect(capabilities(models[0])).toEqual(["تفكير", "صور", "أدوات", "سياق 200K"]);

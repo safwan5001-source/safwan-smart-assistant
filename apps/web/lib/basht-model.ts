@@ -28,7 +28,13 @@ export function modelName(id: string | null | undefined, models: BashtModel[] | 
 /** The id a reply/fallback names may be bare ("echo2") or full ("mock/echo2"): resolve it against the catalog. */
 export function replyModelName(provider: string | null | undefined, model: string | null | undefined, models: BashtModel[] | null | undefined) {
   if (!model) return "";
-  return modelName(provider && !model.includes("/") ? `${provider}/${model}` : model, models);
+  const id = provider && !model.includes("/") ? `${provider}/${model}` : model;
+  // fast mode runs the provider's fast variant (e.g. grok-3 → grok-3-fast): name it after the catalog model it belongs to
+  if (!models?.some((m) => m.id === id) && id.endsWith("-fast")) {
+    const base = models?.find((m) => m.id === id.slice(0, -5) && m.fast_mode);
+    if (base) return `${base.name} · سريع`;
+  }
+  return modelName(id, models);
 }
 
 export const seconds = (ms: number | null | undefined) =>
