@@ -312,7 +312,7 @@ export function createVoicePlayer(deps: PlayerDeps) {
       const resumable = f.kind === "playback_blocked" || f.kind === "interrupted";
       if (resumable) suspended = { job: j, next }; // keep the audio (and the prefetch): a fresh tap continues without a new request
       else { silence(a, true); j.ctl.abort(); urls.forEach((x) => url.revoke(x)); urls = []; job = null; setProgress(0); }
-      if (f.kind === "unavailable") { if (isDurableVoiceFailure(f.reason)) voiceAvailability.set("speak", "no", f.reason); }
+      if (f.kind === "unavailable") { if (isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.set("speak", "no", f.reason); }
       const message = f.kind === "unavailable"
         ? (f.reason ? `صوت باشت غير متاح الآن. ${voiceReasonText(f.reason)}` : PLAYER_ERRORS.voice_unavailable)
         : PLAYER_ERRORS[f.code] ?? bashtErrorText(f.code);
@@ -374,10 +374,10 @@ export function createVoicePlayer(deps: PlayerDeps) {
   };
 }
 
-function classify(e: unknown): { kind: PlayerErrorKind; code: string; reason?: VoiceReason } {
+function classify(e: unknown): { kind: PlayerErrorKind; code: string; reason?: VoiceReason; given?: boolean } {
   if (e instanceof PlaybackFailure) return { kind: e.kind, code: e.kind === "other" ? "playback" : e.kind };
   if (e instanceof BashtError) {
-    if (e.code === "voice_unavailable") return { kind: "unavailable", code: "voice_unavailable", reason: e.reason };
+    if (e.code === "voice_unavailable") return { kind: "unavailable", code: "voice_unavailable", reason: e.reason, given: e.reasonGiven };
     if (e.code === "network") return { kind: "network", code: "network" };
     if (e.code === "timeout") return { kind: "network", code: "timeout" };
     if (e.code === "unauthorized") return { kind: "unauthorized", code: "unauthorized" };

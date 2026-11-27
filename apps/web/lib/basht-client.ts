@@ -54,25 +54,45 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
 
-/** Why BASHT's engine voice is unavailable (`reason` of a voice error / voice-status; a fixed list, never upstream text). */
-export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout"] as const;
+/**
+ * Why BASHT's engine voice is unavailable (`reason` of a voice error / voice-status). A fixed list identical to the shared contract
+ * (services/api/tests/fixtures/voice-contract.json — a test compares them); never upstream text.
+ */
+export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout", "bad_audio", "engine_error",
+  "in_flight", "per_minute", "text_rejected", "tool_path_only", "tool_path_unavailable", "no_tts_config", "config_unreadable"] as const;
 export type VoiceReason = (typeof VOICE_REASONS)[number];
 export const isVoiceReason = (v: unknown): v is VoiceReason => (VOICE_REASONS as readonly unknown[]).includes(v);
 export const VOICE_REASON_TEXT: Record<VoiceReason, string> = {
   identity_mismatch: "صوت باشت موقوف: المحرك المتصل لا يطابق هوية باشت المعتمدة في التطبيق.",
   tool_denied: "أداة النطق غير مسموحة لباشت في إعدادات المحرك.",
   unconfigured: "لم يُضبط صوت باشت (النطق) في المحرك بعد.",
+  no_tts_config: "لا توجد إعدادات نطق لباشت في المحرك.",
+  config_unreadable: "تعذّرت قراءة إعدادات صوت باشت في المحرك.",
+  tool_path_unavailable: "مسار أداة النطق غير متاح في المحرك.",
   provider_error: "مزوّد الصوت رفض الطلب أو تعذّر الآن (قد يكون الرصيد أو الحصة).",
   link_down: "الاتصال بمحرك باشت منقطع الآن.",
   timeout: "تأخّر مزوّد الصوت في الرد فانتهت المهلة.",
+  bad_audio: "لم يُنتج المحرك صوتًا صالحًا لهذا الرد.",
+  engine_error: "تعذّر على محرك باشت تجهيز الصوت الآن.",
+  in_flight: "طلب صوت سابق ما زال قيد التنفيذ؛ انتظر قليلًا.",
+  per_minute: "طلبات صوت كثيرة في الدقيقة؛ انتظر قليلًا ثم أعد المحاولة.",
+  text_rejected: "رفض المحرك نطق هذا النص.",
+  tool_path_only: "النطق متاح الآن عبر أداة المحرك فقط؛ أعد المحاولة لاحقًا.",
 };
-/** Reasons that will not fix themselves on the next try (configuration): the UI hides «استمع» for them. */
-export const DURABLE_VOICE_REASONS: readonly VoiceReason[] = ["identity_mismatch", "tool_denied", "unconfigured"];
+/**
+ * Configuration failures that will not fix themselves on the next try: the UI hides «استمع» / the live voice for the page
+ * session. Every other contract reason is TRANSIENT (controls stay; «أعد المحاولة»).
+ */
+export const DURABLE_VOICE_REASONS: readonly VoiceReason[] = ["identity_mismatch", "tool_denied", "unconfigured", "no_tts_config", "config_unreadable", "tool_path_unavailable"];
+export const TRANSIENT_VOICE_REASONS: readonly VoiceReason[] = ["provider_error", "timeout", "link_down", "engine_error", "in_flight", "per_minute", "text_rejected", "bad_audio", "tool_path_only"];
 export const voiceReasonText = (reason: string | null | undefined): string => (isVoiceReason(reason) ? VOICE_REASON_TEXT[reason] : "");
 
 export class BashtError extends Error {
-  /** `reason`: the allowlisted cause of a voice error (POST speak / transcribe), when the server gave one. */
-  constructor(public code: string, public reason?: VoiceReason) {
+  /**
+   * `reason`: the allowlisted cause of a voice error (POST speak / transcribe). `reasonGiven`: the server sent a reason at all —
+   * an unknown token (newer engine) is given-but-unknown, which is never treated as a configuration failure.
+   */
+  constructor(public code: string, public reason?: VoiceReason, public reasonGiven: boolean = reason !== undefined) {
     super(code === "voice_unavailable" && reason ? `${bashtErrorText(code)} ${VOICE_REASON_TEXT[reason]}` : bashtErrorText(code));
     this.name = "BashtError";
   }
@@ -91,7 +111,8 @@ export function parseVoiceStatus(j: unknown): VoiceStatus {
 }
 const errorOf = (body: unknown): BashtError => {
   const b = body as { error?: unknown; reason?: unknown } | null;
-  return new BashtError(typeof b?.error === "string" ? b.error : "unavailable", isVoiceReason(b?.reason) ? b.reason : undefined);
+  const given = typeof b?.reason === "string" && b.reason.length > 0;
+  return new BashtError(typeof b?.error === "string" ? b.error : "unavailable", isVoiceReason(b?.reason) ? b.reason : undefined, given);
 };
 
 type Fetch = typeof fetch;

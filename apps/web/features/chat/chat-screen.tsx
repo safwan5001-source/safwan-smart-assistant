@@ -332,7 +332,7 @@ export default function ChatScreen() {
   notes.current ??= createVoiceNotes({
     transcribe: async (audio, signal) => {
       try { const t = await bashtClient.transcribe(audio, signal); voiceAvailability.set("transcribe", "yes"); return t; }
-      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
+      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason, e.reasonGiven)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
     },
     canSend: () => sendable.current,
     send: async (text) => { try { await noteDeps.current.basht.send(text); } catch (e) { setAgentPhase("reply_failed"); throw e; } },

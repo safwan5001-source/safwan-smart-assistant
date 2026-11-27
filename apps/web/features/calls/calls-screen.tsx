@@ -123,7 +123,7 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
     cancelRecord: () => latest.current.rec.cancel(),
     transcribe: async (audio, signal) => {
       try { const t = await bashtClient.transcribe(audio, signal); voiceAvailability.set("transcribe", "yes"); return t; }
-      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
+      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason, e.reasonGiven)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
     },
     ask: (text) => latest.current.live.ask(text),
     play: (text, onPlayer) => voicePlayer().play("live", text, { onPhase: onPlayer }),

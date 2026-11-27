@@ -68,4 +68,9 @@ export function speakGate(learned: { speak: "unknown" | "yes" | "no"; reason?: V
   return { show: true, note: status.speak === "degraded" ? voiceReasonText(status.reason) || "صوت باشت يعمل بشكل متقطع الآن؛ قد يتعذّر النطق." : "" };
 }
 /** A voice failure that will not fix itself on retry (configuration): remembered as "no" so «استمع» hides. */
-export const isDurableVoiceFailure = (reason: VoiceReason | undefined) => !reason || DURABLE_VOICE_REASONS.includes(reason);
+/**
+ * Older engine (no reason at all): durable, as before. A contract configuration reason: durable. Any other reason — a transient
+ * contract reason or a token this app does not know yet — is transient: the controls stay and the owner may retry.
+ */
+export const isDurableVoiceFailure = (reason: VoiceReason | undefined, given: boolean = reason !== undefined) =>
+  !given ? true : !!reason && DURABLE_VOICE_REASONS.includes(reason);
