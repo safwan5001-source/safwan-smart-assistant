@@ -75,11 +75,14 @@ describe("U1: one conversation — the app is BASHT", () => {
   it("free text is sent only to a reachable brain, and the draft is cleared only after BASHT accepted the turn", () => {
     const chat = src("features/chat/chat-screen.tsx");
     // refused up front, nothing recorded, draft kept
-    expect(chat).toMatch(/if \(!quick\.handled && text && !ready\) \{[\s\S]*?return;\s*\}/);
-    expect(chat).toMatch(/try \{ await basht\.send\(text\); setDraft\(""\); \}/);
+    expect(chat).toMatch(/if \(!quick\.handled && \(text \|\| photos\.length\) && !ready\) \{[\s\S]*?return;\s*\}/);
+    expect(chat).toMatch(/try \{ await basht\.send\(text, photos\); setDraft\(""\); pics\.clear\(\); \}/);
     // no silent fallback to notes: Claude backs the chat only when NO engine is configured
     expect(chat).toMatch(/const claudeOn = !bashtOn && aiReady\(status\);/);
-    expect(chat).not.toMatch(/محادثة جديدة/); // a single conversation: no "new chat"
+    // still ONE conversation: «محادثة جديدة» (B1) resets BASHT's context in the same engine session (nothing deleted), it never opens
+    // a second, parallel thread
+    expect(chat).toMatch(/const e = await basht\.newConversation\(\);/);
+    expect(chat).not.toMatch(/"chat\.create"/);
   });
 
   it("every entry point lands in the same conversation; the old addresses still work", () => {

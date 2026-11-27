@@ -7,7 +7,8 @@
  * - Nothing here ever pretends a message reached BASHT: `send` resolves only after the engine accepted the turn.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession } from "@/lib/basht-client";
+import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
+import type { PreparedImage } from "@/lib/image-prep";
 import { setAgentPhase } from "@/lib/agent-activity";
 
 export const APP_SESSION_KEY = "agent:main:app:owner";
@@ -15,11 +16,24 @@ const POLL_MS = 1200;
 
 // The run in flight survives client-side navigation (module scope, never persisted). Only ONE polling loop may exist:
 // each new loop (or leaving the conversation / the screen) bumps the generation and the older loop exits.
-let activeRun: { id: string; prompt: string; at: number } | null = null;
+type ActiveRun = { id: string; prompt: string; at: number; images?: LiveImage[] };
+let activeRun: ActiveRun | null = null;
 let pollGen = 0;
+/** B1 Retry: the last owner turn that failed or was stopped (text + its photos, in memory only). */
+let lastTurn: { text: string; images: PreparedImage[] } | null = null;
 
 export type BashtGate = "checking" | "disabled" | "locked" | "open";
-export type BashtLive = { prompt: string; text: string; at: number };
+export type LiveImage = { name: string; previewUrl: string };
+export type BashtLive = { prompt: string; text: string; at: number; images?: LiveImage[]; steps?: BashtStep[] };
+/** Where older rows come from: an `earlier` cursor (also across «محادثة جديدة») or the engine's offset paging. */
+type Older = { before: string } | { offset: number } | null;
+const olderOf = (p: { earlier: string | null; hasMore: boolean; nextOffset: number | null }): Older =>
+  p.earlier ? { before: p.earlier } : p.hasMore && p.nextOffset !== null ? { offset: p.nextOffset } : null;
+const mergeRows = (a: BashtMessage[], b: BashtMessage[]) => {
+  const seen = new Set<string>(); const out: BashtMessage[] = [];
+  for (const m of [...a, ...b]) { const k = m.id ?? `${m.role}:${m.at}:${m.text.slice(0, 40)}`; if (seen.has(k)) continue; seen.add(k); out.push(m); }
+  return out;
+};
 const errText = (e: unknown) => (e instanceof BashtError ? e.message : bashtErrorText("unavailable"));
 
 /** `enabled` = the server says the BASHT chat is configured (/api/health features.basht_chat). `key` = engine conversation on screen. */
@@ -29,6 +43,16 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const [messages, setMessages] = useState<BashtMessage[] | null>(null);
   const [live, setLive] = useState<BashtLive | null>(null);
   const [error, setError] = useState("");
+  // B1: rows paged in above the newest page (kept across refreshes), where the next older page comes from, a search-hit window
+  const [olderRows, setOlderRows] = useState<BashtMessage[]>([]);
+  const [older, setOlder] = useState<Older>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const [windowed, setWindowed] = useState(false);
+  const [failedTurn, setFailedTurn] = useState<{ text: string; images: number } | null>(lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
+  const [resetting, setResetting] = useState(false);
+  const olderRowsRef = useRef<BashtMessage[]>([]);
+  olderRowsRef.current = olderRows;
   const keyRef = useRef(key);
   keyRef.current = key;
   const loadGen = useRef(0);
@@ -38,9 +62,11 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     const gen = ++loadGen.current;
     const current = () => gen === loadGen.current && keyRef.current === k;
     try {
-      const [list, msgs] = await Promise.all([bashtClient.sessions(), bashtClient.history(k)]);
+      const [list, page] = await Promise.all([bashtClient.sessions(), bashtClient.historyPage(k)]);
       if (!current()) return;
-      setSessions(list); setMessages(msgs);
+      setSessions(list); setMessages(page.messages); setWindowed(false);
+      // older rows already paged in stay above; the cursor continues from them, else from this page
+      if (!olderRowsRef.current.length) setOlder(olderOf(page));
       if (!keepError) setError("");
     } catch (e) {
       if (!current()) return;
@@ -49,10 +75,10 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     }
   }, []);
 
-  const poll = useCallback(async (run: { id: string; prompt: string; at: number }) => {
+  const poll = useCallback(async (run: ActiveRun) => {
     const gen = ++pollGen;
     const mine = () => gen === pollGen && activeRun?.id === run.id;
-    setLive({ prompt: run.prompt, text: "", at: run.at });
+    setLive({ prompt: run.prompt, text: "", at: run.at, images: run.images });
     // the finished turn belongs to the App session: refresh it only if that is still the conversation on screen
     // the live bubble stays until the refreshed history is on screen, so the reply never blinks out in between
     const finish = async () => { if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY, true); setLive(null); };
@@ -62,9 +88,11 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         const r = await bashtClient.run(run.id);
         if (!mine()) return;
         if (first && r.text) { first = false; setAgentPhase("responding"); }
-        setLive({ prompt: run.prompt, text: r.text, at: run.at });
+        setLive({ prompt: run.prompt, text: r.text, at: run.at, images: run.images, steps: r.steps ?? [] });
         if (r.status !== "running") {
           activeRun = null;
+          if (r.status === "done") lastTurn = null;
+          setFailedTurn(r.status !== "done" && lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
           if (r.status === "error") setError("تعذّر إكمال الرد من باشت. أعد المحاولة.");
           if (r.status === "stopped") setError("أُوقف الرد.");
@@ -91,7 +119,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
 
   useEffect(() => {
     if (gate !== "open" || !key) return;
-    setMessages(null);
+    setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
     else setLive(null);
@@ -111,13 +139,15 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     return ok;
   }, []);
 
-  /** Starts one owner turn. Throws BashtError (Arabic message) if the engine did not accept it — the caller keeps the draft. */
-  const send = useCallback(async (text: string) => {
+  /** Starts one owner turn. Throws BashtError (Arabic message) if the engine did not accept it — the caller keeps the draft.
+   *  B2: `images` (already downscaled, EXIF-free) ride on the same turn. */
+  const send = useCallback(async (text: string, images: PreparedImage[] = []) => {
     try {
-      const id = await bashtClient.send(text);
-      setError("");
+      const id = images.length ? await bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) : await bashtClient.send(text);
+      setError(""); setFailedTurn(null); setFocusId(null);
       setAgentPhase("thinking");
-      activeRun = { id, prompt: text, at: Date.now() };
+      lastTurn = { text, images };
+      activeRun = { id, prompt: text, at: Date.now(), images: images.map((i) => ({ name: i.name, previewUrl: i.previewUrl })) };
       void poll(activeRun);
     } catch (e) {
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
@@ -126,7 +156,60 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   }, [poll]);
 
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
-  const refresh = useCallback(() => { if (keyRef.current) void load(keyRef.current); }, [load]);
+  const refresh = useCallback(() => { if (keyRef.current) { setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
 
-  return { gate, sessions, messages, live, error, unlock, recheck, send, stop, refresh };
+  /** B1 Retry: re-sends the last failed/stopped owner turn through the same send path (same text, same photos). */
+  const retry = useCallback(async () => {
+    const t = lastTurn;
+    if (!t || activeRun) return;
+    try { await send(t.text, t.images); } catch (e) { setError(errText(e)); }
+  }, [send]);
+
+  /** B1 «محادثة جديدة»: the engine starts a fresh context for the app conversation; every earlier message stays readable. */
+  const newConversation = useCallback(async (): Promise<string | null> => {
+    if (activeRun) return bashtErrorText("busy");
+    setResetting(true);
+    try {
+      await bashtClient.newConversation();
+      lastTurn = null; setFailedTurn(null); setOlderRows([]); setOlder(null); setFocusId(null);
+      if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY);
+      return null;
+    } catch (e) {
+      if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
+      return errText(e);
+    } finally { setResetting(false); }
+  }, [load]);
+
+  /** B1: the next older page (offset paging, then across «محادثة جديدة»); keeps the reading position on the first old row. */
+  const loadEarlier = useCallback(async () => {
+    const k = keyRef.current;
+    if (!k || !older || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const page = await bashtClient.historyPage(k, older);
+      if (keyRef.current !== k) return;
+      const firstShown = (olderRows[0] ?? messages?.[0])?.id ?? null;
+      setOlderRows((o) => mergeRows(page.messages, o));
+      setOlder(olderOf(page));
+      if (firstShown) setFocusId(firstShown);
+    } catch (e) { setError(errText(e)); } finally { setLoadingOlder(false); }
+  }, [older, loadingOlder, olderRows, messages]);
+
+  /** B1 search hit: the message itself if it is on screen, else a window around it (read-only until «العودة إلى الأحدث»). */
+  const jumpTo = useCallback(async (messageId: string) => {
+    const k = keyRef.current;
+    if (!k) return;
+    if ([...olderRows, ...(messages ?? [])].some((m) => m.id === messageId)) { setFocusId(messageId); return; }
+    const gen = ++loadGen.current; // a plain load still in flight for this conversation must not replace the window
+    try {
+      const page = await bashtClient.historyPage(k, { around: messageId });
+      if (keyRef.current !== k || gen !== loadGen.current) return;
+      setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
+    } catch (e) { setError(errText(e)); }
+  }, [olderRows, messages]);
+  const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
+
+  const shown = messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages;
+  return { gate, sessions, messages: shown, live, error, unlock, recheck, send, stop, refresh,
+    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, setFocusId, windowed, backToLatest };
 }

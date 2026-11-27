@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 import app.service_auth as sa
 from app import main
 from app.main import app
-from app.service_auth import MemoryNonceStore, require_service_call, sign
+from app.service_auth import MemoryNonceStore, require_service_call, require_service_call_media, sign
 
 SECRET = "unit-test-secret-0123456789abcdef-0123456789abcdef"
 BROWSER_TOKEN = "t" * 40
@@ -60,6 +60,12 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/basht/model"),
     ("POST", "/internal/v1/basht/thinking"),
     ("POST", "/internal/v1/basht/fast"),
+    # B1/B2 chat basics + media (tests/test_basht_media.py): same signature. /send-media is the ONE route whose signed JSON may
+    # carry up to 19 MiB of photos (require_service_call_media, see SIGNATURE_GUARDS).
+    ("POST", "/internal/v1/basht/send-media"),
+    ("POST", "/internal/v1/basht/media"),
+    ("POST", "/internal/v1/basht/new"),
+    ("POST", "/internal/v1/basht/search"),
     # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
     ("POST", "/internal/v1/auth/config"),
     ("POST", "/internal/v1/auth/login/code"),
@@ -76,6 +82,9 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/auth/passkeys/login/verify"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
+# The signature dependency, and its one larger-body variant (same check, 19 MiB cap) — only on the routes listed here.
+SIGNATURE_GUARDS = {require_service_call, require_service_call_media}
+MEDIA_BODY_ROUTES = {("POST", "/internal/v1/basht/send-media")}
 
 
 @pytest.fixture(autouse=True)
@@ -159,7 +168,10 @@ def test_every_discovered_internal_route_rejects_an_unauthenticated_call(client,
 def test_every_signed_route_depends_on_the_service_signature():
     for method, path, route in _internal_routes():
         if (method, path) in SIGNED_ROUTES:
-            assert require_service_call in set(_walk(route.dependant)), f"{method} {path} lost its signature dependency"
+            deps = set(_walk(route.dependant))
+            assert SIGNATURE_GUARDS & deps, f"{method} {path} lost its signature dependency"
+            # the larger photo body is allowed on the photo route only
+            assert (require_service_call_media in deps) == ((method, path) in MEDIA_BODY_ROUTES), f"{method} {path}: wrong body cap"
 
 
 def test_there_is_no_global_exemption_or_guard_hiding_behind_middleware():
@@ -173,7 +185,7 @@ def test_there_is_no_global_exemption_or_guard_hiding_behind_middleware():
 
 def test_the_two_mechanisms_are_not_mixed_on_one_route():
     for method, path, route in _internal_routes():
-        has_signature = require_service_call in set(_walk(route.dependant))
+        has_signature = bool(SIGNATURE_GUARDS & set(_walk(route.dependant)))
         assert has_signature == ((method, path) in SIGNED_ROUTES), f"{method} {path}: wrong mechanism"
 
 

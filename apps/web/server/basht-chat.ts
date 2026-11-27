@@ -15,6 +15,7 @@ import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
+import { MEDIA_CODES, handleBashtExtras } from "./basht-extras";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 
 export const BASHT_COOKIE = "safwan_basht";
@@ -36,6 +37,8 @@ const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =
 const err = (code: string, status: number) => json({ error: code }, status);
 const RUN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const KEY = /^agent:[a-z0-9_-]{1,64}:\S{1,200}$/i;
+const MSG_ID = /^[A-Za-z0-9_-]{6,100}$/;
+const CURSOR = /^[A-Za-z0-9_-]{6,100}(?:\.[A-Za-z0-9_-]{6,100})?$/;
 // 8000 UTF-16 units can need up to 6 bytes each once JSON-escaped (\u00XX); Arabic needs 2. 64 KiB covers both, still bounded.
 const MAX_MESSAGE = 8000, MAX_BODY = 64 * 1024;
 
@@ -109,21 +112,28 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (r.kind !== "ok") return err("unavailable", 503);
     if (r.status !== 200) {
       const code = (r.json as { detail?: { code?: unknown } } | null)?.detail?.code;
-      if (r.status === 400 && typeof code === "string" && MODEL_CODES.has(code)) return err(code, 400);
+      if (r.status === 400 && typeof code === "string" && (MODEL_CODES.has(code) || MEDIA_CODES.has(code))) return err(code, 400);
       const m = API_ERRORS[r.status]; return m ? err(m[1], m[0]) : err("unavailable", 502);
     }
     const j = (r.json ?? {}) as Record<string, unknown>;
     return json(pick ? pick(j) : j);
   };
 
+  // B1/B2: photos on a turn, files out, «محادثة جديدة», search (server/basht-extras.ts)
+  const extra = await handleBashtExtras(req, route, { relay, deps });
+  if (extra) return extra;
   if (req.method === "GET" && route === "sessions") return relay("/internal/v1/basht/sessions", "GET", undefined, (j) => ({ sessions: Array.isArray(j.sessions) ? j.sessions : [] }));
   if (req.method === "GET" && route === "history") {
     const u = new URL(req.url);
     const key = u.searchParams.get("key") ?? "";
     const offset = u.searchParams.get("offset");
+    // B1: earlier rows by cursor (also across «محادثة جديدة») or a window around one message (a search hit); ids only
+    const before = u.searchParams.get("before"); const around = u.searchParams.get("around");
     if (!KEY.test(key) || (offset !== null && !/^\d{1,7}$/.test(offset))) return err("bad_request", 400);
+    if ((before !== null && !CURSOR.test(before)) || (around !== null && !MSG_ID.test(around))) return err("bad_request", 400);
     // fixed path + JSON body: callBackend never takes a query string (server/backend.ts)
-    return relay("/internal/v1/basht/history", "POST", { key, limit: 50, ...(offset !== null ? { offset: Number(offset) } : {}) });
+    return relay("/internal/v1/basht/history", "POST", { key, limit: 50, ...(offset !== null ? { offset: Number(offset) } : {}),
+      ...(before !== null ? { before } : around !== null ? { around } : {}) }, undefined, before !== null || around !== null ? 35_000 : 15_000);
   }
   if (req.method === "POST" && route === "send") {
     const data = await readJson(req);
@@ -153,7 +163,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
     if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,
-      firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null }));
+      firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null,
+      steps: Array.isArray(j.steps) ? j.steps : [] }));
     if (req.method === "POST" && run[2]) return relay(`/internal/v1/basht/runs/${run[1]}/stop`, "POST", {});
   }
   return err("not_found", 404);
