@@ -24,7 +24,7 @@ from urllib.request import Request, urlopen
 CoreState = Literal["unconfigured", "connected", "starting", "offline"]
 ENV_VAR = "BASHT_CORE_URL"
 CACHE_SECONDS = 60.0
-TIMEOUT_SECONDS = 3.0
+TIMEOUT_SECONDS = 1.5  # well inside the BFF's 3 s deadline for the whole /internal/v1/ping call
 MAX_BYTES = 4096
 
 _lock = threading.Lock()
@@ -45,7 +45,10 @@ def _probe(base: str) -> CoreState:
         return "offline"
     if not isinstance(data, dict) or data.get("ok") is not True:
         return "offline"
-    return {"ready": "connected", "starting": "starting"}.get(data.get("gateway"), "offline")  # type: ignore[return-value]
+    gateway = data.get("gateway")
+    if not isinstance(gateway, str):
+        return "offline"
+    return {"ready": "connected", "starting": "starting"}.get(gateway, "offline")  # type: ignore[return-value]
 
 
 def core_state(environ: Mapping[str, str], now: Callable[[], float] = time.monotonic,
@@ -57,7 +60,10 @@ def core_state(environ: Mapping[str, str], now: Callable[[], float] = time.monot
         hit = _cache.get(base)
         if hit and now() - hit[0] < CACHE_SECONDS:
             return hit[1]
-    state = probe(base)
+    try:
+        state = probe(base)
+    except Exception:  # the engine's status must never break the app's own health
+        state = "offline"
     with _lock:
         _cache[base] = (now(), state)
     return state

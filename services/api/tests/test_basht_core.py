@@ -74,3 +74,18 @@ def test_calls_healthz_only_and_caches_for_a_minute():
     with patch.object(bc, "urlopen", lambda req, timeout: paths.append((req.full_url, timeout)) or _Res(b'{"ok":true,"gateway":"ready"}')):
         bc._probe("https://engine.example/")
     assert paths == [("https://engine.example/healthz", bc.TIMEOUT_SECONDS)]
+
+
+def test_malformed_gateway_and_probe_errors_never_break_health():
+    for gateway in ([], {}, 1, None):
+        with _with({"ok": True, "gateway": gateway}):
+            assert bc._probe("https://engine.example") == "offline", gateway
+
+    def broken(base):
+        raise RuntimeError("unexpected")
+    bc.reset_cache()
+    assert bc.core_state({"BASHT_CORE_URL": "https://engine.example"}, probe=broken) == "offline"
+
+
+def test_probe_deadline_leaves_headroom_inside_the_bff_3s_ping_deadline():
+    assert bc.TIMEOUT_SECONDS <= 1.5
