@@ -33,7 +33,7 @@ describe("an older page for an abandoned history view is dropped", () => {
   it("refresh / «العودة إلى الأحدث», opening a conversation, «محادثة جديدة» and a search window start a new view", () => {
     expect(body(hook, /const refresh = useCallback/)).toMatch(/viewGen\.current\+\+/);
     expect(hook).toMatch(/const backToLatest = useCallback\(\(\) => \{ setFocusId\(null\); refresh\(\); \}/);
-    expect(body(hook, /const newConversation = useCallback/)).toMatch(/await bashtClient\.newConversation\(\);\s*viewGen\.current\+\+;/);
+    expect(body(hook, /const newConversation = useCallback/)).toMatch(/if \(keyRef\.current === APP_SESSION_KEY\) \{\s*viewGen\.current\+\+;/);
     expect(body(hook, /const jumpTo = useCallback/)).toMatch(/viewGen\.current\+\+;/);
     expect(hook).toMatch(/viewGen\.current\+\+;\s*windowedRef\.current = false;\s*setMessages\(null\); setOlderRows\(\[\]\)/);
   });
@@ -68,5 +68,19 @@ describe("an older page lands only on the cursor it was requested with", () => {
     expect(sameOlder({ offset: 50 }, { offset: 52 })).toBe(false);
     expect(sameOlder({ before: "a" }, null)).toBe(false);
     expect(sameOlder(null, null)).toBe(true);
+  });
+});
+
+// Review (Codex, round 10): «محادثة جديدة» resets the APP conversation; another conversation on screen kept losing its
+// earlier rows and cursor (and was not reloaded). The view state is cleared only when the app conversation is on screen.
+describe("«محادثة جديدة» leaves another conversation on screen untouched", () => {
+  it("clears earlier rows, cursor and focus only inside the app-session branch", () => {
+    const fn = body(hook, /const newConversation = useCallback/);
+    const branch = fn.search(/if \(keyRef\.current === APP_SESSION_KEY\) \{/);
+    expect(branch).toBeGreaterThan(-1);
+    for (const re of [/setOlderRows\(\[\]\)/, /setOlder\(null\)/, /setFocusId\(null\)/, /viewGen\.current\+\+/]) {
+      const at = fn.search(re);
+      expect(at, String(re)).toBeGreaterThan(branch);
+    }
   });
 });
