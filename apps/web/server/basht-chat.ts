@@ -88,7 +88,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);
 
   const relay = async (apiPath: string, method: "GET" | "POST", body?: unknown, pick?: (j: Record<string, unknown>) => unknown) => {
-    const r = await deps.callBackend({ path: apiPath, method, body, env: deps.env, timeoutMs: 15_000, maxBytes: 2 * 1024 * 1024 });
+    // 512 KiB is callBackend's hard ceiling; history pages are kept well under it (the engine also caps one page at 80 KiB)
+    const r = await deps.callBackend({ path: apiPath, method, body, env: deps.env, timeoutMs: 15_000, maxBytes: 512 * 1024 });
     if (r.kind !== "ok") return err("unavailable", 503);
     if (r.status !== 200) { const m = API_ERRORS[r.status]; return m ? err(m[1], m[0]) : err("unavailable", 502); }
     const j = (r.json ?? {}) as Record<string, unknown>;
@@ -102,7 +103,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     const offset = u.searchParams.get("offset");
     if (!KEY.test(key) || (offset !== null && !/^\d{1,7}$/.test(offset))) return err("bad_request", 400);
     // fixed path + JSON body: callBackend never takes a query string (server/backend.ts)
-    return relay("/internal/v1/basht/history", "POST", { key, limit: 100, ...(offset !== null ? { offset: Number(offset) } : {}) });
+    return relay("/internal/v1/basht/history", "POST", { key, limit: 50, ...(offset !== null ? { offset: Number(offset) } : {}) });
   }
   if (req.method === "POST" && route === "send") {
     const data = await readJson(req);

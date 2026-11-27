@@ -76,7 +76,8 @@ describe("BASHT chat door: relay", () => {
     backend.mockResolvedValueOnce(ok(200, { key: "agent:main:app:owner", messages: [{ role: "user", text: "مرحبا", at: 1 }] }));
     const h = await call("GET", "history?key=agent:main:app:owner", authed);
     expect(h.status).toBe(200);
-    expect(backend.mock.calls[0][0]).toMatchObject({ path: "/internal/v1/basht/history", method: "POST", body: { key: "agent:main:app:owner", limit: 100 } });
+    expect(backend.mock.calls[0][0]).toMatchObject({ path: "/internal/v1/basht/history", method: "POST", body: { key: "agent:main:app:owner", limit: 50 } });
+    expect(backend.mock.calls[0][0].maxBytes).toBeLessThanOrEqual(512 * 1024);
     // every relayed path is a fixed /internal/v1/* route, which the real callBackend enforces (no query strings)
     for (const c of backend.mock.calls) expect(c[0].path).toMatch(/^\/internal\/v1\/[a-z0-9/_-]+$/);
     backend.mockResolvedValueOnce(ok(200, { run_id: RUN, status: "done", text: "تم", failed: false, extra: "x" }));

@@ -41,11 +41,18 @@ export default function BashtChatScreen() {
   const keyRef = useRef(key);
   keyRef.current = key;
 
-  const load = useCallback(async (k: string) => {
+  // Only the latest load for the session still on screen may write: a slower, older response is dropped.
+  const loadGen = useRef(0);
+  const load = useCallback(async (k: string, keepNotice = false) => {
+    const gen = ++loadGen.current;
+    const current = () => gen === loadGen.current && keyRef.current === k;
     try {
       const [list, msgs] = await Promise.all([bashtClient.sessions(), bashtClient.history(k)]);
-      setSessions(list); setMessages(msgs); setNotice("");
+      if (!current()) return;
+      setSessions(list); setMessages(msgs);
+      if (!keepNotice) setNotice("");
     } catch (e) {
+      if (!current()) return;
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       setMessages((m) => m ?? []); setNotice(errText(e));
     }
@@ -56,7 +63,8 @@ export default function BashtChatScreen() {
     const mine = () => gen === pollGen && activeRun?.id === run.id;
     setLive({ prompt: run.prompt, text: "" });
     // the finished turn belongs to the App session: refresh it only if that is still the session on screen
-    const finish = async () => { setLive(null); if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY); };
+    // keepNotice: a failed/stopped turn keeps its explanation after the history refresh
+    const finish = async () => { setLive(null); if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY, true); };
     while (mine()) {
       try {
         const r = await bashtClient.run(run.id);
