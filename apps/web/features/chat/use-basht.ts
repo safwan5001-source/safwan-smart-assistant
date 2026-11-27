@@ -6,7 +6,7 @@
  * - A turn runs on the server: this hook polls its text, survives leaving the screen (module-scope run) and never runs two pollers.
  * - Nothing here ever pretends a message reached BASHT: `send` resolves only after the engine accepted the turn.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
 import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
@@ -277,7 +277,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   }, [olderRows, messages]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
 
-  const shown = messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages;
+  // one array per real change of the history: a new array on every render would re-run the screen's scroll effect (e.g. on each
+  // keystroke) and pull the owner back to the focused message while reading elsewhere
+  const shown = useMemo(() => (messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages), [olderRows, messages]);
   return { gate, sessions, messages: shown, live, error, unlock, recheck, send, waitRun, stop, refresh,
     retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, setFocusId, windowed, backToLatest };
 }
