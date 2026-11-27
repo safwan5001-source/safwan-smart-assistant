@@ -141,7 +141,9 @@ describe("B4: polling the feed into deliveries", () => {
     expect(await call({ kind: "ok", status: 502, json: { detail: { code: "basht_unavailable" } } })).toEqual({ kind: "offline" });
     expect(await call({ kind: "ok", status: 200, json: { available: false, events: [] } })).toEqual({ kind: "unconfigured" });
     expect(await call({ kind: "ok", status: 200, json: { available: true, epoch: "e1", latest: 3, link: { state: "up" }, events: [{ id: 3, type: "chat.final" }, { id: "x" }, null] } }))
-      .toEqual({ kind: "ok", available: true, epoch: "e1", latest: 3, linkUp: true, events: [{ id: 3, type: "chat.final" }] });
+      .toEqual({ kind: "ok", available: true, epoch: "e1", latest: 3, linkUp: true, events: [{ id: 3, type: "chat.final" }], nextAfter: null, more: false });
+    expect(await call({ kind: "ok", status: 200, json: { available: true, epoch: "e1", latest: 9, next_after: 4, more: true, link: { state: "up" }, events: [] } }))
+      .toMatchObject({ nextAfter: 4, more: true });
     let asked: unknown = null;
     await apiFeed(async (o) => { asked = o; return { kind: "unconfigured" }; })(42);
     expect(asked).toEqual({ path: "/internal/v1/basht/events", method: "POST", body: { after: 42 }, timeoutMs: 15_000 });
@@ -216,6 +218,45 @@ describe("B4: polling the feed into deliveries", () => {
     await later.store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false }), NOW);
     expect((await pollBashtEvents(later.store, feedOf(page(11)).feed, NOW)).queued).toBe(0);
     expect(await later.store.listDeliveries(later.id, 5)).toEqual([]);
+  });
+
+  it("Codex #4: a backlog longer than one page is read page by page; resolutions on later pages win; nothing is skipped", async () => {
+    const A = "aaaaaaaa-0000-4000-8000-00000000000a", B = "aaaaaaaa-0000-4000-8000-00000000000b";
+    /** a feed answering by cursor, like the API: up to `size` records after `after`, with next_after and more */
+    const paged = (all: FeedEvent[], size: number) => {
+      const asked: number[] = [];
+      const feed: Feed = async (after) => {
+        asked.push(after);
+        const page = all.filter((e) => e.id > after).slice(0, size);
+        const latest = all.at(-1)?.id ?? 0;
+        const next = page.at(-1)?.id ?? after;
+        return { kind: "ok", available: true, events: page, epoch: "e1", latest, linkUp: true, nextAfter: next, more: next < latest };
+      };
+      return { feed, asked };
+    };
+    // first poll ever: A waits on page 1 but is answered on page 2; B is still waiting on page 2
+    const first = await setup();
+    const backlog: FeedEvent[] = [approval(1, A), { id: 2, type: "chat.final", at: NOW, seen: false }, approval(3, B),
+      { id: 4, type: "approval.resolved", at: NOW, approval_id: A }, { id: 5, type: "cron.failed", at: NOW, name: "x" }];
+    const f1 = paged(backlog, 2);
+    await pollBashtEvents(first.store, f1.feed, NOW);
+    expect(f1.asked).toEqual([0, 2, 4]);
+    expect((await payloads(first.store, first.id)).map((d) => d.key)).toEqual([`basht:approval:${B}`]);
+    expect(JSON.parse((await first.store.getCursor(CURSOR))!).after).toBe(5);
+    // a later poll that is truncated: the request on page 1 is answered on page 2 → not pushed; the rest is
+    const later = await setup();
+    await later.store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false }), NOW);
+    const f2 = paged([{ id: 9, type: "cron.failed", at: NOW }, approval(11, A), { id: 12, type: "approval.resolved", at: NOW, approval_id: A },
+      { id: 13, type: "cron.failed", at: NOW, name: "y" }], 1);
+    await pollBashtEvents(later.store, f2.feed, NOW);
+    expect(f2.asked).toEqual([10, 11, 12]);
+    expect((await payloads(later.store, later.id)).map((d) => d.key)).toEqual(["basht:cron:13"]);
+    expect(JSON.parse((await later.store.getCursor(CURSOR))!).after).toBe(13);
+    // a page that does not advance (e.g. every record dropped as malformed) ends the loop instead of spinning
+    const stuck: Feed = async (after) => ({ kind: "ok", available: true, events: [], epoch: "e1", latest: 99, linkUp: true, nextAfter: after, more: true });
+    const s3 = await setup();
+    await s3.store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false }), NOW);
+    expect((await pollBashtEvents(s3.store, stuck, NOW)).polled).toBe(true);
   });
 
   it("unsubscribing a device unlinks it; the dispatch endpoint polls too", async () => {

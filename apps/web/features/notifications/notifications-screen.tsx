@@ -1,6 +1,6 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Icon, { type IconName } from "@/components/icon";
 import { Badge, Empty, ListSkeleton, Notice, PageHeader } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
@@ -8,6 +8,7 @@ import { useHydrated, useStore, useStoreError } from "@/lib/hooks";
 import { noticesStore } from "@/lib/stores";
 import { runCommand } from "@/lib/commands";
 import ApprovalsPanel from "./approvals";
+import { sectionFromQuery } from "@/lib/basht-approvals";
 import {
   NOTICE_PRIORITIES, NOTICE_PRIORITY_LABEL, NOTICE_TYPES, TYPE_LABEL, filterNotices, unreadCount,
   type Notice as Item, type NoticePriority, type NoticeType, type Tab,
@@ -34,19 +35,10 @@ export default function NotificationsScreen() {
   const [type, setType] = useState<NoticeType | "all">("all");
   const [priority, setPriority] = useState<NoticePriority | "all">("all");
   const [query, setQuery] = useState("");
-  // B3: «الموافقات» is a section of this screen (deep link: /notifications?tab=approvals&focus=<id>)
-  const [section, setSection] = useState<"notices" | "approvals">("notices");
-  const [focus, setFocus] = useState<string | null>(null);
-  useEffect(() => {
-    const q = new URLSearchParams(window.location.search);
-    if (q.get("tab") === "approvals") { setSection("approvals"); setFocus(q.get("focus")); }
-  }, []);
-  const show = (s: "notices" | "approvals") => {
-    setSection(s);
-    const u = new URL(window.location.href);
-    if (s === "approvals") u.searchParams.set("tab", "approvals"); else { u.searchParams.delete("tab"); u.searchParams.delete("focus"); }
-    window.history.replaceState(null, "", u.pathname + u.search);
-  };
+  // B3: «الموافقات» is a section of this screen (deep link: /notifications?tab=approvals&focus=<id>). Derived from the URL on every
+  // render, so a notification tapped while this screen is already open (query-only navigation) switches section and focus too.
+  const { section, focus } = sectionFromQuery(useSearchParams());
+  const show = (s: "notices" | "approvals") => router.replace(s === "approvals" ? "/notifications?tab=approvals" : "/notifications", { scroll: false });
   const now = useMemo(() => (hydrated ? Date.now() : 0), [hydrated, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => filterNotices(list, { tab, type, priority, query }), [list, tab, type, priority, query]);

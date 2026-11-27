@@ -199,6 +199,23 @@ def test_events_feed_is_re_checked_field_by_field(client, engine):
     assert call(client, "POST", "/internal/v1/basht/events", {"after": 0}).json()["available"] is False
 
 
+def test_events_answer_says_how_far_it_reached_so_the_caller_can_page(client, engine):
+    """Codex (PR #62): a capped answer must not let the caller jump to `latest` past records it never saw."""
+    _, replies = engine
+    many = [{"id": i, "at": 1, "type": "cron.failed", "jobId": "j", "name": "n", "status": "error"} for i in range(1, 251)]
+    replies["/events"] = {"ok": True, "epoch": "24fd106d565a", "latest": 300, "events": many, "link": LINK}
+    j = call(client, "POST", "/internal/v1/basht/events", {"after": 0}).json()
+    assert len(j["events"]) == bl.MAX_EVENTS and j["events"][-1]["id"] == 200
+    assert j["next_after"] == 200 and j["more"] is True and j["latest"] == 300
+    # records dropped as malformed still move the cursor (no endless re-reading), and the last page says "no more"
+    replies["/events"] = {"ok": True, "epoch": "24fd106d565a", "latest": 300, "events": [{"id": 299, "type": "cron.failed", "at": 1}, {"id": 300, "type": "bogus"}], "link": LINK}
+    j = call(client, "POST", "/internal/v1/basht/events", {"after": 298}).json()
+    assert [e["id"] for e in j["events"]] == [299] and j["next_after"] == 300 and j["more"] is False
+    replies["/events"] = {"ok": True, "epoch": "24fd106d565a", "latest": 300, "events": [], "link": LINK}
+    j = call(client, "POST", "/internal/v1/basht/events", {"after": 300}).json()
+    assert j["next_after"] == 300 and j["more"] is False
+
+
 def test_unconfigured_engine_is_503(client, engine, monkeypatch):
     monkeypatch.delenv("BASHT_APP_TOKEN")
     assert call(client, "GET", "/internal/v1/basht/approvals").status_code == 503

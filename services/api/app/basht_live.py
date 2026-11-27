@@ -37,7 +37,8 @@ EVENT_TYPES = ("approval.requested", "approval.resolved", "chat.final", "chat.er
 APPROVAL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$")
 DECIDE_PER_MINUTE = 30
 LIVE_TIMEOUT = 15.0
-EVENTS_TIMEOUT = 35.0  # the bridge may long-poll up to 25 s
+EVENTS_TIMEOUT = 35.0
+MAX_EVENTS = 200  # the bridge may long-poll up to 25 s
 ENGINE_REFUSALS = {"bad_id", "bad_decision", "rejected"}
 
 _lock = threading.Lock()
@@ -241,7 +242,13 @@ def events(body: EventsBody, _: ServiceCall = Depends(require_service_call)):
             return {"available": False, "configured": e.code != "basht_unconfigured", "events": [], "epoch": None, "latest": None,
                     "truncated": False, "link": _link({"state": "off"})}
         raise HTTPException(status_code=e.status, detail={"code": e.code}) from None
-    rows = [x for x in (_event(e) for e in (j.get("events") if isinstance(j.get("events"), list) else [])) if x]
+    # at most MAX_EVENTS records per answer; `next_after` is how far this answer reached (records dropped as malformed included),
+    # `more` says the caller must ask again from there. The caller pages; nothing is skipped by jumping to `latest`.
+    raw = (j.get("events") if isinstance(j.get("events"), list) else [])[:MAX_EVENTS]
+    rows = [x for x in (_event(e) for e in raw) if x]
+    ids = [e["id"] for e in raw if isinstance(e, dict) and _int(e.get("id")) is not None]
+    next_after = max([body.after, *ids])
+    latest = _int(j.get("latest"))
     epoch = j.get("epoch") if isinstance(j.get("epoch"), str) and re.fullmatch(r"[0-9a-f]{6,32}", j["epoch"]) else None
-    return {"available": True, "events": rows[:200], "epoch": epoch, "latest": _int(j.get("latest")), "truncated": j.get("truncated") is True,
-            "link": _link(j.get("link"))}
+    return {"available": True, "events": rows, "epoch": epoch, "latest": latest, "next_after": next_after,
+            "more": latest is not None and next_after < latest, "truncated": j.get("truncated") is True, "link": _link(j.get("link"))}

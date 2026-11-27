@@ -21,6 +21,10 @@ export const OFFLINE_AFTER_MS = 2 * 60_000;
 /** Older records are not pushed (after downtime the backlog is shown in the app, not as a burst of notifications). */
 export const STALE_MS = 15 * 60_000;
 const DEVICES = 50;
+/** One poll reads at most this many pages (the engine ring holds 500 records; a page is up to 100–200). */
+export const MAX_PAGES = 10;
+const pageEnd = (r: Extract<FeedResult, { kind: "ok" }>, after: number) =>
+  r.nextAfter ?? r.events.reduce((m, e) => Math.max(m, e.id), after);
 
 export type FeedEvent = {
   id: number; type: string; at: number | null;
@@ -28,7 +32,9 @@ export type FeedEvent = {
   approval_id?: string; seen?: boolean; name?: string | null; status?: string | null;
 };
 export type FeedResult =
-  | { kind: "ok"; available: boolean; events: FeedEvent[]; epoch: string | null; latest: number | null; linkUp: boolean }
+  | { kind: "ok"; available: boolean; events: FeedEvent[]; epoch: string | null; latest: number | null; linkUp: boolean;
+      /** the cursor for the next page (covers records the API dropped as malformed) and whether more records follow */
+      nextAfter?: number | null; more?: boolean }
   | { kind: "offline" }
   | { kind: "unconfigured" };
 export type Feed = (after: number) => Promise<FeedResult>;
@@ -93,7 +99,20 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
   }
 
   if (r.kind === "ok") {
-    const events = [...r.events].sort((a, b) => a.id - b.id);
+    // read the whole backlog first (the first poll included): a request on page 1 answered on page 3 must not be pushed, and the
+    // cursor must never jump past records nobody looked at
+    const collected = [...r.events];
+    let reached = pageEnd(r, cur.after);
+    let complete = r.more !== true;
+    for (let page = 1; !complete && page < MAX_PAGES; page++) {
+      const n = await feed(reached);
+      if (n.kind !== "ok") break; // keep what was read; the next tick continues from `reached`
+      collected.push(...n.events);
+      const next = pageEnd(n, reached);
+      complete = n.more !== true || next <= reached;
+      reached = Math.max(reached, next);
+    }
+    const events = collected.filter((e, i, a) => a.findIndex((x) => x.id === e.id) === i).sort((a, b) => a.id - b.id);
     rep.events = events.length;
     // an approval answered within this same page (requested … resolved) is never pushed: reconcile before queuing
     const answered = new Set(events.filter((e) => e.type === "approval.resolved" && e.approval_id).map((e) => e.approval_id!));
@@ -115,9 +134,10 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
       const a = alertFor(e, now);
       if (a) await queue(a);
     }
-    const maxId = events.reduce((m, e) => Math.max(m, e.id), cur.after);
+    // a fully read first poll starts at the ring's latest record (an older API may not say how far a page reached)
+    if (!saved && complete && r.latest !== null) reached = Math.max(reached, r.latest);
     // a new ring whose ids are all below our cursor (should not happen: ids are seeded with the engine's boot time) restarts at 0
-    cur.after = r.latest !== null && r.epoch !== cur.epoch && r.latest < cur.after ? 0 : Math.max(maxId, saved ? cur.after : r.latest ?? maxId);
+    cur.after = saved && r.latest !== null && r.epoch !== cur.epoch && r.latest < cur.after ? 0 : Math.max(reached, saved ? cur.after : 0);
     cur.epoch = r.epoch;
   }
   await store.setCursor(CURSOR, JSON.stringify(cur), now);
@@ -132,11 +152,12 @@ export function apiFeed(callBackend: Backend): Feed {
     // no API / a signature the API refuses: a set-up problem, never reported to the owner as "BASHT is offline"
     if (r.kind === "unconfigured" || r.kind === "rejected") return { kind: "unconfigured" };
     if (r.kind !== "ok" || r.status !== 200) return { kind: "offline" }; // API or engine unreachable / 5xx / engine 502
-    const j = (r.json ?? {}) as { available?: unknown; events?: unknown; epoch?: unknown; latest?: unknown; link?: { state?: unknown } };
+    const j = (r.json ?? {}) as { available?: unknown; events?: unknown; epoch?: unknown; latest?: unknown; next_after?: unknown; more?: unknown; link?: { state?: unknown } };
     if (j.available !== true) return { kind: "unconfigured" }; // an engine without the live link: nothing to push, not an outage
     const events = (Array.isArray(j.events) ? j.events : []).filter((e): e is FeedEvent =>
       !!e && typeof e === "object" && Number.isSafeInteger((e as FeedEvent).id) && typeof (e as FeedEvent).type === "string");
     return { kind: "ok", available: true, events, epoch: typeof j.epoch === "string" ? j.epoch : null,
-      latest: Number.isSafeInteger(j.latest) ? (j.latest as number) : null, linkUp: j.link?.state === "up" };
+      latest: Number.isSafeInteger(j.latest) ? (j.latest as number) : null, linkUp: j.link?.state === "up",
+      nextAfter: Number.isSafeInteger(j.next_after) ? (j.next_after as number) : null, more: j.more === true };
   };
 }

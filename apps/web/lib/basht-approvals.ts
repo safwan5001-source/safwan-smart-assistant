@@ -69,6 +69,13 @@ export function outcomeText(applied: boolean, recorded: string | null, d: Decisi
   return recorded ? `سبق الرد على هذا الطلب (${DECISION_LABEL[recorded] ?? recorded}).` : "انتهى هذا الطلب قبل وصول ردك.";
 }
 
+/** Which section of the Notifications screen a URL asks for (?tab=approvals&focus=<id>); anything else is the inbox. */
+export function sectionFromQuery(q: { get(name: string): string | null } | null): { section: "notices" | "approvals"; focus: string | null } {
+  if (q?.get("tab") !== "approvals") return { section: "notices", focus: null };
+  const f = q.get("focus");
+  return { section: "approvals", focus: f && /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(f) ? f : null };
+}
+
 type Fetch = typeof fetch;
 export function createApprovalsClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
   const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
