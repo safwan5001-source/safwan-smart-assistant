@@ -32,6 +32,8 @@ export type BashtLive = { prompt: string; text: string; at: number; images?: Liv
 type Older = { before: string } | { offset: number } | null;
 const olderOf = (p: { earlier: string | null; hasMore: boolean; nextOffset: number | null }): Older =>
   p.earlier ? { before: p.earlier } : p.hasMore && p.nextOffset !== null ? { offset: p.nextOffset } : null;
+/** An older page may land only while the cursor it was requested with is still the view's cursor (same value). */
+export const sameOlder = (a: Older, b: Older) => JSON.stringify(a) === JSON.stringify(b);
 const rowKey = (m: BashtMessage) => m.id ?? `${m.role}:${m.at}:${m.text.slice(0, 40)}`;
 export const mergeRows = (a: BashtMessage[], b: BashtMessage[]) => {
   const seen = new Set<string>(); const out: BashtMessage[] = [];
@@ -71,7 +73,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const [error, setError] = useState("");
   // B1: rows paged in above the newest page (kept across refreshes), where the next older page comes from, a search-hit window
   const [olderRows, setOlderRows] = useState<BashtMessage[]>([]);
-  const [older, setOlder] = useState<Older>(null);
+  const [older, setOlderState] = useState<Older>(null);
+  const olderRef = useRef<Older>(null); // the cursor now in force, for responses that arrive later
+  const setOlder = useCallback((o: Older) => { olderRef.current = o; setOlderState(o); }, []);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [windowed, setWindowed] = useState(false);
@@ -108,7 +112,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       setMessages((m) => m ?? []); setError(errText(e));
     }
-  }, []);
+  }, [setOlder]);
 
   const poll = useCallback(async (run: ActiveRun) => {
     const gen = ++pollGen;
@@ -166,7 +170,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
     else setLive(null);
     return () => { pollGen++; }; // leaving the App conversation or the screen stops this consumer; the turn keeps running server-side
-  }, [gate, key, load, poll]);
+  }, [gate, key, load, poll, setOlder]);
 
   /** After the unified owner sign-in (A1): the session cookie is set, so the gate is re-read from the server — never assumed. */
   const recheck = useCallback(async () => {
@@ -201,7 +205,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   }, [poll]);
 
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
-  const refresh = useCallback(() => { if (keyRef.current) { viewGen.current++; olderRowsRef.current = []; setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
+  // the old cursor goes too: «عرض الرسائل السابقة» waits for the refreshed page's own cursor (a request on the discarded one
+  // would land rows before a gap that paging can never fill)
+  const refresh = useCallback(() => { if (keyRef.current) { viewGen.current++; olderRowsRef.current = []; setOlderRows([]); setOlder(null); setFocusId(null); void load(keyRef.current); } }, [load, setOlder]);
 
   /** B1 Retry: re-sends the last failed/stopped owner turn through the same send path (same text, same photos). */
   const retry = useCallback(async () => {
@@ -224,23 +230,25 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       return errText(e);
     } finally { setResetting(false); }
-  }, [load]);
+  }, [load, setOlder]);
 
   /** B1: the next older page (offset paging, then across «محادثة جديدة»); keeps the reading position on the first old row. */
   const loadEarlier = useCallback(async () => {
     const k = keyRef.current;
     if (!k || !older || loadingOlder) return;
     const view = viewGen.current;
+    const cursor = older;
     setLoadingOlder(true);
     try {
-      const page = await bashtClient.historyPage(k, older);
-      if (keyRef.current !== k || view !== viewGen.current) return; // the view it belonged to was left meanwhile
+      const page = await bashtClient.historyPage(k, cursor);
+      // the view it belonged to was left meanwhile, or its cursor was replaced (a refresh, a newer page): dropped
+      if (keyRef.current !== k || view !== viewGen.current || !sameOlder(cursor, olderRef.current)) return;
       const firstShown = (olderRows[0] ?? messages?.[0])?.id ?? null;
       setOlderRows((o) => mergeRows(page.messages, o));
       setOlder(olderOf(page));
       if (firstShown) setFocusId(firstShown);
     } catch (e) { setError(errText(e)); } finally { setLoadingOlder(false); }
-  }, [older, loadingOlder, olderRows, messages]);
+  }, [older, loadingOlder, olderRows, messages, setOlder]);
 
   /** B1 search hit: the message itself if it is on screen, else a window around it (read-only until «العودة إلى الأحدث»). */
   const jumpTo = useCallback(async (messageId: string) => {
@@ -256,7 +264,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       olderRowsRef.current = []; windowedRef.current = true;
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
     } catch (e) { setError(errText(e)); }
-  }, [olderRows, messages]);
+  }, [olderRows, messages, setOlder]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
 
   // one array per real change of the history: a new array on every render would re-run the screen's scroll effect (e.g. on each
