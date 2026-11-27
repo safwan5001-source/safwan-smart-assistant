@@ -220,7 +220,7 @@ export default function ChatScreen() {
           // B2: a model that does not read images would never see them — say so before sending
           if (photos.length && modelReadsImages(model.state?.model.id, model.models) === false
             && !(await confirm({ title: "النموذج الحالي لا يقرأ الصور", message: "لن يرى باشت الصور مع هذا النموذج. يمكنك اختيار نموذج يقرأ الصور من زر النموذج، أو الإرسال على أي حال.", confirmLabel: "إرسال على أي حال" }))) return;
-          try { await basht.send(text, photos); setDraft(""); pics.clear(); } // the draft is cleared only once BASHT accepted the turn
+          try { await basht.send(text, photos); setDraft(""); pics.clear(photos.map((p) => p.id)); } // the draft is cleared only once BASHT accepted the turn
           catch (e) { setAgentPhase("reply_failed"); setNotice(e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت."); }
         } else if (id) {
           // Direct Claude (CHAT-AI-1) backing the same conversation: the server owns its context, keyed by this thread's id.

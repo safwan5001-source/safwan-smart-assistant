@@ -54,9 +54,16 @@ export function createComposerPhotos({ codec, revoke = defaultRevoke }: Deps = {
       if (x) revoke(x.previewUrl);
       set({ images: state.images.filter((i) => i.id !== id) });
     },
-    /** After a send: the photos now belong to the turn (turnPreviews); they leave the composer WITHOUT being revoked here. */
-    handOff(): PreparedImage[] { const out = state.images; set({ images: [], error: "" }); return out; },
+    /** After a send: the photos sent with that turn (`ids`; all when omitted) now belong to the turn (turnPreviews); they leave the
+     *  composer WITHOUT being revoked here. Photos attached while the send was in flight stay in the composer. */
+    handOff(ids?: string[]): PreparedImage[] {
+      const sent = ids ? state.images.filter((i) => ids.includes(i.id)) : state.images;
+      set({ images: state.images.filter((i) => !sent.includes(i)), error: "" });
+      return sent;
+    },
     setError(error: string) { set({ error }); },
+    /** (Re)attached to a mounted composer — React may replay effect cleanup + setup (StrictMode) on the same store. */
+    activate() { disposed = false; },
     /** The composer is gone: revoke what is still waiting, and whatever a running preparation still produces. */
     dispose() { disposed = true; state.images.forEach((i) => revoke(i.previewUrl)); state = { images: [], preparing: 0, error: "" }; },
   };

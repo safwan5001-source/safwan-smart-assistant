@@ -76,7 +76,7 @@ describe("U1: one conversation — the app is BASHT", () => {
     const chat = src("features/chat/chat-screen.tsx");
     // refused up front, nothing recorded, draft kept
     expect(chat).toMatch(/if \(!quick\.handled && \(text \|\| photos\.length\) && !ready\) \{[\s\S]*?return;\s*\}/);
-    expect(chat).toMatch(/try \{ await basht\.send\(text, photos\); setDraft\(""\); pics\.clear\(\); \}/);
+    expect(chat).toMatch(/try \{ await basht\.send\(text, photos\); setDraft\(""\); pics\.clear\(photos\.map\(\(p\) => p\.id\)\); \}/);
     // no silent fallback to notes: Claude backs the chat only when NO engine is configured
     expect(chat).toMatch(/const claudeOn = !bashtOn && aiReady\(status\);/);
     // still ONE conversation: «محادثة جديدة» (B1) resets BASHT's context in the same engine session (nothing deleted), it never opens

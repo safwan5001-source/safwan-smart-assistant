@@ -94,6 +94,33 @@ describe("composer photos (review: state reconciled with the latest, previews re
     expect(src).toMatch(/await finish\(\);\s*if \(finished\) turnPreviews\.release\(urlsOf\(finished\)\);/);
     expect(src).toMatch(/turnPreviews\.release\(urlsOf\(lastTurn\)\); lastTurn = null;/);
     const composer = readFileSync(new URL("../features/chat/composer-images.tsx", import.meta.url), "utf8");
-    expect(composer).toMatch(/useEffect\(\(\) => \(\) => store\.dispose\(\), \[store\]\)/);
+    expect(composer).toMatch(/return \(\) => store\.dispose\(\);/);
+  });
+
+  // Review (Codex, round 3)
+  it("survives React replaying effect cleanup + setup (StrictMode): photos picked afterwards are kept", async () => {
+    const revoked: string[] = [];
+    const s = createComposerPhotos({ codec: readyCodec(), revoke: (u) => revoked.push(u) });
+    s.dispose(); s.activate(); // what the composer's effect does on a replayed mount
+    await s.take([pic("after.jpg")]).done;
+    expect(s.getSnapshot().images.map((i) => i.name)).toEqual(["after.jpg"]);
+    expect(s.getSnapshot().preparing).toBe(0);
+    expect(revoked).toEqual([]);
+    const composer = readFileSync(new URL("../features/chat/composer-images.tsx", import.meta.url), "utf8");
+    expect(composer).toMatch(/useEffect\(\(\) => \{ store\.activate\(\); return \(\) => store\.dispose\(\); \}, \[store\]\)/);
+  });
+
+  it("hand-off after a send takes only the photos sent with it; one attached meanwhile stays (and is not revoked)", async () => {
+    const revoked: string[] = [];
+    const s = createComposerPhotos({ codec: readyCodec(), revoke: (u) => revoked.push(u) });
+    await s.take([pic("sent.jpg")]).done;
+    const sent = s.getSnapshot().images.map((i) => i.id);
+    await s.take([pic("meanwhile.jpg")]).done; // attached while basht.send was awaiting the server
+    const handed = s.handOff(sent);
+    expect(handed.map((i) => i.name)).toEqual(["sent.jpg"]);
+    expect(s.getSnapshot().images.map((i) => i.name)).toEqual(["meanwhile.jpg"]);
+    expect(revoked).toEqual([]);
+    const chat = readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
+    expect(chat).toMatch(/await basht\.send\(text, photos\); setDraft\(""\); pics\.clear\(photos\.map\(\(p\) => p\.id\)\);/);
   });
 });

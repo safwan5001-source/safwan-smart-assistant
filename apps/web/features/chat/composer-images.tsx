@@ -14,12 +14,13 @@ import { formatBytes } from "./message-media";
 export function useComposerImages() {
   const [store] = useState(() => createComposerPhotos());
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
-  useEffect(() => () => store.dispose(), [store]);
+  useEffect(() => { store.activate(); return () => store.dispose(); }, [store]); // setup re-activates after a replayed cleanup
   /** Splits picked files: photos are queued for BASHT, the rest is returned to the caller (kept on the device as before). */
   const take = useCallback(async (files: File[]): Promise<File[]> => store.take(files).rest as File[], [store]);
   const remove = useCallback((id: string) => store.remove(id), [store]);
-  /** After a send: the photos now belong to the turn (use-basht adopts their previews for the live bubble and a retry). */
-  const clear = useCallback(() => { store.handOff(); }, [store]);
+  /** After a send: the photos sent with it (`ids`) now belong to the turn (use-basht adopts their previews for the live bubble and
+   *  a retry); photos attached meanwhile stay. */
+  const clear = useCallback((ids?: string[]) => { store.handOff(ids); }, [store]);
   const setError = useCallback((e: string) => store.setError(e), [store]);
   return { images: state.images, preparing: state.preparing > 0, error: state.error, take, remove, clear, setError };
 }
