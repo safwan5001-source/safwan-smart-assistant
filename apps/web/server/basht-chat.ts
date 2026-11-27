@@ -15,6 +15,7 @@ import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
+import { handleBashtControl } from "./basht-control";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 
 export const BASHT_COOKIE = "safwan_basht";
@@ -150,6 +151,9 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (mode !== "on" && mode !== "off" && mode !== "default") return err("bad_request", 400);
     return relay("/internal/v1/basht/fast", "POST", { mode }, undefined, SETTINGS_MS);
   }
+  // B5–B7: BASHT's scheduled tasks, usage, memory (read-only) and capabilities — same gate and limits (server/basht-control.ts)
+  const control = await handleBashtControl(req, route, deps);
+  if (control) return control;
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
     if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,
