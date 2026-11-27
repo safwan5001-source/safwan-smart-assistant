@@ -5,29 +5,37 @@
  * every frame; the simulation's clip picks the animation, cross-faded so nobody pops between poses.
  */
 import { useEffect, useMemo, useRef } from "react";
-import { useFrame, useLoader } from "@react-three/fiber";
+import { useFrame, useLoader, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { AGENTS, AGENT_IDS, type AgentId } from "@/lib/hq/roster";
 import { WALK_SPEED, type Clip, type HqSim } from "@/lib/hq/sim";
 import { bodyScale, keepTrack, seatLift, walkRate as rateFor } from "@/lib/hq/people";
-import { ANIM_LIBS, PEOPLE_URLS, animLib, characterEntry, withMeshopt } from "./assets";
+import { ANIM_LIBS, PEOPLE_URLS, animLib, characterEntry, hqGltf } from "./assets";
 
 const FADE = 0.28;
 const FADE_SEAT = 0.5;
+/** takes played once and held on their last frame: getting up (up_l/up_r) and sitting down (down_l/down_r) */
+const ONE_SHOT = /^(up|down)_[lr]$/;
+const MOVING_CLIPS = new Set<string>(["walk", "rise", "settle"]);
+/** how fast a person turns to a new heading (rad/s) */
+const TURN_RATE = 7;
 const SEATED = new Set<string>(["sit", "type", "talk"]);
 
 type Rig = {
-  root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<Clip | "idle", THREE.AnimationAction>>; current: string;
+  root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<string, THREE.AnimationAction>>; current: string;
   /** uniform body scale (roster height) and the lift that keeps a scaled person on the chair cushion */
   scale: number; walkRate: number;
   /** the seated clips' actions (their summed weight scales the seat lift) and every skeleton this mount owns */
   seated: THREE.AnimationAction[]; skeletons: THREE.Skeleton[];
+  /** last simulated floor position, the facing shown (eased), and the pending hand-over offset (see useFrame) */
+  lastPos: [number, number]; yaw: number; comp: { x: number; z: number; action: THREE.AnimationAction } | null;
 };
 
 export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
-  const loaded = useLoader(GLTFLoader, PEOPLE_URLS, withMeshopt);
+  const gl = useThree((s) => s.gl);
+  const loaded = useLoader(GLTFLoader, PEOPLE_URLS, hqGltf(gl));
   const shadows = useRef<THREE.InstancedMesh>(null);
   const shadowTex = useMemo(blobTexture, []);
   const rigs = useMemo(() => {
@@ -70,7 +78,11 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       });
       const mixer = new THREE.AnimationMixer(model);
       const actions: Rig["actions"] = {};
-      for (const clip of human ? libs[entry.anims!] : g.animations) actions[clip.name as Clip] = mixer.clipAction(clip);
+      for (const clip of human ? libs[entry.anims!] : g.animations) {
+        const a = mixer.clipAction(clip);
+        if (ONE_SHOT.test(clip.name)) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; }
+        actions[clip.name as Clip] = a;
+      }
       const start = actions.sit ?? actions.idle;
       start?.play();
       // the capture walks at its own pace: play it at the simulation's speed so feet don't slide
@@ -79,12 +91,14 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       const skeletons = new Set<THREE.Skeleton>();
       model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((o as THREE.SkinnedMesh).skeleton); });
       const seated = Object.entries(actions).filter(([n, a]) => a && SEATED.has(n)).map(([, a]) => a!);
-      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate, seated, skeletons: [...skeletons] };
+      const w0 = sim.walkers[id];
+      out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate, seated, skeletons: [...skeletons],
+        lastPos: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, comp: null };
       // de-synchronise idle loops
       mixer.setTime(i * 0.37);
     });
     return out;
-  }, [loaded]);
+  }, [loaded, sim]);
   useEffect(() => () => {
     for (const id of AGENT_IDS) {
       const r = rigs[id];
@@ -97,28 +111,50 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
 
   const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4() }), []);
   useFrame((_, dt) => {
+    const step = Math.min(dt, 0.1);
     for (const id of AGENT_IDS) {
       const w = sim.walkers[id], r = rigs[id];
-      r.root.position.x = w.pos[0];
-      r.root.position.z = w.pos[1];
-      r.root.rotation.y = w.yaw;
-      const want = w.clip in r.actions ? w.clip : w.clip === "walk" ? "walk" : "idle";
+      // which take to play: getting up / sitting down use the take for the chair side the simulation chose
+      const named = w.clip === "rise" ? `up_${w.side}` : w.clip === "settle" ? `down_${w.side}` : w.clip;
+      const want = named in r.actions ? named : w.clip === "walk" ? "walk" : w.clip === "rise" || w.clip === "settle" ? (r.actions.sit ? "sit" : "idle") : "idle";
       if (want !== r.current) {
         const next = r.actions[want as Clip];
         if (next) {
+          const prev = r.actions[r.current as Clip];
+          const oneShot = ONE_SHOT.test(want);
           // exactly one target clip: every other running action fades out (rotations blended at a total weight > 1 over-rotate)
-          // a clip still fading out is picked up where it is (reset() would jump its pose)
-          if (!next.isRunning()) next.reset();
-          // getting up from / down onto a chair blends longer, so the body rises while it is already clear of the cushion
-          const fade = SEATED.has(r.current) !== SEATED.has(want) ? FADE_SEAT : FADE;
-          for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isRunning()) a.fadeOut(fade);
+          // a looping clip still fading out is picked up where it is (reset() would jump its pose); a one-shot take
+          // (getting up / sitting down) always plays from its start
+          if (!next.isRunning() || oneShot) next.reset();
+          // the robot (no takes) blends between seated and walking a little longer
+          const fade = !oneShot && !ONE_SHOT.test(r.current) && SEATED.has(r.current) !== SEATED.has(want) ? FADE_SEAT : FADE;
+          for (const [name, a] of Object.entries(r.actions)) if (name !== want && a && a.isScheduled()) a.fadeOut(fade); // incl. a finished (clamped) take
           next.stopFading().setEffectiveTimeScale(want === "walk" ? r.walkRate : 1).fadeIn(fade).play();
+          // the simulation hands over between the seat and the standing point in one step (the take carries the body
+          // there): while the outgoing take still shows, hold the body where it was
+          const jx = w.pos[0] - r.lastPos[0], jz = w.pos[1] - r.lastPos[1];
+          if (prev && Math.hypot(jx, jz) > 0.05) r.comp = { x: jx, z: jz, action: prev };
           r.current = want;
         }
       }
-      // paused: everyone holds still (the simulation is stopped too); reduced motion: no idle motion, walking still animates
-      r.mixer.timeScale = paused ? 0 : reducedMotion && w.clip !== "walk" ? 0 : 1;
-      r.mixer.update(Math.min(dt, 0.1));
+      r.lastPos[0] = w.pos[0]; r.lastPos[1] = w.pos[1];
+      // paused: everyone holds still (the simulation is stopped too); reduced motion: no idle motion, but moving from
+      // place to place (walking, getting up, sitting down) still animates
+      r.mixer.timeScale = paused ? 0 : reducedMotion && !MOVING_CLIPS.has(w.clip) ? 0 : 1;
+      r.mixer.update(step);
+      let cx = 0, cz = 0;
+      if (r.comp) {
+        const k = r.comp.action.getEffectiveWeight();
+        if (k <= 0.001) r.comp = null;
+        else { cx = -r.comp.x * k; cz = -r.comp.z * k; }
+      }
+      r.root.position.x = w.pos[0] + cx;
+      r.root.position.z = w.pos[1] + cz;
+      // turn smoothly (the simulation's heading changes in steps at corners, chairs and seats)
+      const dy = Math.atan2(Math.sin(w.yaw - r.yaw), Math.cos(w.yaw - r.yaw));
+      const maxTurn = TURN_RATE * (paused ? 0 : step);
+      r.yaw += Math.abs(dy) <= maxTurn ? dy : Math.sign(dy) * maxTurn;
+      r.root.rotation.y = r.yaw;
       // a scaled person on the chair: lifted by seatLift() in proportion to how seated the current blend is
       if (r.scale !== 1) {
         let seated = 0;

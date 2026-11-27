@@ -444,7 +444,7 @@ select_only(objs)
 glb = os.path.join(args.out, "building.glb")
 bpy.ops.export_scene.gltf(
     filepath=glb, export_format="GLB", use_selection=True, export_apply=True, export_texcoords=True, export_normals=True,
-    export_materials="EXPORT", export_image_format="WEBP", export_image_quality=88, export_yup=True, export_extras=False, export_cameras=False, export_lights=False,
+    export_materials="EXPORT", export_image_format="AUTO", export_yup=True, export_extras=False, export_cameras=False, export_lights=False,
 )
 tris = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in objs)
 print(f"[building] exported {glb} ({os.path.getsize(glb) / 1e6:.2f} MB, {len(objs)} meshes, {tris} tris) in {time.time() - T0:.1f}s total")

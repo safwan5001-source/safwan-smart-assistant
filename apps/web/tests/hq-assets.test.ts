@@ -11,8 +11,9 @@ type Entry = { kind: "authored" | "human"; file: string; tris: number; anims?: "
 const entry = (id: (typeof AGENT_IDS)[number]) => HQ_ASSETS.characters[id] as Entry;
 const PEOPLE = AGENT_IDS.filter((id) => id !== "BASHT");
 const libs: Readonly<Record<string, { file: string; clips: readonly string[]; walkSpeed: number }>> = HQ_ASSETS.anims;
+const TRANSCODER = ["basis_transcoder.js", "basis_transcoder.wasm"].map((f) => HQ_ASSETS.transcoder + f);
 const allFiles = () => [HQ_ASSETS.building.file, HQ_ASSETS.building.lightmap, ...AGENT_IDS.map((id) => entry(id).file),
-  ...Object.values(libs).map((l) => l.file), ...HQ_ASSETS.licenses];
+  ...Object.values(libs).map((l) => l.file), ...HQ_ASSETS.licenses, ...TRANSCODER];
 /** Reads the JSON chunk of a GLB (header 12 bytes, then [len, type] + JSON). */
 function glbJson(path: string) {
   const b = readFileSync(path);
@@ -69,7 +70,9 @@ describe("HQ 3D assets (tools/hq-assets → public/hq-assets)", () => {
         expect(m.alphaMode === "BLEND", `${id} ${m.name}`).toBe(false);
         if (/_(body|head)$/.test(m.name)) expect(m.doubleSided ?? false, `${id} ${m.name}`).toBe(false);
       }
-      for (const img of j.images) expect(img.mimeType, id).toBe("image/webp");
+      // every texture is KTX2 / Basis Universal (stays compressed on the GPU)
+      for (const img of j.images) expect(img.mimeType, id).toBe("image/ktx2");
+      expect(j.extensionsUsed ?? [], id).toContain("KHR_texture_basisu");
       expect(e.tris, id).toBeLessThan(11_000);
       expect(j.extensionsUsed ?? [], id).toContain("EXT_meshopt_compression");
     }
@@ -82,7 +85,8 @@ describe("HQ 3D assets (tools/hq-assets → public/hq-assets)", () => {
       const j = glbJson(file(lib.file));
       expect(j.skins ?? [], k).toEqual([]);
       expect(j.meshes ?? [], k).toEqual([]);
-      expect(j.animations.map((a: { name: string }) => a.name).sort(), k).toEqual(["idle", "sit", "stand", "talk", "type", "walk"]);
+      expect(j.animations.map((a: { name: string }) => a.name).sort(), k)
+        .toEqual(["down_l", "down_r", "idle", "sit", "stand", "talk", "type", "up_l", "up_r", "walk"]);
       // only the root and pelvis travel: any other translation or scale channel is a constant (≤ 2 keys at rest
       // values — the exporter keeps every joint's channels) and the app drops it (lib/hq/people.ts keepTrack)
       const moving = new Set<string>();
@@ -103,6 +107,15 @@ describe("HQ 3D assets (tools/hq-assets → public/hq-assets)", () => {
     expect(t).toContain("MIT License");
     expect(t).toContain("Copyright (c) 2020 Microsoft");
     expect(t).toContain("Permission is hereby granted, free of charge");
+  });
+  it("textures are KTX2 / Basis (building and lightmap too) and the transcoder ships next to them (same origin)", () => {
+    expect(HQ_ASSETS.textures).toBe("ktx2");
+    expect(HQ_ASSETS.building.lightmap).toMatch(/\.ktx2$/);
+    const lm = readFileSync(file(HQ_ASSETS.building.lightmap));
+    expect(lm.subarray(1, 7).toString("latin1")).toBe("KTX 20"); // «KTX 20» magic
+    const b = glbJson(file(HQ_ASSETS.building.file));
+    for (const img of b.images ?? []) expect(img.mimeType).toBe("image/ktx2");
+    for (const f of TRANSCODER) expect(existsSync(file(f)), f).toBe(true);
   });
   it("the building carries a lightmap UV set and stays inside the iPhone budget", () => {
     const j = glbJson(file(HQ_ASSETS.building.file));

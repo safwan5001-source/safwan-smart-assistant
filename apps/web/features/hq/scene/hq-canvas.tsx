@@ -18,7 +18,7 @@ import Building from "./building";
 import People from "./people";
 import BuildingGlb from "./building-glb";
 import PeopleGlb from "./people-glb";
-import { ASSETS, PEOPLE_URLS, assetUrl, characterEntry } from "./assets";
+import { ASSETS, HqKtx2TextureLoader, PEOPLE_URLS, assetUrl, characterEntry, releaseHqKtx2 } from "./assets";
 import { bodyScale } from "@/lib/hq/people";
 import { BRAND_ASSETS } from "@/lib/brand";
 
@@ -62,8 +62,9 @@ export default function HqCanvas({ sim, store, onContextLost }: { sim: HqSim; st
     // the two textures
     useLoader.clear(GLTFLoader, assetUrl(ASSETS.building.file));
     useLoader.clear(GLTFLoader, PEOPLE_URLS);
-    useLoader.clear(THREE.TextureLoader, assetUrl(ASSETS.building.lightmap));
+    useLoader.clear(HqKtx2TextureLoader, assetUrl(ASSETS.building.lightmap));
     useLoader.clear(THREE.TextureLoader, BRAND_ASSETS.logo);
+    releaseHqKtx2(); // the transcoder's workers
   }, []);
   const low = ui.quality === "low";
   const maxDpr = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 2);

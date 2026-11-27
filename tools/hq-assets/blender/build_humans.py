@@ -469,7 +469,7 @@ def build_avatar(cid, model, look=None):
     path = os.path.join(args.out, f"{cid}.glb")
     select_only([arm, *meshes])
     bpy.ops.export_scene.gltf(filepath=path, export_format="GLB", use_selection=True, export_yup=True, export_skins=True,
-                              export_animations=False, export_materials="EXPORT", export_image_format="WEBP", export_image_quality=82,
+                              export_animations=False, export_materials="EXPORT", export_image_format="AUTO",
                               export_def_bones=False, export_normals=True, export_tangents=False, export_copyright=COPYRIGHT)
     tris = sum(sum(len(p.vertices) - 2 for p in m.data.polygons) for m in meshes)
     # rest-pose pelvis height (metres) — the app scales clip root heights to each body
@@ -478,6 +478,128 @@ def build_avatar(cid, model, look=None):
     return {"tris": tris, "bytes": os.path.getsize(path), "model": model, "sex": "f" if "Female" in model else "m", "pelvis": round(pelvis_h, 4),
             "height": round(max((m.matrix_world @ v.co).z for m in meshes for v in m.data.vertices), 4),
             "materials": [s.material.name for m in meshes for s in m.material_slots]}
+
+
+# getting up from / sitting down at a desk, leaving / arriving sideways (Rocketbox "table" takes, with root travel)
+PUSH_BACK = 0.40
+TRANSITIONS = {"up": ("sit_stand_up_table_left", "sit_stand_up_table_right"),
+               "down": ("sit_down_table_left", "sit_down_table_right")}
+
+
+def facing_yaw(arm):
+    """three.js yaw (0 = facing +Z) of the feet's direction (heel → toe), from the current frame."""
+    v = ((joint(arm, "Bip01 L Toe0") - joint(arm, "Bip01 L Foot")) + (joint(arm, "Bip01 R Toe0") - joint(arm, "Bip01 R Foot"))) / 2
+    return math.atan2(v.x, -v.y)  # Blender (x, y) → three (x, z = -y)
+
+
+def to_three(v):
+    return [round(v.x, 4), round(-v.y, 4)]
+
+
+def build_transitions(sex, host, ankle_stand, walk_ref):
+    """Bake the stand-up and sit-down takes onto the host so the SEATED end of each matches the seated clips exactly
+    (knees forward, feet on the floor, facing the desk), keep their sideways root travel, and measure where and which way
+    the person stands at the other end. The simulation uses those numbers to hand over to / from walking without a jump."""
+    scene = bpy.context.scene
+    out = {}
+    for kind, stems in TRANSITIONS.items():
+        for stem in stems:
+            path = os.path.join(ANIMS, "all_animations_max_motextr_xyz", f"{sex}_{stem}.max.fbx")
+            objs = import_fbx(path)
+            src = next(o for o in objs if o.type == "ARMATURE")
+            for o in objs:
+                if o.type == "MESH":
+                    bpy.data.objects.remove(o, do_unlink=True)
+            f0, f1 = (round(v) for v in src.animation_data.action.frame_range)
+            fps = scene.render.fps / scene.render.fps_base
+            seated_f = f0 if kind == "up" else f1
+            # trim to the movement itself
+            zs = []
+            for f in range(f0, f1 + 1):
+                scene.frame_set(f)
+                p = joint(src, "Bip01 Pelvis")
+                zs.append((f, p.x, p.y, p.z))
+            fz = {f: (x, y, z) for f, x, y, z in zs}
+            if kind == "up":
+                z0 = fz[f0][2]
+                rise = next(f for f, x, y, z in zs if z > z0 + 0.015)
+                start_f = max(f0, rise - round(0.3 * fps))
+                xe, ye, ze = fz[f1]
+                done = next(f for f, x, y, z in zs if f > rise and abs(z - ze) < 0.01 and math.hypot(x - xe, y - ye) < 0.04)
+                end_f = min(f1, done + round(0.15 * fps))
+            else:
+                xs, ys, _ = fz[f0]
+                move = next(f for f, x, y, z in zs if math.hypot(x - xs, y - ys) > 0.03)
+                start_f = max(f0, move - round(0.25 * fps))
+                xe, ye, ze = fz[f1]
+                done = next(f for f, x, y, z in zs if f > move and abs(z - ze) < 0.008 and math.hypot(x - xe, y - ye) < 0.02)
+                end_f = min(f1, done + round(0.3 * fps))
+            seated_f = start_f if kind == "up" else end_f
+            # align: rotate about the vertical so the seated knees point at the desk (-Y), then place like the seated clips
+            empty = bpy.data.objects.new("align", None)
+            scene.collection.objects.link(empty)
+            src.parent = empty
+            scene.frame_set(seated_f)
+            k = (joint(src, "Bip01 L Calf") + joint(src, "Bip01 R Calf")) / 2 - joint(src, "Bip01 Pelvis")
+            empty.rotation_euler.z = -math.pi / 2 - math.atan2(k.y, k.x)
+            bpy.context.view_layer.update()
+            scene.frame_set(seated_f)
+            ankle = min(joint(src, "Bip01 L Foot").z, joint(src, "Bip01 R Foot").z)
+            knee = (joint(src, "Bip01 L Calf") + joint(src, "Bip01 R Calf")) / 2
+            empty.location = (-knee.x, -KNEE_FORWARD[sex] - knee.y, ankle_stand - ankle + SEAT_LIFT[sex])
+            bpy.context.view_layer.update()
+            # bake onto the host
+            oc = host.constraints.new("COPY_TRANSFORMS")
+            oc.target = src
+            for pb in host.pose.bones:
+                c = pb.constraints.new("COPY_TRANSFORMS")
+                c.target, c.subtarget = src, pb.name
+            select_only([host])
+            bpy.ops.object.mode_set(mode="POSE")
+            bpy.ops.pose.select_all(action="SELECT")
+            bpy.ops.nla.bake(frame_start=start_f, frame_end=end_f, step=1, only_selected=False, visual_keying=True,
+                             clear_constraints=True, use_current_action=False, bake_types={"POSE", "OBJECT"})
+            bpy.ops.object.mode_set(mode="OBJECT")
+            baked = host.animation_data.action
+            # people stand up as if pushing the chair back: the root eases PUSH_BACK metres away from the desk in step with
+            # the hips rising (the capture stands where its table was not; our desks are 0.35 m ahead of the seat)
+            z_seat, z_stand = fz[seated_f][2], fz[end_f if kind == "up" else start_f][2]
+            for fc in action_fcurves(baked):
+                if fc.data_path == "location" and fc.array_index == 1:  # Blender +Y = away from the desk
+                    for kp in fc.keyframe_points:
+                        z = fz.get(round(kp.co.x), (0, 0, z_seat))[2]
+                        w = min(1.0, max(0.0, (z - z_seat) / max(1e-3, z_stand - z_seat)))
+                        w = w * w * (3 - 2 * w)
+                        for pt in (kp.co, kp.handle_left, kp.handle_right):
+                            pt.y += PUSH_BACK * w
+                    fc.update()
+            # the standing end: where the hips are relative to the walk's hips, and which way the feet point
+            stand_f = end_f if kind == "up" else start_f
+            scene.frame_set(stand_f)
+            off = joint(host, "Bip01 Pelvis") - walk_ref
+            yaw = facing_yaw(host)
+            side = "l" if off.x > 0 else "r"  # three.js: a person facing +Z has +X on their left
+            key = f"{kind}_{side}"
+            baked.name = key
+            for bag in action_channelbags(baked):
+                for fc in list(bag.fcurves):
+                    bone = fc.data_path.split('"')[1] if fc.data_path.startswith("pose.bones") else None
+                    if fc.data_path.endswith(".scale") or fc.data_path == "scale" or (fc.data_path.endswith(".location") and bone not in MOVING):
+                        bag.fcurves.remove(fc)
+            host.animation_data.action = None
+            tr = host.animation_data.nla_tracks.new()
+            tr.name = key
+            # placed at frame 1 like the looping clips: the exported track then starts at t = 0
+            strip = tr.strips.new(key, 1, baked)
+            strip.action_frame_start, strip.action_frame_end = start_f, end_f
+            strip.frame_end = 1 + (end_f - start_f)
+            bpy.data.objects.remove(src, do_unlink=True)
+            bpy.data.objects.remove(empty, do_unlink=True)
+            out[key] = {"file": os.path.basename(path), "seconds": round((end_f - start_f) / fps, 2),
+                        # seat-local, three.js axes (the seated person faces +Z): the walk-equivalent standing point and
+                        # facing at the standing end of the clip
+                        "stand": to_three(off), "yaw": round(yaw, 4)}
+    return out
 
 
 def build_anims(sex):
@@ -542,6 +664,9 @@ def build_anims(sex):
         if key == "idle":
             scene.frame_set(int(start_f))
             ankle_stand = min(joint(host, "Bip01 L Foot").z, joint(host, "Bip01 R Foot").z)
+        if key == "walk":
+            scene.frame_set(int(start_f))
+            walk_ref = joint(host, "Bip01 Pelvis").copy()  # where the in-place walk carries the hips
         if key in SEATED:
             scene.frame_set(int(start_f))
             ankle = min(joint(host, "Bip01 L Foot").z, joint(host, "Bip01 R Foot").z)
@@ -576,6 +701,7 @@ def build_anims(sex):
             info[key]["seat"] = info_seat
         if key == "walk":
             info[key]["speed"] = round(walk_speed, 3)  # metres / second the feet travel at timeScale 1
+    info.update(build_transitions(sex, host, ankle_stand, walk_ref))
     host.location = (0, 0, 0)
     host.rotation_quaternion = (1, 0, 0, 0)
     host.rotation_euler = (0, 0, 0)

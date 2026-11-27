@@ -53,7 +53,7 @@ describe("HQ people — motion-capture clips as played", () => {
     }
   });
   it("loop without a visible snap: each joint's last rotation is within 3° of its first", () => {
-    for (const [k, g] of Object.entries(parsed)) for (const clip of g.animations) {
+    for (const [k, g] of Object.entries(parsed)) for (const clip of g.animations.filter((c) => !/^(up|down)_/.test(c.name))) {
       for (const t of clip.tracks) {
         if (!t.name.endsWith(".quaternion")) continue;
         const v = t.values, n = v.length;
@@ -78,6 +78,30 @@ describe("HQ people — motion-capture clips as played", () => {
         expect(Math.abs(p.knee.x), `${k} ${clip} centred on the chair`).toBeLessThan(0.06);
         expect(p.pelvis.z - 0.14, `${k} ${clip} seat of the hips on the cushion, in front of the backrest`).toBeGreaterThan(-0.24);
         expect(p.pelvis.z, `${k} ${clip} hips over the cushion`).toBeLessThan(0.12);
+      }
+    }
+  });
+  it("get up / sit down: the seated end matches the seated clips, the standing end is where the manifest says, clear of the desk", () => {
+    type Tr = { seconds: number; stand: readonly [number, number]; yaw: number };
+    for (const [k, g] of Object.entries(parsed)) {
+      const trs = (HQ_ASSETS.anims as unknown as Record<string, { transitions: Record<string, Tr> }>)[k].transitions;
+      const sit = pose(g, "sit", 0), walk = pose(g, "walk", 0);
+      for (const name of ["up_l", "up_r", "down_l", "down_r"]) {
+        const clip = g.animations.find((a) => a.name === name)!, tr = trs[name];
+        expect(Math.abs(clip.duration - tr.seconds), `${k} ${name} duration`).toBeLessThan(0.05);
+        const end = clip.duration - 1e-3; // (the helper loops: exactly `duration` would wrap to the start)
+        const seatedT = name.startsWith("up") ? 0 : end, standT = name.startsWith("up") ? end : 0;
+        const s = pose(g, name, seatedT), st = pose(g, name, standT);
+        // seated end = the seated clips (no jump into / out of sit, type, talk)
+        expect(s.pelvis.distanceTo(sit.pelvis), `${k} ${name} seated hips`).toBeLessThan(0.06);
+        expect(s.knee.distanceTo(sit.knee), `${k} ${name} seated knees`).toBeLessThan(0.08);
+        // standing end: hips where the manifest says (relative to the walk's hips), beside the chair on the named side
+        expect(Math.hypot(st.pelvis.x - walk.pelvis.x - tr.stand[0], st.pelvis.z - walk.pelvis.z - tr.stand[1]), `${k} ${name} standing point`).toBeLessThan(0.02);
+        expect(Math.sign(tr.stand[0]), `${k} ${name} side`).toBe(name.endsWith("_l") ? 1 : -1);
+        expect(Math.abs(tr.stand[0]), `${k} ${name} beside the chair`).toBeGreaterThan(0.3);
+        // the desk edge is 0.35 m ahead of the seat: a standing body (r 0.2 m) stays behind it
+        expect(tr.stand[1], `${k} ${name} clear of the desk`).toBeLessThan(0.15);
+        expect(Math.abs(st.pelvis.y - walk.pelvis.y), `${k} ${name} standing upright`).toBeLessThan(0.05);
       }
     }
   });

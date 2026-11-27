@@ -5,12 +5,12 @@
  * phone. Glass stays a lit, transparent material; screens and cove strips glow and brighten at night.
  */
 import { useEffect, useMemo } from "react";
-import { useLoader } from "@react-three/fiber";
+import { useLoader, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { BRAND_ASSETS } from "@/lib/brand";
 import { FURNITURE } from "@/lib/hq/layout";
-import { ASSETS, assetUrl, withMeshopt } from "./assets";
+import { ASSETS, HqKtx2TextureLoader, assetUrl, hqGltf } from "./assets";
 
 const EMISSIVE = new Set(["screen", "glow"]);
 /**
@@ -22,14 +22,14 @@ const LIGHTMAP_GAIN = 0.4;
 const lmIntensity = (k = 1) => ASSETS.building.lightmapScale * Math.PI * LIGHTMAP_GAIN * k;
 
 export default function BuildingGlb({ night }: { night: boolean }) {
-  const gltf = useLoader(GLTFLoader, assetUrl(ASSETS.building.file), withMeshopt);
-  const lightmap = useLoader(THREE.TextureLoader, assetUrl(ASSETS.building.lightmap));
+  const gl = useThree((s) => s.gl);
+  const gltf = useLoader(GLTFLoader, assetUrl(ASSETS.building.file), hqGltf(gl));
+  const lightmap = useLoader(HqKtx2TextureLoader, assetUrl(ASSETS.building.lightmap), (l) => { l.gl = gl; });
   const logo = useLoader(THREE.TextureLoader, BRAND_ASSETS.logo);
 
   const { scene, mats } = useMemo(() => {
     lightmap.colorSpace = THREE.SRGBColorSpace;
-    lightmap.channel = 1; // TEXCOORD_1 = the baked atlas
-    lightmap.flipY = false; // glTF UV convention
+    lightmap.channel = 1; // TEXCOORD_1 = the baked atlas (KTX2 rows run top-down: the glTF UV convention, no flip)
     lightmap.anisotropy = 4;
     const mats: { basic: THREE.MeshBasicMaterial[]; emissive: THREE.MeshBasicMaterial[]; lit: THREE.MeshStandardMaterial[] } = { basic: [], emissive: [], lit: [] };
     // the loader caches the parsed glTF: work on a clone (shared geometry, our own materials) so a remount is clean

@@ -8,13 +8,14 @@ import { AGENT_IDS, type AgentId } from "./roster";
 import { FRAMES, GRAPH, MEETING_SEATS, type Vec2, yawOf } from "./layout";
 import { BODY_R, findRoute, routePoints } from "./path";
 import { SCENARIO_BY_ID, type ScenarioId } from "./demo-data";
+import { seatToWorld, sideOf, transitionsFor, type PersonTransitions, type Side } from "./transitions";
 
 export type Status = "available" | "working" | "walking" | "meeting" | "awaiting" | "done";
 export const STATUS_AR: Readonly<Record<Status, string>> = {
   available: "متاح", working: "يعمل", walking: "ينتقل", meeting: "في اجتماع", awaiting: "بانتظار الاعتماد", done: "أنجز مهمته",
 };
-/** Animation the renderer should play. */
-export type Clip = "sit" | "type" | "walk" | "stand" | "talk";
+/** Animation the renderer should play. "rise" / "settle": getting up from / sitting down on the chair (on `side`). */
+export type Clip = "sit" | "type" | "walk" | "stand" | "talk" | "rise" | "settle";
 export type Stage = "idle" | "working" | "gathering" | "meeting" | "returning" | "awaiting" | "approved";
 export const STAGE_AR: Readonly<Record<Stage, string>> = {
   idle: "الجميع في مكاتبهم", working: "توزيع المهام والعمل الفردي", gathering: "الانتقال إلى غرفة الاجتماعات", meeting: "اجتماع ومراجعة النتائج",
@@ -38,6 +39,15 @@ export type Walker = {
   departAt: number;
   blockedFor: number;
   typingUntil: number;
+  /** seated → rising (getting up, still at the chair) → walking → settling (sitting down) → seated */
+  phase: "seated" | "rising" | "walking" | "settling";
+  /** when the current rise starts / the current settle ends */
+  riseAt: number;
+  settleUntil: number;
+  /** which side of the chair the current rise / settle uses (the person's left or right) */
+  side: Side;
+  /** the planned sit-down at the end of the current walk */
+  settle: { side: Side; seconds: number } | null;
 };
 
 export const WALK_SPEED = 1.35; // m/s
@@ -117,15 +127,18 @@ export class HqSim {
   private acc = 0;
   private rand: () => number;
   private version = 0;
+  private trans: Readonly<Record<AgentId, PersonTransitions | null>>;
 
   constructor(seed = 7) {
     this.rand = rng(seed);
+    this.trans = Object.fromEntries(AGENT_IDS.map((id) => [id, transitionsFor(id)])) as Record<AgentId, PersonTransitions | null>;
     const w = {} as Record<AgentId, Walker>;
     for (const id of AGENT_IDS) {
       const seat = FRAMES[id].seat;
       w[id] = {
         id, pos: [seat.at[0], seat.at[1]], yaw: seat.yaw, clip: "sit", status: "available", seated: true,
         pts: [], next: 0, dest: null, departAt: 0, blockedFor: 0, typingUntil: this.rand() * 6,
+        phase: "seated", riseAt: 0, settleUntil: 0, side: "l", settle: null,
       };
     }
     this.walkers = w;
@@ -170,6 +183,7 @@ export class HqSim {
       const w = this.walkers[id], seat = FRAMES[id].seat;
       w.pos = [seat.at[0], seat.at[1]]; w.yaw = seat.yaw; w.seated = true; w.clip = "sit";
       w.pts = []; w.next = 0; w.dest = null; w.blockedFor = 0;
+      w.phase = "seated"; w.settle = null;
       this.setStatus(w, "available");
     }
     this.scenario = null;
@@ -192,12 +206,30 @@ export class HqSim {
       const route = findRoute(GRAPH, from, target.node);
       if (!route) throw new Error(`no route ${from} → ${target.node}`);
       const pts = routePoints(GRAPH, route);
-      const delay = planDeparture(pts, planned, i * 0.6);
+      const tr = this.trans[id];
+      let rise = 0;
+      w.settle = null;
+      if (tr && pts.length >= 2) {
+        // get up on the side the route leaves by; walking starts where the stand-up take leaves the person
+        const seat = w.pos, yaw = w.yaw;
+        w.side = sideOf([pts[1][0] - seat[0], pts[1][1] - seat[1]], yaw);
+        const up = tr.up[w.side], o = seatToWorld(up.stand, yaw, tr.k);
+        pts[0] = [seat[0] + o[0], seat[1] + o[1]];
+        rise = up.seconds;
+        // arrive beside the destination chair on the side the route comes from; the sit-down take does the rest
+        const at = GRAPH.nodes[target.node], n = pts.length;
+        const side = sideOf([pts[n - 2][0] - at[0], pts[n - 2][1] - at[1]], target.yaw);
+        const down = tr.down[side], d = seatToWorld(down.stand, target.yaw, tr.k);
+        pts[n - 1] = [at[0] + d[0], at[1] + d[1]];
+        w.settle = { side, seconds: down.seconds };
+      }
+      const delay = planDeparture(pts, planned, i * 0.6 + rise);
       planned.push({ pts, delay });
       w.pts = pts;
       w.next = 1;
       w.dest = target;
       w.departAt = this.t + delay;
+      w.riseAt = w.departAt - rise;
       w.blockedFor = 0;
     });
   }
@@ -211,7 +243,7 @@ export class HqSim {
       this.setStage("gathering");
       this.send(sc.team, (id, i) => ({ node: `M:seat${i}`, yaw: MEETING_SEATS[i].yaw }));
       this.log("بدء الانتقال إلى غرفة الاجتماعات", sc.team);
-    } else if (sc && this.stage === "gathering" && sc.team.every((id) => this.walkers[id].seated)) {
+    } else if (sc && this.stage === "gathering" && sc.team.every((id) => this.settled(this.walkers[id]))) {
       this.setStage("meeting");
       this.log("اكتمل الحضور وبدأ الاجتماع", sc.team);
     } else if (sc && this.stage === "meeting" && this.stageT >= DUR.meeting) {
@@ -221,7 +253,7 @@ export class HqSim {
       const order = [...sc.team].sort((a, b) => dist(this.walkers[a].pos, door) - dist(this.walkers[b].pos, door));
       this.send(order, (id) => ({ node: homeNode(id), yaw: FRAMES[id].seat.yaw }));
       this.log("انتهى الاجتماع؛ العودة إلى المكاتب", sc.team);
-    } else if (sc && this.stage === "returning" && sc.team.every((id) => this.walkers[id].seated)) {
+    } else if (sc && this.stage === "returning" && sc.team.every((id) => this.settled(this.walkers[id]))) {
       this.setStage("awaiting");
       for (const a of sc.team) this.setStatus(this.walkers[a], "awaiting");
       this.log(`النتيجة جاهزة: ${sc.approval.title}`, ["BASHT"]);
@@ -234,7 +266,13 @@ export class HqSim {
     for (const id of AGENT_IDS) this.move(this.walkers[id], dt);
   }
 
+  private settled(w: Walker) { return w.seated && w.phase === "seated"; }
+
   private move(w: Walker, dt: number) {
+    if (w.phase === "settling") {
+      if (this.t < w.settleUntil) return;
+      w.phase = "seated";
+    }
     if (w.next === 0 || w.next >= w.pts.length) {
       // seated: ambient typing at the desk (visual only — status stays as it is)
       if (w.seated && (w.status === "available" || w.status === "done")) {
@@ -243,8 +281,18 @@ export class HqSim {
       } else if (w.seated && w.status === "meeting") w.clip = "talk";
       return;
     }
-    if (this.t < w.departAt) return;
-    if (w.seated) { w.seated = false; this.setStatus(w, "walking"); }
+    if (this.t < w.riseAt) return;
+    if (this.t < w.departAt) {
+      // getting up: still at the chair, facing the desk; the take carries the body out sideways
+      if (w.phase !== "rising") { w.phase = "rising"; w.clip = "rise"; this.setStatus(w, "walking"); }
+      return;
+    }
+    if (w.seated) {
+      w.seated = false;
+      this.setStatus(w, "walking");
+      if (w.phase === "rising") w.pos = [w.pts[0][0], w.pts[0][1]]; // where the stand-up take left the person
+    }
+    w.phase = "walking";
     w.clip = "walk";
     let budget = WALK_SPEED * dt;
     while (budget > 0 && w.next < w.pts.length) {
@@ -287,6 +335,14 @@ export class HqSim {
     const home = dest.node === homeNode(w.id);
     if (home) w.dest = null;
     w.clip = home ? "sit" : "talk";
+    if (w.settle) {
+      // sitting down: from beside the chair onto it (the take carries the body; the person's place is the seat)
+      w.phase = "settling";
+      w.side = w.settle.side;
+      w.settleUntil = this.t + w.settle.seconds;
+      w.clip = "settle";
+      w.settle = null;
+    } else w.phase = "seated";
     this.setStatus(w, home ? (this.stage === "returning" ? "awaiting" : "available") : "meeting");
   }
 

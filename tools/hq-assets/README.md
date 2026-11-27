@@ -25,6 +25,10 @@ export HQ_BLENDER_PY=~/.hq-venv/bin/python
 git clone https://github.com/microsoft/Microsoft-Rocketbox ~/Microsoft-Rocketbox                 # ≈ 4 GB, no LFS needed
 git -C ~/Microsoft-Rocketbox checkout 0943055db6ec570bcef9f2c8b41c9e5467c808f9                  # the revision we built from
 export ROCKETBOX=~/Microsoft-Rocketbox
+# KTX-Software 4.4.0 (Apache-2.0) for KTX2 / Basis texture compression — a dev-time tool only, nothing runs in production
+curl -L -o /tmp/ktx.tar.bz2 https://github.com/KhronosGroup/KTX-Software/releases/download/v4.4.0/KTX-Software-4.4.0-Linux-x86_64.tar.bz2
+mkdir -p ~/tools/ktx && tar -xjf /tmp/ktx.tar.bz2 -C ~/tools/ktx
+export HQ_KTX_BIN=~/tools/ktx/KTX-Software-4.4.0-Linux-x86_64/bin
 ```
 
 ## Build
@@ -35,7 +39,7 @@ export ROCKETBOX=~/Microsoft-Rocketbox
 | `tools/hq-assets/build.sh characters` | BASHT: skinned robot + 6 clips (idle, walk, sit, type, talk, stand) | ≈ 1 s |
 | `tools/hq-assets/build.sh humans` | 13 realistic people (Rocketbox, composed per `roster.ts`) + one mocap clip library per skeleton | ≈ 1 min |
 | `tools/hq-assets/build.sh lineup` | QA render of all characters (idle, walk) | ≈ 1 min |
-| `tools/hq-assets/build.sh publish` | compress + copy into the app, regenerate `assets.generated.ts` | ≈ 30 s |
+| `tools/hq-assets/build.sh publish` | KTX2 textures (ETC1S; lightmap UASTC) + meshopt, copy into the app with the Basis transcoder, regenerate `assets.generated.ts` | ≈ 2 min |
 | `tools/hq-assets/build.sh all` | everything above except the lineup | |
 
 ## Design rules
@@ -86,13 +90,34 @@ over the clip (seamless wrap); every joint keeps a rotation track; only the root
 lengths stay the wearer's). `apps/web/tests/hq-clips.test.ts` decodes the shipped libraries and checks all of this.
 
 Phone budget: ≤ 11 k triangles and ≤ 4 materials per person (one shared skeleton) (body, head, headwear/hair cards, crown), colour textures
-only (head/body/cloth 512², no normal maps), WebP, meshopt — 13 people ≈ 3.6 MB on the wire.
+only (head/body/cloth 512², no normal maps), KTX2 / ETC1S, meshopt — 13 people ≈ 3.6 MB on the wire.
+
+### Getting up and sitting down
+
+Rocketbox's "table" takes (`sit_stand_up_table_left/right`, `sit_down_table_left/right`, with their own root travel) are
+rotated and placed so their seated end is exactly the seated clips' pose. As the hips rise, the root eases 0.40 m back from
+the desk, as if pushing the chair back. The standing end's hip position and facing are written to the manifest
+(`anims.<sex>.transitions`).
+
+- **Simulation (`lib/hq/sim.ts` + `transitions.ts`):** a person rises in the chair for the take's length. They start
+  walking from where the take leaves them, on the side their route leaves by. They walk to the side of the destination
+  chair, and the sit-down take carries them onto it.
+- **Renderer:** holds the body in place through the hand-over and turns them smoothly (no position or heading snaps).
+
+## Textures: KTX2 / Basis Universal
+
+Every texture ships as KTX2 and stays compressed on the GPU (about 4–8× less video memory than RGBA):
+- people and building surfaces use ETC1S at the top quality level;
+- the lightmap uses UASTC with RDO and Zstandard, because ETC1S blocks show on smooth walls.
+
+The Basis transcoder (`basis_transcoder.js/.wasm`, from the three package the app ships) is copied into the versioned
+asset folder. It is served same-origin, with no CDN. The app uses one transcoder (2 workers) per canvas and releases it
+when the HQ unmounts.
 
 ## Known limits (and the planned upgrade)
 
 | limit | why | next step |
 |---|---|---|
-| WebP lightmap, not KTX2 | `toktx` (KTX-Software) is not installable here | encode KTX2/UASTC in CI when the tool is available; three's KTX2Loader is ready |
 | Night = dimmed day bake + glowing coves | one bake keeps the download small | a second (night) bake if the owner wants a stronger night mood |
 | People are 2010s real-time quality | Rocketbox is the best freely licensed realistic set; MetaHuman-class quality needs paid/login-gated tools | KTX2 textures and a facial (`_facial.fbx`, ARKit/visemes) build when lip-sync is wanted |
 | No typing capture | Rocketbox has seated idles and gestures, not keyboard typing | a CC0/CMU typing take retargeted with the same bake step |
