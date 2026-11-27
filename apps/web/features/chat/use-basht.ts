@@ -97,6 +97,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const keyRef = useRef(key);
   keyRef.current = key;
   const loadGen = useRef(0);
+  const jumpGen = useRef(0); // the latest search-hit pick: an earlier pick's window never lands after it
   // B1: which history VIEW is on screen. Opening a conversation, «العودة إلى الأحدث» / refresh, «محادثة جديدة» and a search
   // window each start a new view; an older page requested for an abandoned view is dropped when it arrives.
   const viewGen = useRef(0);
@@ -276,12 +277,13 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const jumpTo = useCallback(async (messageId: string) => {
     const k = keyRef.current;
     if (!k) return;
+    const pick = ++jumpGen.current; // a hit picked later (even one already on screen) supersedes this one
     if ([...olderRows, ...(messages ?? [])].some((m) => m.id === messageId)) { setFocusId(messageId); return; }
     const gen = ++loadGen.current; // a plain load still in flight for this conversation must not replace the window
     viewGen.current++; // nor may an older page requested for the previous view land in this window
     try {
       const page = await bashtClient.historyPage(k, { around: messageId });
-      if (keyRef.current !== k || gen !== loadGen.current) return;
+      if (keyRef.current !== k || gen !== loadGen.current || pick !== jumpGen.current) return;
       viewGen.current++; // an older page requested while this window loaded belongs to the previous view: it is dropped
       olderRowsRef.current = []; windowedRef.current = true;
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);

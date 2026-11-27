@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 
 const hook = readFileSync(new URL("../features/chat/use-basht.ts", import.meta.url), "utf8");
 const chat = readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
-const body = (src: string, start: RegExp) => { const i = src.search(start); expect(i, String(start)).toBeGreaterThan(-1); return src.slice(i, i + 900); };
+const body = (src: string, start: RegExp) => { const i = src.search(start); expect(i, String(start)).toBeGreaterThan(-1); return src.slice(i, i + 1400); };
 
 // Review (Codex, round 5)
 describe("keyboard send respects the photo-preparation barrier", () => {
@@ -28,7 +28,7 @@ describe("an older page for an abandoned history view is dropped", () => {
   // already bumped, so its page landed inside the window. Installing the window starts a new view again.
   it("installing a search window invalidates an older page requested while it loaded", () => {
     const fn = body(hook, /const jumpTo = useCallback/);
-    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current\) return;\s*viewGen\.current\+\+;[^\n]*\n\s*olderRowsRef\.current = \[\]; windowedRef\.current = true;/);
+    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current( \|\| [^)]*)?\) return;\s*viewGen\.current\+\+;[^\n]*\n\s*olderRowsRef\.current = \[\]; windowedRef\.current = true;/);
   });
   it("refresh / «العودة إلى الأحدث», opening a conversation, «محادثة جديدة» and a search window start a new view", () => {
     expect(body(hook, /const refresh = useCallback/)).toMatch(/viewGen\.current\+\+/);
@@ -82,5 +82,17 @@ describe("«محادثة جديدة» leaves another conversation on screen unto
       const at = fn.search(re);
       expect(at, String(re)).toBeGreaterThan(branch);
     }
+  });
+});
+
+// Review (Codex, round 11): picking an unloaded hit A, then an already-loaded hit B, let A's window land afterwards and
+// replace the history and focus. Every pick (loaded or not) supersedes the earlier ones.
+describe("a later search-hit pick supersedes an earlier window request", () => {
+  it("jumpTo counts every pick before the on-screen shortcut and checks it before installing a window", () => {
+    const fn = body(hook, /const jumpTo = useCallback/);
+    const pick = fn.search(/const pick = \+\+jumpGen\.current;/);
+    expect(pick).toBeGreaterThan(-1);
+    expect(pick).toBeLessThan(fn.search(/\.some\(\(m\) => m\.id === messageId\)\) \{ setFocusId\(messageId\); return; \}/));
+    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current \|\| pick !== jumpGen\.current\) return;/);
   });
 });
