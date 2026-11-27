@@ -33,8 +33,10 @@ app.include_router(basht_chat_router)
 app.include_router(basht_live_router)
 app.include_router(owner_auth_router)
 # Ceilings applied BEFORE any body is buffered (independent review IR-A1). The browser routes take a ~100-byte JSON; the signed
-# prefix matches service_auth.MAX_BODY_BYTES. This layer only rejects; each route keeps its own authentication.
-app.add_middleware(BodyLimitMiddleware, limits=[("/internal/browser/", 4096), ("/internal/v1/browser/", 4096), ("/internal/", 1_048_576)])
+# prefix matches service_auth.MAX_BODY_BYTES; the one voice-note route matches MAX_AUDIO_BODY_BYTES (10 MiB, raw audio, still signed).
+# This layer only rejects; each route keeps its own authentication.
+app.add_middleware(BodyLimitMiddleware, limits=[("/internal/browser/", 4096), ("/internal/v1/browser/", 4096),
+                                                ("/internal/v1/basht/transcribe", 10 * 1024 * 1024), ("/internal/", 1_048_576)])
 
 
 class TaskRequest(BaseModel):

@@ -134,3 +134,119 @@ describe("BASHT chat door: model control (M)", () => {
     expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "x", failed: false, firstTokenMs: 640, totalMs: 2100 });
   });
 });
+
+describe("BASHT voice door (V2 speak · V3 transcribe)", () => {
+  const AUDIO = new Uint8Array(4096).fill(7);
+  const rawReq = (bytes: BodyInit | null, type: string | null, headers: Record<string, string> = authed.headers) =>
+    new Request(`https://${HOST}/api/basht/transcribe`, { method: "POST", headers: { ...headers, ...(type ? { "content-type": type } : {}) }, body: bytes });
+  const speakStream = (bytes: Uint8Array, contentType = "audio/mpeg") => ({ kind: "stream" as const, contentType, body: new Response(bytes as BodyInit).body! });
+
+  it("speak: owner + same-origin + only the text; streams BASHT's audio back as audio", async () => {
+    const stream = vi.fn(async () => speakStream(new Uint8Array([73, 68, 51, 1, 2, 3])));
+    const d = deps({ streamBackend: stream as unknown as Deps["streamBackend"] });
+    expect((await call("POST", "speak", { headers: same, body: { text: "x" } }, d)).status).toBe(401);
+    const cross = { headers: { ...authed.headers, origin: "https://evil.example", "sec-fetch-site": "cross-site" } };
+    expect((await call("POST", "speak", { ...cross, body: { text: "x" } }, d)).status).toBe(403);
+    expect(stream).not.toHaveBeenCalled();
+    const r = await call("POST", "speak", { ...authed, body: { text: "  مرحبا  ", voice: "alloy", sessionKey: "agent:main:main" } }, d);
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toBe("audio/mpeg");
+    expect(r.headers.get("cache-control")).toBe("no-store");
+    expect([...new Uint8Array(await r.arrayBuffer())]).toEqual([73, 68, 51, 1, 2, 3]);
+    const opts = (stream.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+    expect(opts).toMatchObject({ path: "/internal/v1/basht/speak", body: { text: "مرحبا" } });
+    expect(Object.keys(opts.body as object)).toEqual(["text"]);
+    expect(opts.maxBytes).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect(opts.account).toBeUndefined();
+  });
+
+  it("speak: validates the text (1..1500) and refuses a non-audio answer; engine refusals keep their fixed codes", async () => {
+    const stream = vi.fn();
+    const d = deps({ streamBackend: stream as unknown as Deps["streamBackend"] });
+    for (const body of [{}, { text: "" }, { text: "   " }, { text: 5 }, { text: "ب".repeat(1501) }])
+      expect((await call("POST", "speak", { ...authed, body }, d)).status, JSON.stringify(body).slice(0, 30)).toBe(400);
+    expect(stream).not.toHaveBeenCalled();
+    stream.mockResolvedValueOnce(speakStream(new Uint8Array([60, 104]), "text/html"));
+    expect((await call("POST", "speak", { ...authed, body: { text: "x" } }, d)).status).toBe(502);
+    for (const [answer, status, error] of [
+      [{ kind: "error", status: 400, code: "voice_unavailable" }, 503, "voice_unavailable"],
+      [{ kind: "error", status: 429, code: "rate_limited" }, 429, "rate_limited"],
+      [{ kind: "error", status: 400, code: "something_else" }, 503, "unavailable"],
+      [{ kind: "error", status: 502, code: "unavailable" }, 503, "unavailable"],
+      [{ kind: "unreachable" }, 503, "unavailable"],
+    ] as const) {
+      stream.mockResolvedValueOnce(answer);
+      const r = await call("POST", "speak", { ...authed, body: { text: "x" } }, d);
+      expect([r.status, (await r.json()).error], JSON.stringify(answer)).toEqual([status, error]);
+    }
+  });
+
+  it("transcribe: relays the raw audio bytes with their type, returns only the transcript", async () => {
+    backend.mockResolvedValueOnce(ok(200, { text: "  نص الملاحظة  ", extra: "x" }));
+    const r = await handleBashtChat(rawReq(AUDIO, "audio/webm;codecs=opus"), ["transcribe"], deps());
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ text: "نص الملاحظة" });
+    const opts = backend.mock.calls[0][0];
+    expect(opts).toMatchObject({ path: "/internal/v1/basht/transcribe", method: "POST", rawBody: { type: "audio/webm" } });
+    expect(opts.body).toBeUndefined();
+    expect([...opts.rawBody.bytes]).toEqual([...AUDIO]);
+    expect(opts.timeoutMs).toBeGreaterThanOrEqual(100_000);
+  });
+
+  it("transcribe: owner, same-origin, allowed types, bounded size — refused before the API", async () => {
+    expect((await handleBashtChat(rawReq(AUDIO, "audio/ogg", same), ["transcribe"], deps())).status).toBe(401);
+    const cross = { ...authed.headers, origin: "https://evil.example", "sec-fetch-site": "cross-site" };
+    expect((await handleBashtChat(rawReq(AUDIO, "audio/ogg", cross), ["transcribe"], deps())).status).toBe(403);
+    for (const type of ["application/json", "text/plain", "video/webm", "audio/aac", null]) {
+      const r = await handleBashtChat(rawReq(AUDIO, type), ["transcribe"], deps());
+      expect([r.status, (await r.json()).error], String(type)).toEqual([415, "unsupported_audio"]);
+    }
+    const tiny = await handleBashtChat(rawReq(new Uint8Array(1023), "audio/ogg"), ["transcribe"], deps());
+    expect([tiny.status, (await tiny.json()).error]).toEqual([422, "no_speech"]);
+    const declared = await handleBashtChat(rawReq(AUDIO, "audio/ogg", { ...authed.headers, "content-length": String(10 * 1024 * 1024 + 1) }), ["transcribe"], deps());
+    expect([declared.status, (await declared.json()).error]).toEqual([413, "too_large"]);
+    // a body without (or lying about) its length is cut off while reading
+    const big = new ReadableStream<Uint8Array>({ start(c) { for (let i = 0; i < 11; i++) c.enqueue(new Uint8Array(1024 * 1024)); c.close(); } });
+    const streamed = await handleBashtChat(new Request(`https://${HOST}/api/basht/transcribe`, { method: "POST", headers: { ...authed.headers, "content-type": "audio/ogg" }, body: big, duplex: "half" } as RequestInit), ["transcribe"], deps());
+    expect([streamed.status, (await streamed.json()).error]).toEqual([413, "too_large"]);
+    expect(backend).not.toHaveBeenCalled();
+  });
+
+  it("transcribe: the API's fixed refusals pass through; anything else is generic", async () => {
+    for (const [answer, status, error] of [
+      [ok(400, { detail: { code: "voice_unavailable" } }), 503, "voice_unavailable"],
+      [ok(422, { detail: { code: "no_speech" } }), 422, "no_speech"],
+      [ok(413, { detail: { code: "too_large" } }), 413, "too_large"],
+      [ok(200, { text: "   " }), 422, "no_speech"],
+      [ok(400, { detail: { code: "<b>upstream</b>" } }), 503, "unavailable"],
+      [{ kind: "unavailable", status: 502 }, 503, "unavailable"],
+      [{ kind: "unreachable" }, 503, "unavailable"],
+    ] as const) {
+      backend.mockResolvedValueOnce(answer);
+      const r = await handleBashtChat(rawReq(AUDIO, "audio/mp4"), ["transcribe"], deps());
+      expect([r.status, (await r.json()).error], JSON.stringify(answer)).toEqual([status, error]);
+    }
+  });
+
+  it("voice has its own budget: chatting never starves it, and it never starves sending", async () => {
+    backend.mockResolvedValue(ok(200, { text: "x" }));
+    for (let i = 0; i < 60; i++) expect((await handleBashtChat(rawReq(AUDIO, "audio/ogg"), ["transcribe"], deps())).status).toBe(200);
+    expect((await handleBashtChat(rawReq(AUDIO, "audio/ogg"), ["transcribe"], deps())).status).toBe(429);
+    backend.mockResolvedValue(ok(200, { run_id: RUN }));
+    expect((await call("POST", "send", { ...authed, body: { message: "x" } })).status).toBe(200);
+  });
+
+  it("browser client: speak returns the audio; refusals become Arabic messages", async () => {
+    const c = createBashtClient(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+    const blob = await c.speak("مرحبا");
+    expect(blob.size).toBe(3);
+    const off = createBashtClient(async () => new Response(JSON.stringify({ error: "voice_unavailable" }), { status: 503, headers: { "content-type": "application/json" } }));
+    await expect(off.speak("x")).rejects.toMatchObject({ code: "voice_unavailable" });
+    const none = createBashtClient(async () => new Response(JSON.stringify({ error: "no_speech" }), { status: 422 }));
+    await expect(none.transcribe(new Blob([new Uint8Array(2000)], { type: "audio/webm;codecs=opus" }))).rejects.toThrow("لم أسمع كلامًا");
+    const f = vi.fn(async () => new Response(JSON.stringify({ text: "نص" }), { status: 200 }));
+    expect(await createBashtClient(f as unknown as typeof fetch).transcribe(new Blob([new Uint8Array(2000)], { type: "audio/mp4" }))).toBe("نص");
+    const init = (f.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("audio/mp4");
+  });
+});

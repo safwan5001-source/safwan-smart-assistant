@@ -9,7 +9,9 @@
  * - Honest delivery: when BASHT is unreachable or locked, nothing is "sent" — the draft stays and the state is shown. No silent
  *   fallback to notes.
  * - Read-only: the owner's WhatsApp / main engine conversations, and the local archive (the old on-device threads, kept as they were).
- * - Voice lives here too (?voice=1, the mic in the composer); /calls and /chat/basht redirect to this screen.
+ * - Voice lives here too (?voice=1, the mic in the composer); /calls and /chat/basht redirect to this screen. With the engine's voice:
+ *   «استمع» on every BASHT reply (BASHT's own voice), voice notes from the composer mic (transcribed by the engine, sent as the
+ *   owner's message), and the live voice session in the voice panel. Without it: browser dictation, one mic button either way.
  */
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
@@ -27,6 +29,7 @@ import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-car
 import VoicePanel from "@/features/calls/calls-screen";
 import ModelPanel from "./model-panel";
 import MessageBody from "./message-body";
+import ListenButton from "./listen-button";
 import { useBashtModel } from "./use-basht-model";
 import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/basht-model";
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
@@ -40,7 +43,8 @@ import { downloadBlob, getFile, putFiles, tooLarge, toLocalFiles } from "@/lib/f
 import { formatTime } from "@/lib/format";
 import { matches } from "@/lib/search";
 import type { Attachment, Message, Thread } from "@/lib/domain";
-import type { BashtMessage } from "@/lib/basht-client";
+import { bashtClient, BashtError, type BashtMessage } from "@/lib/basht-client";
+import { clock, MAX_NOTE_MS, parseVoiceNote, usePlayer, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voiceNoteText, voicePlayer } from "@/lib/basht-voice";
 import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
 import type { BrowserRef } from "@/lib/domain";
 
@@ -88,6 +92,10 @@ export default function ChatScreen() {
   const picker = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLDivElement>(null);
   const dictation = useDictation();
+  const recorder = useVoiceRecorder();
+  const voiceAvail = useVoiceAvailability();
+  const player = usePlayer();
+  const [noteBusy, setNoteBusy] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const agent = agentState(status, useAgentActivity());
 
@@ -101,6 +109,17 @@ export default function ChatScreen() {
   const engineKey = view.kind === "main" ? APP_SESSION_KEY : view.kind === "engine" ? view.key : null;
   const basht = useBashtConversation(bashtOn, bashtOn ? engineKey : null);
   useEffect(() => { if ((ownerGate.on || auth?.owner_auth) && basht.gate === "locked") ownerGate.signInAgain(); }, [ownerGate, auth, basht.gate]);
+  // Voice with BASHT's engine (its own voice and transcription): only inside an open BASHT conversation, never pretended.
+  const voiceOn = bashtOn && basht.gate === "open";
+  const noteMode = voiceOn && recorder.supported && voiceAvail.transcribe !== "no"; // the ONE mic: voice note, else dictation
+  const lapsed = (e: unknown) => { if (e instanceof BashtError && e.code === "unauthorized" && (ownerGate.on || auth?.owner_auth)) ownerGate.signInAgain(); };
+  useEffect(() => {
+    if (!player.error) return;
+    if (player.code === "unauthorized" && (ownerGate.on || auth?.owner_auth)) ownerGate.signInAgain();
+    else toast(player.error, "error");
+    voicePlayer().clearError();
+  }, [player.error]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => { voicePlayer().stop(); }, []);
 
   const mainThread = threads.find((t) => t.main);
   const archive = useMemo(
@@ -158,7 +177,7 @@ export default function ChatScreen() {
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
-  const resetComposer = () => { dictation.abort(); setDraft(""); setAttachments([]); setNotice(""); };
+  const resetComposer = () => { dictation.abort(); recorder.cancel(); setDraft(""); setAttachments([]); setNotice(""); };
   const go = (v: View) => {
     resetComposer(); setView(v); setSheet(false);
     const t = v.kind === "archive" ? v.id : null;
@@ -250,6 +269,42 @@ export default function ChatScreen() {
     } finally { setBusy(false); }
   };
 
+  /** A voice note: recorded here, transcribed by the engine, then sent to BASHT as the owner's message (marked as a voice note).
+   *  Nothing is claimed as sent unless BASHT accepted it; if sending fails the transcript stays in the composer. */
+  const recordNote = async () => {
+    if (recorder.recording || noteBusy) return;
+    setNotice(""); dictation.abort();
+    const r = await recorder.record({ maxMs: MAX_NOTE_MS });
+    if (!r.audio) return; // cancelled, or the mic could not start (recorder.error says why)
+    setNoteBusy(true);
+    try {
+      let text: string;
+      try { text = await bashtClient.transcribe(r.audio); voiceAvailability.set("transcribe", "yes"); }
+      catch (e) {
+        lapsed(e);
+        if (e instanceof BashtError && e.code === "voice_unavailable") {
+          voiceAvailability.set("transcribe", "no");
+          setNotice("تفريغ الصوت غير مفعّل في محرك باشت الآن، فلم تُرسل رسالتك الصوتية. صار زر الميكروفون للإملاء.");
+        } else setNotice((e instanceof Error ? e.message : "تعذّر تفريغ الرسالة الصوتية.") + " لم تُرسل رسالتك الصوتية.");
+        return;
+      }
+      if (!ready || basht.live) { setDraft(text); setNotice("باشت غير متاح الآن، فلم تُرسل رسالتك الصوتية. وضعتُ نصها في مربع الكتابة."); return; }
+      try { await basht.send(voiceNoteText(text)); if (r.ended === "limit") toast("بلغ التسجيل حده (3 دقائق)، فأُرسل حتى هنا."); }
+      catch (e) { setAgentPhase("reply_failed"); setDraft(text); setNotice((e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت.") + " وضعتُ نص رسالتك الصوتية في مربع الكتابة."); }
+    } finally { setNoteBusy(false); }
+  };
+  /** The live voice session: one owner turn (a voice note) and BASHT's finished reply, in this same conversation. */
+  const liveVoice = {
+    ready: voiceOn && engineUp,
+    ask: async (text: string) => {
+      if (basht.live) throw new Error("باشت ينفّذ طلبًا سابقًا الآن؛ انتظر حتى يكتمل.");
+      const id = await basht.send(text);
+      const end = await basht.waitRun(id);
+      if (end.status === "done" && end.text.trim()) return end.text;
+      throw new Error(end.status === "stopped" ? "أُوقف الرد." : "تعذّر الحصول على رد باشت.");
+    },
+  };
+
   const unlock = async (e: FormEvent) => {
     e.preventDefault();
     if (!code.trim()) return;
@@ -331,20 +386,25 @@ export default function ChatScreen() {
     </article>
   );
   /** A message from BASHT's own record (the engine): read here, kept there. */
-  const engineBubble = (m: BashtMessage, key: string) => (
+  const engineBubble = (m: BashtMessage, key: string) => {
+    const note = m.role === "user" ? parseVoiceNote(m.text) : { voice: false, text: m.text };
+    return (
     <article key={key} className={"bubble " + m.role}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
-      {m.role === "assistant" ? <MessageBody text={m.text} /> : m.text}
+      {note.voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}
+      {m.role === "assistant" ? <MessageBody text={m.text} /> : note.text}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
       )}
       <div className="meta">
         {m.at > 0 && <time className="num" dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>}
         {m.role === "assistant" && m.model && m.provider !== "openclaw" && <small className="model-tag" title={m.provider ? `${m.provider}/${m.model}` : m.model}>{replyModelName(m.provider, m.model, model.models)}</small>}
-        <button className="icon-btn sm" onClick={() => void copy(m.text)} aria-label="نسخ الرسالة"><Icon name="copy" size={16} /></button>
+        {m.role === "assistant" && <ListenButton id={key} text={m.text} />}
+        <button className="icon-btn sm" onClick={() => void copy(note.text)} aria-label="نسخ الرسالة"><Icon name="copy" size={16} /></button>
       </div>
     </article>
-  );
+    );
+  };
 
   // M: the app conversation's model, read from the engine (refreshed after each reply and each change; never polled)
   const model = useBashtModel(bashtOn && basht.gate === "open", !!basht.live);
@@ -447,7 +507,7 @@ export default function ChatScreen() {
                 {timeline}
                 {live && (
                   <>
-                    <article className="bubble user">{live.prompt}</article>
+                    <article className="bubble user">{parseVoiceNote(live.prompt).voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}{parseVoiceNote(live.prompt).text}</article>
                     <article className="bubble assistant streaming" aria-busy="true">
                       <span className="who"><BrandMark size="xs" />باشت</span>
                       {live.text ? <MessageBody text={live.text} /> : <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
@@ -485,15 +545,26 @@ export default function ChatScreen() {
                 <textarea ref={input} className="textarea" rows={1} aria-label="اكتب رسالة" placeholder="اكتب لباشت…" value={draft} maxLength={8000}
                   onChange={(e) => setDraft(e.target.value)} enterKeyHint="send"
                   onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && desktop) { e.preventDefault(); void send(); } }} />
-                <button className={"icon-btn bordered " + (dictation.listening ? "recording" : "")} disabled={!dictation.supported} aria-pressed={dictation.listening}
-                  aria-label={dictation.listening ? "إيقاف الإملاء الصوتي" : "بدء الإملاء الصوتي"} title={dictation.supported ? "إملاء عربي" : "التعرف الصوتي غير مدعوم في هذا المتصفح"}
-                  onClick={() => (dictation.listening ? dictation.stop() : dictation.start(draft, setDraft))}><Icon name={dictation.listening ? "stop" : "mic"} size={20} /></button>
+                {noteMode
+                  ? <button className={"icon-btn bordered " + (recorder.recording ? "recording" : "")} disabled={noteBusy || recorder.phase === "starting" || (!recorder.recording && !!live)} aria-pressed={recorder.recording}
+                      aria-label={recorder.recording ? "إنهاء التسجيل وإرسال الرسالة الصوتية" : "تسجيل رسالة صوتية لباشت"} title="رسالة صوتية لباشت"
+                      onClick={() => (recorder.recording ? recorder.stop() : void recordNote())}><Icon name={recorder.recording ? "stop" : "mic"} size={20} /></button>
+                  : <button className={"icon-btn bordered " + (dictation.listening ? "recording" : "")} disabled={!dictation.supported} aria-pressed={dictation.listening}
+                      aria-label={dictation.listening ? "إيقاف الإملاء الصوتي" : "بدء الإملاء الصوتي"} title={dictation.supported ? "إملاء عربي" : "التعرف الصوتي غير مدعوم في هذا المتصفح"}
+                      onClick={() => (dictation.listening ? dictation.stop() : dictation.start(draft, setDraft))}><Icon name={dictation.listening ? "stop" : "mic"} size={20} /></button>}
                 {live || claudeLive
                   ? <button className="icon-btn send-btn stop-btn" onClick={() => (live ? void basht.stop() : abortRef.current?.abort())} aria-label="إيقاف الرد" title="إيقاف الرد"><Icon name="stop" size={20} /></button>
                   : <button className="icon-btn send-btn" onClick={() => void send()} disabled={busy || (!draft.trim() && !attachments.length)} aria-label="إرسال"><Icon name="send" size={20} style={{ transform: "scaleX(-1)" }} /></button>}
               </div>
+              {(recorder.recording || noteBusy) && (
+                <div className="voice-note-bar" role="status">
+                  <span className="rec-dot" data-busy={noteBusy ? "true" : undefined} aria-hidden="true" />
+                  <span className="grow">{noteBusy ? "يُفرَّغ تسجيلك في محرك باشت ثم يُرسل…" : <>يسجّل رسالة صوتية <bdi className="num">{clock(recorder.elapsed)}</bdi> / 3:00 · أوقف التسجيل ليُرسل</>}</span>
+                  {recorder.recording && <button type="button" className="btn btn-sm" onClick={recorder.cancel} aria-label="إلغاء التسجيل">إلغاء</button>}
+                </div>
+              )}
               {dictation.listening && <small role="status" style={{ color: "var(--ai-ink)" }}>يستمع الآن… تحدّث بالعربية ثم راجع النص قبل الإرسال.</small>}
-              {(notice || basht.error || dictation.error) && <small role="alert" style={{ color: "var(--danger)" }}>{notice || basht.error || dictation.error}</small>}
+              {(notice || basht.error || dictation.error || recorder.error) && <small role="alert" style={{ color: "var(--danger)" }}>{notice || basht.error || dictation.error || recorder.error}</small>}
               <small className="composer-note">محادثتك مع باشت: منفصلة عن واتساب، بذاكرة باشت المشتركة وصلاحيات المالك، والموافقات الحساسة في مساراتها. المرفقات تبقى على هذا الجهاز ولا تُرسل بعد.</small>
             </div>
           ) : (
@@ -518,7 +589,7 @@ export default function ChatScreen() {
       <Modal open={voice} onClose={() => setVoice(false)} label="الجلسة الصوتية" variant="sheet">
         <div className="sheet-card" style={{ padding: 12, overflowY: "auto" }}>
           <div className="row"><h2 style={{ flex: 1 }}>الجلسة الصوتية</h2><button className="icon-btn" onClick={() => setVoice(false)} aria-label="إغلاق"><Icon name="close" size={20} /></button></div>
-          <VoicePanel onUse={(t) => { setVoice(false); setView({ kind: "main" }); setDraft(t); requestAnimationFrame(() => input.current?.focus()); }} />
+          <VoicePanel live={liveVoice} onUse={(t) => { setVoice(false); setView({ kind: "main" }); setDraft(t); requestAnimationFrame(() => input.current?.focus()); }} />
         </div>
       </Modal>
 

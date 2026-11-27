@@ -17,6 +17,15 @@ const POLL_MS = 1200;
 // each new loop (or leaving the conversation / the screen) bumps the generation and the older loop exits.
 let activeRun: { id: string; prompt: string; at: number } | null = null;
 let pollGen = 0;
+/** Who waits for a turn to end (the live voice session speaks the reply): resolved by the poller with the final text. */
+export type RunEnd = { status: "done" | "error" | "stopped" | "lost"; text: string };
+const waiters = new Map<string, (r: RunEnd) => void>();
+const ended = new Map<string, RunEnd>(); // a turn that ended before anyone waited for it (last few only)
+const settle = (id: string, r: RunEnd) => {
+  const w = waiters.get(id);
+  if (w) { waiters.delete(id); w(r); return; }
+  ended.set(id, r); while (ended.size > 5) ended.delete(ended.keys().next().value!);
+};
 
 export type BashtGate = "checking" | "disabled" | "locked" | "open";
 export type BashtLive = { prompt: string; text: string; at: number };
@@ -65,6 +74,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         setLive({ prompt: run.prompt, text: r.text, at: run.at });
         if (r.status !== "running") {
           activeRun = null;
+          settle(run.id, { status: r.status, text: r.text });
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
           if (r.status === "error") setError("تعذّر إكمال الرد من باشت. أعد المحاولة.");
           if (r.status === "stopped") setError("أُوقف الرد.");
@@ -73,7 +83,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         }
       } catch (e) {
         if (!mine()) return;
-        if (e instanceof BashtError && e.code === "not_found") { activeRun = null; await finish(); return; }
+        if (e instanceof BashtError && e.code === "not_found") { activeRun = null; settle(run.id, { status: "lost", text: "" }); await finish(); return; }
         // session expired / code rotated: back to the unlock form; activeRun is kept, so the reply resumes after unlocking
         if (e instanceof BashtError && e.code === "unauthorized") { setLive(null); setGate("locked"); return; }
         setError(errText(e));
@@ -111,7 +121,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     return ok;
   }, []);
 
-  /** Starts one owner turn. Throws BashtError (Arabic message) if the engine did not accept it — the caller keeps the draft. */
+  /** Starts one owner turn and returns its run id. Throws BashtError (Arabic message) if the engine did not accept it — the caller keeps the draft. */
   const send = useCallback(async (text: string) => {
     try {
       const id = await bashtClient.send(text);
@@ -119,14 +129,23 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       setAgentPhase("thinking");
       activeRun = { id, prompt: text, at: Date.now() };
       void poll(activeRun);
+      return id;
     } catch (e) {
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       throw e instanceof BashtError ? e : new BashtError("unavailable");
     }
   }, [poll]);
 
+  /** Resolves when that turn has ended (its final text), as the poller sees it. Gives up after the engine's own turn limit. */
+  const waitRun = useCallback((id: string) => new Promise<RunEnd>((resolve) => {
+    const done = ended.get(id);
+    if (done) { ended.delete(id); resolve(done); return; }
+    const t = setTimeout(() => settle(id, { status: "lost", text: "" }), 15 * 60_000);
+    waiters.set(id, (r) => { clearTimeout(t); resolve(r); });
+  }), []);
+
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
   const refresh = useCallback(() => { if (keyRef.current) void load(keyRef.current); }, [load]);
 
-  return { gate, sessions, messages, live, error, unlock, recheck, send, stop, refresh };
+  return { gate, sessions, messages, live, error, unlock, recheck, send, waitRun, stop, refresh };
 }

@@ -8,9 +8,12 @@ import "server-only";
  * door has its own owner gate: BASHT_CHAT_ACCESS_CODE (32+ chars, WEB service only) → signed HttpOnly SameSite=Strict cookie scoped to
  * /api/basht, 8 hours. It reuses the HMAC cookie primitives of the Claude gate with its own domain-separated key, so neither cookie
  * opens the other door. The browser never sees an engine credential, an account id or upstream error text.
+ *
+ * Voice (V2/V3): POST speak {text} → BASHT's reply spoken in its OWN voice (the engine's agent tts config), streamed back as audio;
+ * POST transcribe <raw audio> → the engine's transcript. Same owner gate, same-origin check and bounded bodies; no provider key here.
  */
 import { hkdfSync } from "node:crypto";
-import { callBackend as realCallBackend } from "./backend";
+import { callBackend as realCallBackend, streamBackend as realStreamBackend } from "./backend";
 import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
@@ -21,8 +24,8 @@ import { clientIp } from "./client-ip";
 
 export const BASHT_COOKIE = "safwan_basht";
 export const BASHT_COOKIE_PATH = "/api/basht";
-export type Deps = { env: Env; callBackend: typeof realCallBackend; now: () => number };
-const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
+export type Deps = { env: Env; callBackend: typeof realCallBackend; streamBackend?: typeof realStreamBackend; now: () => number };
+const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, streamBackend: realStreamBackend, now: Date.now });
 
 export function readBashtGate(env: Env): Gate | null {
   const code = env.BASHT_CHAT_ACCESS_CODE;
@@ -41,9 +44,18 @@ const KEY = /^agent:[a-z0-9_-]{1,64}:\S{1,200}$/i;
 // 8000 UTF-16 units can need up to 6 bytes each once JSON-escaped (\u00XX); Arabic needs 2. 64 KiB covers both, still bounded.
 const MAX_MESSAGE = 8000, MAX_BODY = 64 * 1024;
 
-// Polling a live reply costs ~40 reads a minute; writes are rarer. The API and the engine limit again on their side.
-const limiters = { unlockFail: createFailureLimiter(5, 60_000), read: createLimiter(240, 60_000), write: createLimiter(30, 60_000) };
-export const resetBashtLimits = () => { limiters.unlockFail = createFailureLimiter(5, 60_000); limiters.read = createLimiter(240, 60_000); limiters.write = createLimiter(30, 60_000); };
+// Voice: one spoken chunk ≤ 1500 chars (the client splits longer replies); one voice note ≤ 10 MiB (≈ 3 minutes, enforced by the client too).
+export const MAX_SPEAK_CHARS = 1500, MAX_AUDIO_BYTES = 10 * 1024 * 1024, MIN_AUDIO_BYTES = 1024;
+const AUDIO_TYPES = new Set(["audio/ogg", "audio/webm", "audio/mp4", "audio/x-m4a", "audio/mpeg", "audio/wav", "audio/x-wav", "audio/wave"]);
+const SPEECH_TYPES = new Set(["audio/mpeg", "audio/ogg", "audio/wav"]);
+/** Voice refusals the browser may see as they are (fixed list): the UI explains them and falls back to dictation. */
+const VOICE_CODES: Record<string, number> = { voice_unavailable: 503, no_speech: 422, too_large: 413, unsupported_audio: 415, rate_limited: 429, bad_request: 400 };
+
+// Polling a live reply costs ~40 reads a minute; writes are rarer. Voice has its own budget (a live voice turn = one transcription,
+// one send, and one spoken chunk per ~1500 characters). The API and the engine limit again on their side.
+const newLimiters = () => ({ unlockFail: createFailureLimiter(5, 60_000), read: createLimiter(240, 60_000), write: createLimiter(30, 60_000), voice: createLimiter(60, 60_000) });
+let limiters = newLimiters();
+export const resetBashtLimits = () => { limiters = newLimiters(); };
 
 async function readJson(req: Request): Promise<Record<string, unknown> | undefined> {
   if ((req.headers.get("content-type") ?? "").split(";")[0].trim() !== "application/json") return undefined;
@@ -61,6 +73,23 @@ async function readJson(req: Request): Promise<Record<string, unknown> | undefin
   }
   try { const v = JSON.parse(Buffer.concat(chunks).toString("utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : undefined; } catch { return undefined; }
 }
+/** A raw body, bounded while reading (never buffered whole beyond `max`). null = empty/unreadable, "too_large" = over `max`. */
+async function readBytes(req: Request, max: number): Promise<Uint8Array | null | "too_large"> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > max) return "too_large";
+  const reader = req.body?.getReader();
+  if (!reader) return null;
+  const chunks: Uint8Array[] = []; let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) { await reader.cancel().catch(() => {}); return "too_large"; }
+    chunks.push(value);
+  }
+  return total ? new Uint8Array(Buffer.concat(chunks)) : null;
+}
+const voiceErr = (code: unknown) => (typeof code === "string" && Object.hasOwn(VOICE_CODES, code) ? err(code, VOICE_CODES[code]) : err("unavailable", 503));
 
 /** Model-control refusals the browser may see as they are (a fixed list; never upstream text). */
 const MODEL_CODES = new Set(["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected", "model_control_unavailable"]);
@@ -102,7 +131,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
   const write = req.method !== "GET";
   if (write && !sameOrigin(req)) return err("forbidden", 403);
-  if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);
+  const voice = route === "speak" || route === "transcribe";
+  if (!(voice ? limiters.voice : write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);
 
   const relay = async (apiPath: string, method: "GET" | "POST", body?: unknown, pick?: (j: Record<string, unknown>) => unknown, timeoutMs = 15_000) => {
     // 512 KiB is callBackend's hard ceiling; history pages are kept well under it (the engine also caps one page at 80 KiB)
@@ -150,6 +180,32 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     const mode = data?.mode;
     if (mode !== "on" && mode !== "off" && mode !== "default") return err("bad_request", 400);
     return relay("/internal/v1/basht/fast", "POST", { mode }, undefined, SETTINGS_MS);
+  }
+  // Voice (V2): one chunk of a reply spoken in BASHT's own voice. Only the text goes out; the audio streams back as it arrives.
+  if (req.method === "POST" && route === "speak") {
+    const data = await readJson(req);
+    const text = typeof data?.text === "string" ? data.text.trim() : "";
+    if (!text || text.length > MAX_SPEAK_CHARS) return err("bad_request", 400);
+    const r = await (deps.streamBackend ?? realStreamBackend)({ path: "/internal/v1/basht/speak", body: { text }, accept: "audio/*, application/json",
+      signal: req.signal, timeoutMs: 80_000, maxBytes: 4 * 1024 * 1024, env: deps.env });
+    if (r.kind === "stream") {
+      if (!SPEECH_TYPES.has(r.contentType)) { await r.body.cancel().catch(() => {}); return err("unavailable", 502); }
+      return new Response(r.body, { status: 200, headers: { "Content-Type": r.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
+    }
+    return r.kind === "error" ? voiceErr(r.code) : err("unavailable", 503);
+  }
+  // Voice (V3): a voice note → the engine's transcript (its own audio config). The raw audio is passed through, never kept.
+  if (req.method === "POST" && route === "transcribe") {
+    const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+    if (!AUDIO_TYPES.has(type)) return err("unsupported_audio", 415);
+    const bytes = await readBytes(req, MAX_AUDIO_BYTES);
+    if (bytes === "too_large") return err("too_large", 413);
+    if (!bytes || bytes.byteLength < MIN_AUDIO_BYTES) return err("no_speech", 422);
+    const r = await deps.callBackend({ path: "/internal/v1/basht/transcribe", method: "POST", rawBody: { bytes, type }, env: deps.env, timeoutMs: 110_000, maxBytes: 64 * 1024 });
+    if (r.kind !== "ok") return err("unavailable", 503);
+    if (r.status !== 200) return voiceErr((r.json as { detail?: { code?: unknown } } | null)?.detail?.code);
+    const text = (r.json as { text?: unknown } | null)?.text;
+    return typeof text === "string" && text.trim() ? json({ text: text.trim().slice(0, MAX_MESSAGE) }) : err("no_speech", 422);
   }
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
