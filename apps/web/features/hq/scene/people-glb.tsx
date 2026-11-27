@@ -21,6 +21,18 @@ const ONE_SHOT = /^(up|down)_[lr]$/;
 const MOVING_CLIPS = new Set<string>(["walk", "rise", "settle"]);
 /** how fast a person turns to a new heading (rad/s) */
 const TURN_RATE = 7;
+/** meeting attention: seconds per speaker, the furthest a head turns (rad, ≈ 35°) and how fast (rad/s) */
+const SPEAK_TURN = 4;
+const LOOK_MAX = 0.6;
+const LOOK_RATE = 2.2;
+const _up = new THREE.Vector3(0, 1, 0), _q = new THREE.Quaternion(), _pq = new THREE.Quaternion(), _axis = new THREE.Vector3();
+/** Rotate a bone about the world's vertical, on top of whatever the animation set this frame. */
+function turnAboutWorldUp(bone: THREE.Object3D, angle: number) {
+  if (!bone.parent) return;
+  bone.parent.getWorldQuaternion(_pq);
+  _axis.copy(_up).applyQuaternion(_pq.invert()); // world up in the parent's frame
+  bone.quaternion.premultiply(_q.setFromAxisAngle(_axis, angle));
+}
 const SEATED = new Set<string>(["sit", "type", "talk"]);
 
 /**
@@ -55,6 +67,8 @@ type Rig = {
   lastPos: [number, number]; yaw: number; comp: { x: number; z: number; action: THREE.AnimationAction } | null;
   /** cloth-vs-chair: the person's shader uniforms, a mesh to read the world matrix from, and the chair last sat on */
   seat: { uniforms: SeatUniforms; mesh: THREE.Object3D; at: [number, number]; yaw: number; actions: THREE.AnimationAction[] } | null;
+  /** attention: the head and neck bones and how far the head is turned now (eased) */
+  look: { head: THREE.Object3D; neck: THREE.Object3D | null; yaw: number } | null;
 };
 
 export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
@@ -134,10 +148,12 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((o as THREE.SkinnedMesh).skeleton); });
       const seated = Object.entries(actions).filter(([n, a]) => a && SEATED.has(n)).map(([, a]) => a!);
       const w0 = sim.walkers[id];
+      const headBone = human ? model.getObjectByName("Bip01_Head") : undefined;
       const atChair = Object.entries(actions).filter(([n, a]) => a && (SEATED.has(n) || ONE_SHOT.test(n))).map(([, a]) => a!);
       out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate, seated, skeletons: [...skeletons],
         lastPos: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, comp: null,
-        seat: human && seatMesh ? { uniforms, mesh: seatMesh, at: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, actions: atChair } : null };
+        seat: human && seatMesh ? { uniforms, mesh: seatMesh, at: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, actions: atChair } : null,
+        look: headBone ? { head: headBone, neck: model.getObjectByName("Bip01_Neck") ?? null, yaw: 0 } : null };
       // de-synchronise idle loops
       mixer.setTime(i * 0.37);
     });
@@ -156,6 +172,10 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
   const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4(), seat: new THREE.Matrix4() }), []);
   useFrame((_, dt) => {
     const step = Math.min(dt, 0.1);
+    // a meeting has a speaker (turns every few seconds, from the simulation clock: same for every viewer); the others
+    // turn their heads to them, the speaker to BASHT
+    const meeting = AGENT_IDS.filter((a) => sim.walkers[a].status === "meeting" && sim.walkers[a].seated);
+    const speaker = meeting.length > 1 ? meeting[Math.floor(sim.t / SPEAK_TURN) % meeting.length] : null;
     for (const id of AGENT_IDS) {
       const w = sim.walkers[id], r = rigs[id];
       // which take to play: getting up / sitting down use the take for the chair side the simulation chose
@@ -204,6 +224,23 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
         let seated = 0;
         for (const a of r.seated) seated += a.getEffectiveWeight();
         r.root.position.y = seatLift(r.scale) * Math.min(1, seated);
+      }
+      // attention: added on top of the capture's own head motion, eased, and never more than a natural neck turn
+      if (r.look) {
+        let want = 0;
+        const target = speaker && meeting.includes(id) ? (speaker === id ? (id === "BASHT" ? null : "BASHT") : speaker) : null;
+        if (target && w.clip === "talk") {
+          const tw = sim.walkers[target];
+          const toward = Math.atan2(tw.pos[0] - w.pos[0], tw.pos[1] - w.pos[1]);
+          want = THREE.MathUtils.clamp(Math.atan2(Math.sin(toward - r.yaw), Math.cos(toward - r.yaw)), -LOOK_MAX, LOOK_MAX);
+        }
+        const d = want - r.look.yaw, m = LOOK_RATE * (paused ? 0 : step);
+        r.look.yaw += Math.abs(d) <= m ? d : Math.sign(d) * m;
+        if (Math.abs(r.look.yaw) > 1e-3) {
+          r.root.updateMatrixWorld(true);
+          turnAboutWorldUp(r.look.head, r.look.yaw * (r.look.neck ? 0.65 : 1));
+          if (r.look.neck) turnAboutWorldUp(r.look.neck, r.look.yaw * 0.35);
+        }
       }
       // cloth vs. chair: the chair is where the person last sat (it stays there while they get up and walk off)
       if (r.seat) {

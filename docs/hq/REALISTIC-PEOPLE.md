@@ -117,9 +117,22 @@ Still open:
 - Body textures are not shared between people who wear the same outfit (separate files).
 - KTX2.
 
+### Round 3 (verification of 4bff363) and the owner-approved upgrades
+
+The third review found no blockers. Its open items were resolved by the upgrades the owner approved on 2026-11-26.
+
+| Item | Done |
+|---|---|
+| KTX2 textures | KTX-Software 4.4.0 (Apache-2.0, dev-time only). People and building textures use ETC1S. The lightmap uses UASTC, because ETC1S blocks showed on plain walls. The Basis transcoder ships next to the assets, same origin. GPU texture memory is about 4–8× lower. Download: 11.8 MB. |
+| Natural sit-down / stand-up | Rocketbox "table" takes (left/right side): rotated and placed so the seated end matches the seated clips exactly, root eased 0.40 m back from the desk while rising. The simulation has rise and settle phases at the chair: people leave and arrive sideways, and walking starts and ends where the take does. The renderer hands over without a jump and turns smoothly (no 90° snaps). Tests: seated end, standing point, side, desk clearance; simulation collision and wall checks pass. |
+| Clothes through furniture | Vertex step in the chair's frame while seated: cloth hanging through the cushion lies on it, and the drape stays in front of the backrest. No cloth simulation. Before/after verified on WISAL's abaya. |
+| Realism: meeting attention | Seated attendees turn their head and neck toward the current speaker (changes every 4 s from the simulation clock; at most 35°, eased). The speaker looks at BASHT. Added on top of the motion capture. |
+| Eye blinks | Not done: Rocketbox's eyelid bones barely move these meshes. A real blink needs the `_facial` blendshape files, which are heavier and kept for a later step. |
+| Railway preview | Separate project `basht-hq-preview`, service `hq-web`: branch `feat/basht-hq-frontend`, HQ on, sleeps when idle. No database, no production variables or secrets. Production untouched. URL: https://hq-web-preview.up.railway.app/hq. E2E against it: 21/21. |
+
 ## 6. Open items for the owner
 
 1. Approve the casting and attire mix above. Any person can be re-cast by editing `look` in `roster.ts` and running `build.sh humans`.
-2. Optional: allow KTX2 texture encoding (needs the KTX-Software tool). This cuts GPU memory by about 4–6× on phones.
+2. Test the preview on the iPhone: https://hq-web-preview.up.railway.app/hq (first open after idle wakes the service, a few seconds).
 3. Optional: a seated typing clip (CMU or Quaternius CC0, retargeted with the same bake step).
-4. Optional: a stand-up / sit-down phase. The simulation would hold a person at the chair for about 0.8 s, and Rocketbox's sit-down and stand-up takes would play. It changes the simulation's timing, so it is proposed rather than done.
+4. Optional: blinks and lip movement from Rocketbox's facial blendshapes.
