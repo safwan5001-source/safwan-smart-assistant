@@ -23,6 +23,28 @@ const MOVING_CLIPS = new Set<string>(["walk", "rise", "settle"]);
 const TURN_RATE = 7;
 const SEATED = new Set<string>(["sit", "type", "talk"]);
 
+/**
+ * Clothes and furniture: while a person is seated, cloth that would hang through the chair cushion lies on it, and a
+ * drape that would pass through the backrest stays in front of it — a few lines in the vertex shader, in the chair's own
+ * frame (the HQ office / meeting chair, tools/hq-assets/blender/build_building.py: cushion top 0.50 m, cushion
+ * x ±0.24 z −0.22…0.24, backrest z −0.27…−0.19 up to ~1.0 m), weighted by how seated the current blend is. No cloth
+ * simulation: the hem simply never shows through the furniture.
+ */
+const SEAT_GLSL = /* glsl */ `
+#ifdef HQ_SEAT
+if (uSeatW > 0.0) {
+  vec3 sp = (uSeatFromLocal * vec4(transformed, 1.0)).xyz;
+  // hanging below the cushion (feet, near the floor, and the knees' zone in front are left alone)
+  if (abs(sp.x) < 0.26 && sp.z > -0.25 && sp.z < 0.2 && sp.y > 0.2 && sp.y < 0.505) sp.y = mix(sp.y, 0.505, uSeatW);
+  // behind the backrest's front face
+  if (abs(sp.x) < 0.25 && sp.y > 0.5 && sp.y < 1.1 && sp.z < -0.175) sp.z = mix(sp.z, -0.175, uSeatW);
+  transformed = (uLocalFromSeat * vec4(sp, 1.0)).xyz;
+}
+#endif
+`;
+
+type SeatUniforms = { uSeatW: { value: number }; uSeatFromLocal: { value: THREE.Matrix4 }; uLocalFromSeat: { value: THREE.Matrix4 } };
+
 type Rig = {
   root: THREE.Object3D; mixer: THREE.AnimationMixer; actions: Partial<Record<string, THREE.AnimationAction>>; current: string;
   /** uniform body scale (roster height) and the lift that keeps a scaled person on the chair cushion */
@@ -31,6 +53,8 @@ type Rig = {
   seated: THREE.AnimationAction[]; skeletons: THREE.Skeleton[];
   /** last simulated floor position, the facing shown (eased), and the pending hand-over offset (see useFrame) */
   lastPos: [number, number]; yaw: number; comp: { x: number; z: number; action: THREE.AnimationAction } | null;
+  /** cloth-vs-chair: the person's shader uniforms, a mesh to read the world matrix from, and the chair last sat on */
+  seat: { uniforms: SeatUniforms; mesh: THREE.Object3D; at: [number, number]; yaw: number; actions: THREE.AnimationAction[] } | null;
 };
 
 export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; paused: boolean; reducedMotion: boolean }) {
@@ -65,12 +89,30 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
         if (!shared) shared = sm.skeleton;
         else if (sm.skeleton !== shared && sm.skeleton.bones.length === shared.bones.length && sm.skeleton.bones.every((b, k) => b === shared!.bones[k])) sm.bind(shared, sm.bindMatrix);
       });
+      const uniforms: SeatUniforms = { uSeatW: { value: 0 }, uSeatFromLocal: { value: new THREE.Matrix4() }, uLocalFromSeat: { value: new THREE.Matrix4() } };
+      let seatMesh: THREE.Object3D | null = null;
       model.traverse((o) => {
         const m = o as THREE.SkinnedMesh;
         if (m.isMesh) {
           m.frustumCulled = false; // skinned bounds don't follow the pose; 14 small meshes are cheap to always draw
           for (const mat of (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[]) {
-            if (human) { mat.envMapIntensity = 0.7; continue; } // scanned-style textures carry their own shading
+            if (human) {
+              mat.envMapIntensity = 0.7; // scanned-style textures carry their own shading
+              // the person's materials are their own (one GLB each): give them the chair-aware vertex step once
+              if (!mat.userData.hqSeat) {
+                mat.userData.hqSeat = uniforms;
+                mat.defines = { ...(mat.defines ?? {}), HQ_SEAT: "" };
+                mat.onBeforeCompile = (sh) => {
+                  Object.assign(sh.uniforms, mat.userData.hqSeat as SeatUniforms);
+                  sh.vertexShader = "uniform float uSeatW;\nuniform mat4 uSeatFromLocal;\nuniform mat4 uLocalFromSeat;\n" +
+                    sh.vertexShader.replace("#include <skinning_vertex>", "#include <skinning_vertex>\n" + SEAT_GLSL);
+                };
+                mat.customProgramCacheKey = () => "hq-seat";
+                mat.needsUpdate = true;
+              } else Object.assign(uniforms, mat.userData.hqSeat); // a remount shares the material: reuse its uniforms
+              seatMesh ??= m;
+              continue;
+            }
             mat.roughness = 0.68; mat.metalness = 0;
             if (mat.name.endsWith("_glow")) { mat.emissive.set("#22d3ee"); mat.emissiveIntensity = 1.6; mat.toneMapped = false; } // BASHT's eyes
           }
@@ -92,8 +134,10 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
       model.traverse((o) => { if ((o as THREE.SkinnedMesh).isSkinnedMesh) skeletons.add((o as THREE.SkinnedMesh).skeleton); });
       const seated = Object.entries(actions).filter(([n, a]) => a && SEATED.has(n)).map(([, a]) => a!);
       const w0 = sim.walkers[id];
+      const atChair = Object.entries(actions).filter(([n, a]) => a && (SEATED.has(n) || ONE_SHOT.test(n))).map(([, a]) => a!);
       out[id] = { root, mixer, actions, current: start === actions.sit ? "sit" : "idle", scale, walkRate, seated, skeletons: [...skeletons],
-        lastPos: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, comp: null };
+        lastPos: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, comp: null,
+        seat: human && seatMesh ? { uniforms, mesh: seatMesh, at: [w0.pos[0], w0.pos[1]], yaw: w0.yaw, actions: atChair } : null };
       // de-synchronise idle loops
       mixer.setTime(i * 0.37);
     });
@@ -109,7 +153,7 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
     shadowTex.dispose();
   }, [rigs, shadowTex]);
 
-  const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4() }), []);
+  const tmp = useMemo(() => ({ m: new THREE.Matrix4(), s: new THREE.Matrix4(), seat: new THREE.Matrix4() }), []);
   useFrame((_, dt) => {
     const step = Math.min(dt, 0.1);
     for (const id of AGENT_IDS) {
@@ -160,6 +204,20 @@ export default function PeopleGlb({ sim, paused, reducedMotion }: { sim: HqSim; 
         let seated = 0;
         for (const a of r.seated) seated += a.getEffectiveWeight();
         r.root.position.y = seatLift(r.scale) * Math.min(1, seated);
+      }
+      // cloth vs. chair: the chair is where the person last sat (it stays there while they get up and walk off)
+      if (r.seat) {
+        const st = r.seat;
+        if (w.seated || w.phase === "rising" || w.phase === "settling") { st.at[0] = w.pos[0]; st.at[1] = w.pos[1]; st.yaw = w.yaw; }
+        let k = 0;
+        for (const a of st.actions) k += a.getEffectiveWeight();
+        st.uniforms.uSeatW.value = Math.min(1, k);
+        if (k > 0) {
+          r.root.updateMatrixWorld(true);
+          tmp.seat.makeRotationY(st.yaw).setPosition(st.at[0], 0, st.at[1]).invert();
+          st.uniforms.uSeatFromLocal.value.multiplyMatrices(tmp.seat, st.mesh.matrixWorld);
+          st.uniforms.uLocalFromSeat.value.copy(st.uniforms.uSeatFromLocal.value).invert();
+        }
       }
     }
     const sh = shadows.current;
