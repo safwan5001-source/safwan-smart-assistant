@@ -32,3 +32,12 @@ describe("an older page for an abandoned history view is dropped", () => {
     expect(hook).toMatch(/viewGen\.current\+\+;\s*windowedRef\.current = false;\s*setMessages\(null\); setOlderRows\(\[\]\)/);
   });
 });
+
+// Review (Codex, round 7): a new merged-history array on every render re-ran the screen's scroll effect (each keystroke pulled
+// the owner back to the focused message). The merged rows are memoized on the two history arrays only.
+describe("the merged history keeps its identity across unrelated renders", () => {
+  it("is computed with useMemo([olderRows, messages])", () => {
+    expect(hook).toMatch(/const shown = useMemo\(\(\) => \(messages === null \? null : olderRows\.length \? mergeRows\(olderRows, messages\) : messages\), \[olderRows, messages\]\);/);
+    expect(hook).toMatch(/messages: shown/);
+  });
+});
