@@ -9,8 +9,17 @@ import { eraseRemoteDevice } from "./push-client";
 import { clearFiles } from "./files-db";
 import { authClient } from "./owner-auth";
 
+export type WipeResult = { filesCleared: boolean; serverErased: boolean };
+/** What could not be removed, in Arabic — empty when the wipe was complete. */
+export function wipeLeftovers(r: WipeResult): string[] {
+  const left: string[] = [];
+  if (!r.filesCleared) left.push("الملفات المحفوظة في هذا المتصفح");
+  if (!r.serverErased) left.push("تسجيل هذا الجهاز لدى خادم الإشعارات (يُعاد حذفه تلقائيًا عند الاتصال)");
+  return left;
+}
+
 /** Wipe the private local data. Reports (never hides) what could not be cleared. */
-export async function clearPrivateData(): Promise<{ filesCleared: boolean; serverErased: boolean }> {
+export async function clearPrivateData(): Promise<WipeResult> {
   // push server first (needs the device credentials we are about to wipe); an unreachable server is reported, never hidden
   const serverErased = await eraseRemoteDevice().catch(() => false);
   tasksStore.reset(); threadsStore.reset(); activityStore.reset();
@@ -20,9 +29,9 @@ export async function clearPrivateData(): Promise<{ filesCleared: boolean; serve
   return { filesCleared, serverErased };
 }
 
-/** Sign out (this device, or every device) and then clear this device's private data. A failed sign-out throws and clears nothing. */
-export async function signOut(everywhere = false): Promise<true> {
+/** Sign out (this device, or every device) and then clear this device's private data. A failed sign-out throws and clears nothing.
+ * Returns what the wipe managed, so the caller can tell the owner when something stayed on the device. */
+export async function signOut(everywhere = false): Promise<WipeResult> {
   await authClient.logout(everywhere);
-  await clearPrivateData();
-  return true;
+  return clearPrivateData();
 }

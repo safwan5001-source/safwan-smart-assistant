@@ -13,7 +13,7 @@ import { useOwnerGate } from "@/components/owner-gate";
 import { formatTime } from "@/lib/format";
 import { LOGIN_PATH } from "@/lib/login-path";
 import { authClient, AuthError, passkeysSupported, type AuthStatus, type OwnerSession, type Passkey } from "@/lib/owner-auth";
-import { clearPrivateData, signOut } from "@/lib/sign-out";
+import { clearPrivateData, signOut, wipeLeftovers, type WipeResult } from "@/lib/sign-out";
 
 const WIPE_NOTE = "تُمسح من هذا الجهاز بياناته المحلية: المهام والمحادثات المحلية والتذكيرات والإشعارات والملفات.";
 
@@ -38,19 +38,26 @@ export default function SecuritySettings() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (status && !status.unavailable && status.owner_auth && !status.authenticated) ownerGate.signInAgain(); }, [status, ownerGate]);
 
-  const run = async (fn: () => Promise<boolean | void>, ok: string) => {
+  // Signed out: go to the login page — but first say plainly if anything private stayed on this device (never a silent "done").
+  const leave = async (wipe: WipeResult | null) => {
+    const left = wipe ? wipeLeftovers(wipe) : [];
+    if (left.length) await confirm({ title: "خرجت، لكن بقي شيء على هذا الجهاز", message: `تعذّر حذف: ${left.join("، ")}. يمكنك مسح بيانات الموقع من إعدادات المتصفح.`, confirmLabel: "حسنًا" });
+    window.location.assign(LOGIN_PATH);
+  };
+  const run = async (fn: () => Promise<boolean | void | WipeResult>, ok: string) => {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      const signedOut = await fn();
-      if (signedOut === true) { window.location.assign(LOGIN_PATH); return; }
+      const out = await fn();
+      if (out === true) { await leave(null); return; }
+      if (out && typeof out === "object") { await leave(out); return; }
       toast(ok); await load();
     } catch (e) { setError(e instanceof AuthError ? e.message : "تعذّر إكمال الطلب."); }
     finally { setBusy(false); }
   };
   const end = async (x: OwnerSession) => {
     if (!(await confirm({ title: `إنهاء جلسة «${x.device ?? "جهاز"}»؟`, message: "يُطلب الدخول من جديد على ذلك الجهاز.", confirmLabel: "إنهاء الجلسة", tone: "danger" }))) return;
-    await run(async () => { const own = await authClient.endSession(x.id); if (own) await clearPrivateData(); return own; }, "أُنهيت الجلسة");
+    await run(async () => { const own = await authClient.endSession(x.id); return own ? clearPrivateData() : false; }, "أُنهيت الجلسة");
   };
   const signOutAll = async () => {
     if (!(await confirm({ title: "الخروج من كل الأجهزة؟", message: `تنتهي كل جلسات المالك فورًا، ومنها هذا الجهاز. تبقى أجهزة Face ID مسجّلة (أزلها من قسم Face ID إن لزم). ${WIPE_NOTE}`, confirmLabel: "خروج من الكل", tone: "danger" }))) return;
