@@ -18,10 +18,9 @@ export function nextScroll(
   if (focusId !== s.last) s.pending = focusId; // a new focus request (or none)
   s.last = focusId;
   if (s.pending !== null) {
-    if (!onScreen(s.pending)) return null; // wait for it: never jump to the end under a pending focus
     const id = s.pending;
-    s.pending = null;
-    return { to: "focus", id };
+    s.pending = null; // honoured once, or dropped: a focus with no row on screen must never hold the log (rows and focus land together)
+    if (onScreen(id)) return { to: "focus", id };
   }
   return following || unfocused ? { to: "bottom" } : null;
 }
