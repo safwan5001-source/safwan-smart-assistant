@@ -662,6 +662,8 @@ export type LiveDeps = {
   onEnd?: () => void;
   /** an earcon; returns true when one was played (the start cue then finishes before the mic opens) */
   cue?: (kind: "start" | "stop") => boolean | void;
+  /** the page's own visibility, re-checked right before the microphone opens and right before a transcript is sent */
+  isHidden?: () => boolean;
   wait?: (ms: number) => Promise<void>;
 };
 /** How long an earcon lasts (two short notes). */
@@ -684,6 +686,8 @@ export function createLiveSession(d: LiveDeps) {
   let micMuted = false, speakerMuted = false, muteCancel = false, hidden = false;
   /** «تخطَّ الصوت» pressed for the reply being prepared (reset every turn) */
   let skipVoice = false;
+  /** getUserMedia is pending: the only time a hidden page may be the permission prompt */
+  let awaitingMic = false;
   let wake: (() => void) | null = null;
   let resumeReq: ((p: Promise<PlayResult> | null) => void) | null = null;
   let onPlayerNow: ((p: PlayerPhase) => void) | null = null;
@@ -722,7 +726,12 @@ export function createLiveSession(d: LiveDeps) {
       // the start cue plays BEFORE the microphone opens (never into the recording)
       if (d.cue?.("start")) { await wait(EARCON_MS); if (!live()) return; }
       if (!mayRecord()) { muteCancel = false; continue; }
-      const r = await d.record((handsFree) => { if (live() && phase === "starting") to("listening", handsFree ? "" : "manual"); });
+      // the page itself is the last word: hidden right before the microphone opens → the session ends, nothing is recorded
+      if (d.isHidden?.()) return fail(BACKGROUND_TEXT);
+      awaitingMic = true; // only now can a permission prompt be on screen (getUserMedia pending)
+      let r: RecordResult;
+      try { r = await d.record((handsFree) => { awaitingMic = false; if (live() && phase === "starting") to("listening", handsFree ? "" : "manual"); }); }
+      finally { awaitingMic = false; }
       if (!live()) return;
       if (r.ended === "limit" && r.handsFree === false) return fail(MANUAL_LIMIT_TEXT); // nobody tapped: never send a minute of noise
       if (!r.audio) {
@@ -748,6 +757,7 @@ export function createLiveSession(d: LiveDeps) {
       // backgrounded after the turn was transcribed: nothing is sent while hidden (sent on return; ended after the grace period)
       while (hidden && live()) await new Promise<void>((r) => { wake = r; });
       if (!live()) return;
+      if (d.isHidden?.()) return fail(BACKGROUND_TEXT); // never send a transcript from a hidden page
       d.onHeard(text);
       to("thinking", "waiting");
       let reply: string;
@@ -828,6 +838,8 @@ export function createLiveSession(d: LiveDeps) {
       r(d.resume(onPlayerNow));
     },
     phase: () => phase,
+    /** true only while the microphone is being requested (a permission prompt may be showing) — not the whole "starting" phase */
+    awaitingMic: () => awaitingMic,
   };
 }
 
@@ -850,8 +862,10 @@ export function watchBackground(h: { onHide: () => void; onShow: () => void; onE
   const clear = () => { if (timer) clearTimeout(timer); timer = null; };
   const vis = () => {
     if (env.doc.visibilityState === "hidden") {
-      if (hidden || h.ignoreHide?.()) return;
-      hidden = true; h.onHide();
+      if (hidden) return;
+      hidden = true; // always remembered (so a later "visible" is reported), even when this hide is the permission prompt
+      if (h.ignoreHide?.()) return;
+      h.onHide();
       timer = setTimeout(() => { timer = null; h.onEnd(); }, graceMs);
     } else if (hidden) { hidden = false; clear(); h.onShow(); }
   };

@@ -139,17 +139,18 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
     onReply: (t) => setTurns((ts) => (ts.length ? [...ts.slice(0, -1), { ...ts[ts.length - 1], basht: t }] : ts)),
     onError: setError,
     onEnd: release,
+    isHidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
     cue: (kind) => { if (!latest.current.fx) return false; earcon(kind); return true; },
   });
   // closing the screen ends the session: no mic, no voice, nothing sent afterwards
   useEffect(() => () => { session.current?.end(); release(); }, []);
   // backgrounding: the partial turn is discarded and BASHT stops at once; the session ends if it stays hidden 3 s (or on pagehide).
-  // A hidden event while the microphone permission prompt is open ("starting") is ignored.
+  // A hidden event is ignored only while the microphone permission prompt can be open (getUserMedia pending).
   useEffect(() => watchBackground({
     onHide: () => session.current?.setHidden(true),
     onShow: () => session.current?.setHidden(false),
     onEnd: () => { const x = session.current; if (x && x.phase() !== "idle") x.end(BACKGROUND_TEXT); },
-    ignoreHide: () => session.current?.phase() === "starting",
+    ignoreHide: () => !!session.current?.awaitingMic(), // only a REAL permission prompt (getUserMedia pending), not the whole start
   }), []);
   // opened by a press (long-press / wave button) that already unlocked audio and the probe: start listening right away, owning
   // that press's audio session. A reload or a stale link never records on its own — «ابدأ المحادثة» is shown instead.

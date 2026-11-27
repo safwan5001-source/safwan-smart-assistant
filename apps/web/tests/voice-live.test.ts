@@ -442,3 +442,48 @@ describe("skip / hidden checks right before acting (review P2)", () => {
     expect(t.log).toContain("ask");
   });
 });
+
+describe("hidden during the start cue with the mic already granted (Codex P1)", () => {
+  const host = () => { const ls = new Map<string, () => void>(); return { ls, addEventListener: (t: string, f: () => void) => ls.set(t, f), removeEventListener: (t: string) => ls.delete(t) }; };
+  it("no recorder starts, nothing is sent, and the 3 s end timer runs (wired exactly like the voice screen)", async () => {
+    vi.useFakeTimers();
+    const doc = { ...host(), visibilityState: "visible" }, win = host();
+    const cue = deferred<void>();
+    const t = rig({ cue: () => true, wait: () => cue.promise, isHidden: () => doc.visibilityState === "hidden" });
+    watchBackground({
+      onHide: () => t.s.setHidden(true), onShow: () => t.s.setHidden(false),
+      onEnd: () => { if (t.s.phase() !== "idle") t.s.end(BACKGROUND_TEXT); },
+      ignoreHide: () => t.s.awaitingMic(),
+    }, { doc, win });
+    t.s.start(); await flush();
+    expect(t.s.phase()).toBe("starting");
+    expect(t.s.awaitingMic()).toBe(false);          // the start cue is playing: no permission prompt can be up
+    doc.visibilityState = "hidden"; doc.ls.get("visibilitychange")!();
+    cue.resolve(); await flush();
+    expect(t.records).toHaveLength(0);               // never recorded while hidden
+    await vi.advanceTimersByTimeAsync(BACKGROUND_GRACE_MS);
+    expect(t.errors).toEqual([BACKGROUND_TEXT]);     // the end timer ran
+    expect(t.last().phase).toBe("idle");
+    expect(t.log).not.toContain("ask");
+  });
+  it("the page's own visibility is re-checked right before the mic opens and right before a send", async () => {
+    let hiddenNow = false;
+    const a = rig({ isHidden: () => hiddenNow });
+    hiddenNow = true;
+    a.s.start(); await flush();
+    expect(a.records).toHaveLength(0); expect(a.errors).toEqual([BACKGROUND_TEXT]);
+    hiddenNow = false;
+    const b = rig({ isHidden: () => hiddenNow });
+    b.s.start(); await flush(); b.records[0].started(true); b.records[0].d.resolve(audio); await flush();
+    hiddenNow = true;                                // hidden without any event (missed visibilitychange)
+    b.transcripts[0].resolve("سؤال"); await flush();
+    expect(b.log).not.toContain("ask"); expect(b.errors).toEqual([BACKGROUND_TEXT]);
+  });
+  it("while getUserMedia is pending (a real permission prompt) a hidden event is ignored", async () => {
+    const t = rig();
+    t.s.start(); await flush();
+    expect(t.s.awaitingMic()).toBe(true);
+    t.records[0].started(true);
+    expect(t.s.awaitingMic()).toBe(false);
+  });
+});
