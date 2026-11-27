@@ -4,10 +4,12 @@
  * /api/health says (web tier + signed backend hop), and `respond()` refuses unless that report says the assistant is configured.
  * API keys live on the server; there is no key (and must never be one) in this bundle.
  */
+import { parseCoreState, type CoreState } from "@/lib/hq/source";
+
 export type AssistantStatus =
   | { server: "checking" }
   | { server: "offline" }
-  | { server: "online"; assistant: boolean; version: string };
+  | { server: "online"; assistant: boolean; version: string; basht: CoreState };
 
 export class AssistantUnavailableError extends Error {
   constructor(message = "المساعد الذكي غير مفعّل.") { super(message); this.name = "AssistantUnavailableError"; }
@@ -67,9 +69,9 @@ export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a),
         const res = await call("/health");
         if (!res.ok || !(res.headers.get("content-type") ?? "").includes("application/json")) return { server: "offline" };
         const body: unknown = await res.json();
-        const b = body as { status?: unknown; version?: unknown; features?: { assistant?: unknown } };
+        const b = body as { status?: unknown; version?: unknown; features?: { assistant?: unknown; basht?: unknown } };
         if (b?.status !== "ok") return { server: "offline" };
-        return { server: "online", assistant: b.features?.assistant === true, version: typeof b.version === "string" ? b.version : "?" };
+        return { server: "online", assistant: b.features?.assistant === true, version: typeof b.version === "string" ? b.version : "?", basht: parseCoreState(b.features?.basht) };
       } catch { return { server: "offline" }; }
     },
     async sessionStatus(): Promise<{ enabled: boolean; authenticated: boolean }> {

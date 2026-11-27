@@ -83,6 +83,13 @@ describe("buildHealth (public /api/health)", () => {
     expect(r.body).toMatchObject({ status: "ok", web: "ok", backend: "ok", version: "0.3.0", features: { assistant: false } });
   });
 
+  it("passes BASHT's engine state through as a known enum only, and drops unknown feature fields", async () => {
+    const body = async (features: object) => (await run(async () => ok({ ...goodPing, features: { ...goodPing.features, ...features } }))).body.features;
+    expect(await body({ basht: "connected" })).toEqual({ ...goodPing.features, basht: "connected" });
+    expect(await body({ basht: "https://engine.example" })).toMatchObject({ basht: "offline" });
+    expect(await body({ secret_url: "https://x" })).toEqual(goodPing.features);
+  });
+
   it.each([
     ["unconfigured", async () => ok(goodPing), {}],
     ["unreachable", async () => { throw new Error("x"); }, env],

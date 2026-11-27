@@ -1,27 +1,34 @@
 import "server-only";
 import { callBackend, type CallOptions, type Env } from "./backend";
+import { CORE_STATES, type CoreState } from "@/lib/hq/source";
 
 export type HealthBody = {
   status: "ok" | "degraded";
   web: "ok";
   backend: "ok" | "unconfigured" | "unreachable" | "rejected" | "unavailable" | "invalid_response";
   version?: string;
-  features?: { assistant: boolean; connected_integrations: number; task_execution: boolean };
+  features?: { assistant: boolean; connected_integrations: number; task_execution: boolean; basht?: CoreState };
 };
 
-const isFeatures = (v: unknown): v is NonNullable<HealthBody["features"]> => {
+/** Rebuilds the features from known fields only, so nothing unexpected from the backend is ever echoed publicly. */
+function readFeatures(v: unknown): HealthBody["features"] | null {
   const f = v as Record<string, unknown> | null;
-  return !!f && typeof f === "object" && typeof f.assistant === "boolean" && typeof f.task_execution === "boolean" &&
-    typeof f.connected_integrations === "number" && Number.isInteger(f.connected_integrations);
-};
+  if (!f || typeof f !== "object" || typeof f.assistant !== "boolean" || typeof f.task_execution !== "boolean" ||
+    typeof f.connected_integrations !== "number" || !Number.isInteger(f.connected_integrations)) return null;
+  const out: NonNullable<HealthBody["features"]> = { assistant: f.assistant, connected_integrations: f.connected_integrations, task_execution: f.task_execution };
+  // BASHT engine state (C1): optional for older APIs; an unknown value reads as offline (fail closed)
+  if (f.basht !== undefined) out.basht = (CORE_STATES as readonly unknown[]).includes(f.basht) ? (f.basht as CoreState) : "offline";
+  return out;
+}
 
 /** Public, minimal status. It never reveals URLs, secrets, status codes or error text — only a coarse reason. */
 export async function buildHealth(opts: Partial<CallOptions> = {}): Promise<{ status: 200 | 503; body: HealthBody }> {
   const r = await callBackend({ path: "/internal/v1/ping", ...opts });
   if (r.kind === "ok") {
     const j = r.json as { status?: unknown; version?: unknown; features?: unknown } | null;
-    if (r.status === 200 && j?.status === "ok" && isFeatures(j.features)) {
-      return { status: 200, body: { status: "ok", web: "ok", backend: "ok", version: typeof j.version === "string" ? j.version.slice(0, 32) : undefined, features: j.features } };
+    const features = readFeatures(j?.features);
+    if (r.status === 200 && j?.status === "ok" && features) {
+      return { status: 200, body: { status: "ok", web: "ok", backend: "ok", version: typeof j.version === "string" ? j.version.slice(0, 32) : undefined, features } };
     }
     return { status: 503, body: { status: "degraded", web: "ok", backend: "invalid_response" } };
   }

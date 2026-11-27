@@ -19,6 +19,7 @@ import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-acti
 import { BRAND } from "@/lib/brand";
 import type { Task } from "@/lib/domain";
 import { HQ_ENABLED } from "@/lib/hq/flag";
+import { CORE_LINK_AR } from "@/lib/hq/source";
 import HqEntryCard from "@/features/hq/hq-entry-card";
 
 const greeting = (h: number) => (h < 12 ? "صباح الخير" : "مساء الخير");
@@ -194,6 +195,8 @@ export default function DashboardScreen() {
               {status.server === "checking" ? <StatusPill status="running" label="يفحص" /> : status.server === "online" ? <StatusPill status="verified" label="متصل" /> : <StatusPill status="failed" label="غير متصل" />}</div>
             <div className="conn-row"><span className="ico"><Icon name="spark" size={18} /></span><span className="grow"><strong>Claude</strong><small>{status.server === "online" && status.assistant ? "مُهيّأ على الخادم" : "لا يوجد مزوّد نماذج مفعّل"}</small></span>
               {status.server === "online" && status.assistant ? <StatusPill status="verified" label="مفعّل" /> : <StatusPill status="draft" label="غير مفعّل" />}</div>
+            <div className="conn-row"><span className="ico"><Icon name="hq" size={18} /></span><span className="grow"><strong>محرك باشت</strong><small>{status.server === "online" ? CORE_LINK_AR[status.basht] : "يُفحص عبر الخادم"}</small></span>
+              {status.server !== "online" ? <StatusPill status="running" label="يفحص" /> : status.basht === "connected" ? <StatusPill status="verified" label="متصل" /> : status.basht === "starting" ? <StatusPill status="running" label="يبدأ" /> : status.basht === "offline" ? <StatusPill status="failed" label="تعذّر" /> : <StatusPill status="draft" label="غير مربوط" />}</div>
             <Link href="/integrations" className="conn-row"><span className="ico"><Icon name="integrations" size={18} /></span><span className="grow"><strong>التكاملات</strong><small className="num">{connectedIntegrations} متصلة من {plannedIntegrations} مخطط لها</small></span><span className="badge">قيد التخطيط</span></Link>
             <div className="conn-row"><span className="ico"><Icon name="repeat" size={18} /></span><span className="grow"><strong>المزامنة</strong><small>بين الأجهزة</small></span><span className="badge">غير متاحة</span></div>
           </div>

@@ -27,6 +27,7 @@ class AuthKind(str, Enum):
     oauth2 = "oauth2"
     api_key = "api_key"
     session = "session"
+    none = "none"  # a public read (e.g. the BASHT engine's health endpoint): no credential at all
 
 
 @dataclass(frozen=True)
