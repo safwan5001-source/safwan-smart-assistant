@@ -123,4 +123,39 @@ describe("composer photos (review: state reconciled with the latest, previews re
     const chat = readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
     expect(chat).toMatch(/await basht\.send\(text, photos\); setDraft\(""\); pics\.clear\(photos\.map\(\(p\) => p\.id\)\);/);
   });
+
+  // Review (Codex, round 4): photos whose send awaits acceptance
+  it("while a send awaits acceptance its photos cannot be removed and a dispose does not revoke them; rejection gives them back", async () => {
+    const revoked: string[] = [];
+    const s = createComposerPhotos({ codec: readyCodec(), revoke: (u) => revoked.push(u) });
+    await s.take([pic("a.jpg"), pic("b.jpg")]).done;
+    const [a, b] = s.getSnapshot().images;
+    s.lock([a.id]);
+    expect(s.getSnapshot().submitting).toEqual([a.id]);
+    s.remove(a.id); // the remove button is disabled; a stray call is a no-op
+    expect(s.getSnapshot().images.map((i) => i.id)).toEqual([a.id, b.id]);
+    expect(revoked).toEqual([]);
+    s.unlock([a.id]); // refused by the server: the composer owns it again
+    s.remove(a.id);
+    expect(revoked).toEqual([a.previewUrl]);
+    // navigating away while the send is in flight: the locked photo survives the dispose and goes to the turn on acceptance
+    s.lock([b.id]);
+    s.dispose();
+    expect(revoked).toEqual([a.previewUrl]);
+    expect(s.handOff([b.id])).toEqual([]); // the composer is gone; the turn adopts b from its own list
+    s.unlock([b.id]);
+    expect(revoked).toEqual([a.previewUrl]); // handed off: never revoked by the composer
+    const chat = readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
+    expect(chat).toMatch(/pics\.lock\(photos\.map\(\(p\) => p\.id\)\);[^\n]*\n\s*try \{ await basht\.send\(text, photos\);/);
+    expect(chat).toMatch(/catch \(e\) \{ pics\.unlock\(photos\.map\(\(p\) => p\.id\)\);/);
+  });
+
+  it("a refused send while the composer is gone releases its photos", async () => {
+    const revoked: string[] = [];
+    const s = createComposerPhotos({ codec: readyCodec(), revoke: (u) => revoked.push(u) });
+    await s.take([pic("c.jpg")]).done;
+    const [c] = s.getSnapshot().images;
+    s.lock([c.id]); s.dispose(); s.unlock([c.id]);
+    expect(revoked).toEqual([c.previewUrl]);
+  });
 });

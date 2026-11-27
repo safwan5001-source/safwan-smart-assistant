@@ -22,11 +22,13 @@ export function useComposerImages() {
    *  a retry); photos attached meanwhile stay. */
   const clear = useCallback((ids?: string[]) => { store.handOff(ids); }, [store]);
   const setError = useCallback((e: string) => store.setError(e), [store]);
-  return { images: state.images, preparing: state.preparing > 0, error: state.error, take, remove, clear, setError };
+  const lock = useCallback((ids: string[]) => store.lock(ids), [store]);
+  const unlock = useCallback((ids: string[]) => store.unlock(ids), [store]);
+  return { images: state.images, preparing: state.preparing > 0, error: state.error, submitting: state.submitting, take, remove, clear, setError, lock, unlock };
 }
 
-export function ComposerImages({ images, preparing, onRemove, modelReads, modelName }: {
-  images: PreparedImage[]; preparing: boolean; onRemove: (id: string) => void; modelReads: boolean | null; modelName: string;
+export function ComposerImages({ images, preparing, onRemove, modelReads, modelName, submitting = [] }: {
+  images: PreparedImage[]; preparing: boolean; onRemove: (id: string) => void; modelReads: boolean | null; modelName: string; submitting?: string[];
 }) {
   if (!images.length && !preparing) return null;
   const total = images.reduce((n, i) => n + i.bytes, 0);
@@ -37,7 +39,7 @@ export function ComposerImages({ images, preparing, onRemove, modelReads, modelN
           <span key={i.id} className="composer-thumb">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={i.previewUrl} alt={i.name} />
-            <button type="button" className="icon-btn sm" aria-label={"إزالة الصورة " + i.name} onClick={() => onRemove(i.id)}><Icon name="close" size={14} /></button>
+            <button type="button" className="icon-btn sm" aria-label={"إزالة الصورة " + i.name} disabled={submitting.includes(i.id)} onClick={() => onRemove(i.id)}><Icon name="close" size={14} /></button>
           </span>
         ))}
         {preparing && <span className="composer-thumb pending" aria-live="polite"><span className="spinner" aria-hidden="true" />تجهيز…</span>}

@@ -8,13 +8,17 @@
  */
 import { ImagePrepError, IMAGE_LIMITS, looksLikeImage, prepareImage, type Codec, type PreparedImage } from "./image-prep";
 
-export type ComposerPhotosState = { images: PreparedImage[]; preparing: number; error: string };
+/** `submitting`: ids of photos whose send is awaiting acceptance — they cannot be removed and their previews are not revoked. */
+export type ComposerPhotosState = { images: PreparedImage[]; preparing: number; error: string; submitting: string[] };
 type Deps = { codec?: Codec; revoke?: (url: string) => void };
 
 const defaultRevoke = (url: string) => { try { URL.revokeObjectURL(url); } catch { /* already gone */ } };
 
 export function createComposerPhotos({ codec, revoke = defaultRevoke }: Deps = {}) {
-  let state: ComposerPhotosState = { images: [], preparing: 0, error: "" };
+  let state: ComposerPhotosState = { images: [], preparing: 0, error: "", submitting: [] };
+  // photos being submitted: ownership is in transit to the turn (until handOff on acceptance, or unlock on rejection)
+  const locked = new Map<string, PreparedImage>();
+  const syncLocked = () => set({ submitting: [...locked.keys()] });
   let disposed = false;
   let queue: Promise<void> = Promise.resolve();
   const listeners = new Set<() => void>();
@@ -50,6 +54,7 @@ export function createComposerPhotos({ codec, revoke = defaultRevoke }: Deps = {
       return { rest, done };
     },
     remove(id: string) {
+      if (locked.has(id)) return; // being sent: the turn will own it
       const x = state.images.find((i) => i.id === id);
       if (x) revoke(x.previewUrl);
       set({ images: state.images.filter((i) => i.id !== id) });
@@ -58,14 +63,23 @@ export function createComposerPhotos({ codec, revoke = defaultRevoke }: Deps = {
      *  composer WITHOUT being revoked here. Photos attached while the send was in flight stay in the composer. */
     handOff(ids?: string[]): PreparedImage[] {
       const sent = ids ? state.images.filter((i) => ids.includes(i.id)) : state.images;
-      set({ images: state.images.filter((i) => !sent.includes(i)), error: "" });
+      for (const i of sent) locked.delete(i.id);
+      for (const id of ids ?? []) locked.delete(id); // also when the composer was disposed meanwhile
+      set({ images: state.images.filter((i) => !sent.includes(i)), error: "", submitting: [...locked.keys()] });
       return sent;
+    },
+    /** Before awaiting the send: these photos cannot be removed (or revoked by a dispose) until handOff or unlock. */
+    lock(ids: string[]) { for (const i of state.images) if (ids.includes(i.id)) locked.set(i.id, i); syncLocked(); },
+    /** The send was refused: the photos are the composer's again (or, if the composer is gone, released). */
+    unlock(ids: string[]) {
+      for (const id of ids) { const i = locked.get(id); locked.delete(id); if (i && disposed) revoke(i.previewUrl); }
+      syncLocked();
     },
     setError(error: string) { set({ error }); },
     /** (Re)attached to a mounted composer — React may replay effect cleanup + setup (StrictMode) on the same store. */
     activate() { disposed = false; },
     /** The composer is gone: revoke what is still waiting, and whatever a running preparation still produces. */
-    dispose() { disposed = true; state.images.forEach((i) => revoke(i.previewUrl)); state = { images: [], preparing: 0, error: "" }; },
+    dispose() { disposed = true; state.images.forEach((i) => { if (!locked.has(i.id)) revoke(i.previewUrl); }); state = { images: [], preparing: 0, error: "", submitting: [...locked.keys()] }; },
   };
 }
 export type ComposerPhotos = ReturnType<typeof createComposerPhotos>;

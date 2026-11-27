@@ -220,8 +220,9 @@ export default function ChatScreen() {
           // B2: a model that does not read images would never see them — say so before sending
           if (photos.length && modelReadsImages(model.state?.model.id, model.models) === false
             && !(await confirm({ title: "النموذج الحالي لا يقرأ الصور", message: "لن يرى باشت الصور مع هذا النموذج. يمكنك اختيار نموذج يقرأ الصور من زر النموذج، أو الإرسال على أي حال.", confirmLabel: "إرسال على أي حال" }))) return;
+          pics.lock(photos.map((p) => p.id)); // until accepted, the sent photos cannot be removed or revoked (ownership in transit)
           try { await basht.send(text, photos); setDraft(""); pics.clear(photos.map((p) => p.id)); } // the draft is cleared only once BASHT accepted the turn
-          catch (e) { setAgentPhase("reply_failed"); setNotice(e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت."); }
+          catch (e) { pics.unlock(photos.map((p) => p.id)); setAgentPhase("reply_failed"); setNotice(e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت."); }
         } else if (id) {
           // Direct Claude (CHAT-AI-1) backing the same conversation: the server owns its context, keyed by this thread's id.
           setDraft("");
@@ -491,7 +492,7 @@ export default function ChatScreen() {
             <div className="composer">
               <input ref={picker} type="file" multiple hidden aria-label="إضافة مرفقات من الجهاز" onChange={(e) => void addFiles(e.target.files)} />
               {bashtOn && basht.failedTurn && !live && <RetryBar text={basht.failedTurn.text} images={basht.failedTurn.images} disabled={busy || !ready} onRetry={() => void basht.retry()} />}
-              <ComposerImages images={pics.images} preparing={pics.preparing} onRemove={pics.remove}
+              <ComposerImages images={pics.images} preparing={pics.preparing} onRemove={pics.remove} submitting={pics.submitting}
                 modelReads={modelReadsImages(model.state?.model.id, model.models)} modelName={model.state?.model.id ? replyModelName(null, model.state.model.id, model.models) : ""} />
               {attachments.length > 0 && (
                 <div className="row-wrap">

@@ -32,11 +32,23 @@ export type BashtLive = { prompt: string; text: string; at: number; images?: Liv
 type Older = { before: string } | { offset: number } | null;
 const olderOf = (p: { earlier: string | null; hasMore: boolean; nextOffset: number | null }): Older =>
   p.earlier ? { before: p.earlier } : p.hasMore && p.nextOffset !== null ? { offset: p.nextOffset } : null;
-const mergeRows = (a: BashtMessage[], b: BashtMessage[]) => {
+const rowKey = (m: BashtMessage) => m.id ?? `${m.role}:${m.at}:${m.text.slice(0, 40)}`;
+export const mergeRows = (a: BashtMessage[], b: BashtMessage[]) => {
   const seen = new Set<string>(); const out: BashtMessage[] = [];
-  for (const m of [...a, ...b]) { const k = m.id ?? `${m.role}:${m.at}:${m.text.slice(0, 40)}`; if (seen.has(k)) continue; seen.add(k); out.push(m); }
+  for (const m of [...a, ...b]) { const k = rowKey(m); if (seen.has(k)) continue; seen.add(k); out.push(m); }
   return out;
 };
+/**
+ * After a refresh, the newest page moved forward (a turn added rows): rows of the previous newest page that are no longer in it
+ * sit between the earlier rows already paged in and the new page — keep them there, so nothing loaded disappears. Without
+ * earlier rows paged in, the page's own cursor still reaches them, so nothing is kept.
+ */
+export function reconcileOlder(olderRows: BashtMessage[], prevLatest: BashtMessage[] | null, nextLatest: BashtMessage[]): BashtMessage[] {
+  if (!olderRows.length || !prevLatest?.length) return olderRows;
+  const next = new Set(nextLatest.map(rowKey));
+  const dropped = prevLatest.filter((m) => !next.has(rowKey(m)));
+  return dropped.length ? mergeRows(olderRows, dropped) : olderRows;
+}
 const errText = (e: unknown) => (e instanceof BashtError ? e.message : bashtErrorText("unavailable"));
 
 /** `enabled` = the server says the BASHT chat is configured (/api/health features.basht_chat). `key` = engine conversation on screen. */
@@ -56,6 +68,8 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const [resetting, setResetting] = useState(false);
   const olderRowsRef = useRef<BashtMessage[]>([]);
   olderRowsRef.current = olderRows;
+  const messagesRef = useRef<BashtMessage[] | null>(null);
+  messagesRef.current = messages;
   const keyRef = useRef(key);
   keyRef.current = key;
   const loadGen = useRef(0);
@@ -67,6 +81,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     try {
       const [list, page] = await Promise.all([bashtClient.sessions(), bashtClient.historyPage(k)]);
       if (!current()) return;
+      // rows that slid off the newest page stay between the earlier rows and it (never lost after «عرض الرسائل السابقة»)
+      const kept = reconcileOlder(olderRowsRef.current, messagesRef.current, page.messages);
+      if (kept !== olderRowsRef.current) { olderRowsRef.current = kept; setOlderRows(kept); }
       setSessions(list); setMessages(page.messages); setWindowed(false);
       // older rows already paged in stay above; the cursor continues from them, else from this page
       if (!olderRowsRef.current.length) setOlder(olderOf(page));
@@ -126,6 +143,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
 
   useEffect(() => {
     if (gate !== "open" || !key) return;
+    messagesRef.current = null; olderRowsRef.current = []; // a new conversation on screen: nothing to reconcile with
     setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
@@ -166,7 +184,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   }, [poll]);
 
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
-  const refresh = useCallback(() => { if (keyRef.current) { setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
+  const refresh = useCallback(() => { if (keyRef.current) { olderRowsRef.current = []; setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
 
   /** B1 Retry: re-sends the last failed/stopped owner turn through the same send path (same text, same photos). */
   const retry = useCallback(async () => {
@@ -181,7 +199,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     setResetting(true);
     try {
       await bashtClient.newConversation();
-      turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null); setOlderRows([]); setOlder(null); setFocusId(null);
+      turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null); olderRowsRef.current = []; setOlderRows([]); setOlder(null); setFocusId(null);
       if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY);
       return null;
     } catch (e) {
@@ -214,7 +232,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     try {
       const page = await bashtClient.historyPage(k, { around: messageId });
       if (keyRef.current !== k || gen !== loadGen.current) return;
-      setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
+      olderRowsRef.current = []; setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
     } catch (e) { setError(errText(e)); }
   }, [olderRows, messages]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
