@@ -7,7 +7,7 @@ import { useDictation } from "@/lib/speech";
 import { useStore } from "@/lib/hooks";
 import { earcon, voiceFxStore } from "@/lib/earcons";
 import { bashtClient, BashtError } from "@/lib/basht-client";
-import { clock, MAX_NOTE_MS, primeAudioInput, useVoiceAvailability, usePlayer, useVoiceRecorder, voiceAvailability, voiceNoteText, voicePlayer } from "@/lib/basht-voice";
+import { clock, createLiveSession, MAX_NOTE_MS, primeAudioInput, useVoiceAvailability, usePlayer, useVoiceRecorder, voiceAvailability, voicePlayer, type LivePhase } from "@/lib/basht-voice";
 
 /** What the live session needs from the conversation: send one owner turn (as a voice note) and get BASHT's reply text back. */
 export type LiveVoice = { ready: boolean; ask: (text: string) => Promise<string> };
@@ -25,7 +25,7 @@ export default function VoicePanel({ onUse, live }: { onUse: (text: string) => v
   return engineVoice ? <LiveSession live={live!} rec={rec} /> : <DictationPanel onUse={onUse} reason={live?.ready && (avail.transcribe === "no" || avail.speak === "no") ? "engine" : null} />;
 }
 
-type Phase = "idle" | "listening" | "thinking" | "speaking";
+type Phase = LivePhase;
 const LIVE_TEXT: Record<Phase, { title: string; sub: string; orb: VoiceState }> = {
   idle: { title: "محادثة صوتية مع باشت", sub: "اضغط وتحدّث؛ يرد باشت بصوته، ثم يستمع إليك من جديد. كل دور يظهر في المحادثة.", orb: "ready" },
   listening: { title: "يستمع…", sub: "تحدّث بالعربية. ينتهي دورك عندما تصمت قليلًا، أو اضغط الزر.", orb: "listening" },
@@ -37,52 +37,33 @@ function LiveSession({ live, rec }: { live: LiveVoice; rec: ReturnType<typeof us
   const [phase, setPhase] = useState<Phase>("idle");
   const [heard, setHeard] = useState("");
   const [error, setError] = useState("");
-  const running = useRef(false);
   const player = usePlayer();
   const fx = useStore(voiceFxStore);
-  useEffect(() => () => { running.current = false; rec.cancel(); voicePlayer().stop(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // the latest props/state, read by the session at each step (the session object itself lives as long as the panel)
+  const latest = useRef({ live, rec, fx });
+  latest.current = { live, rec, fx };
+  const session = useRef<ReturnType<typeof createLiveSession> | null>(null);
+  session.current ??= createLiveSession({
+    record: () => latest.current.rec.record({ maxMs: MAX_NOTE_MS, silence: true }),
+    cancelRecord: () => latest.current.rec.cancel(),
+    transcribe: async (audio) => {
+      try { const t = await bashtClient.transcribe(audio); voiceAvailability.set("transcribe", "yes"); return t; }
+      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable") voiceAvailability.set("transcribe", "no"); throw e; }
+    },
+    ask: (text) => latest.current.live.ask(text),
+    play: (text) => voicePlayer().play("live", text),
+    stopPlay: () => voicePlayer().stop(),
+    playError: () => voicePlayer().getSnapshot().error,
+    recordError: () => latest.current.rec.error,
+    onPhase: setPhase, onHeard: setHeard, onError: setError,
+    cue: (kind) => { if (latest.current.fx) earcon(kind); },
+  });
+  useEffect(() => () => session.current?.end(), []); // closing the panel ends the session: no mic, no voice, nothing sent afterwards
 
-  const end = (msg = "") => { running.current = false; rec.cancel(); voicePlayer().stop(); setPhase("idle"); if (msg) setError(msg); };
-
-  const loop = async () => {
-    let quiet = 0;
-    while (running.current) {
-      setPhase("listening");
-      if (fx) earcon("start");
-      const r = await rec.record({ maxMs: MAX_NOTE_MS, silence: true });
-      if (!running.current) return;
-      if (!r.audio) {
-        if (r.ended === "no_speech" && ++quiet < 2) continue; // one quiet turn is forgiven; two end the session
-        return end(r.ended === "no_speech" ? "لم أسمع كلامًا، فأنهيت الجلسة. اضغط للبدء من جديد." : rec.error || "");
-      }
-      quiet = 0;
-      if (fx) earcon("stop");
-      setPhase("thinking");
-      let text: string;
-      try { text = await bashtClient.transcribe(r.audio); voiceAvailability.set("transcribe", "yes"); }
-      catch (e) {
-        if (!running.current) return;
-        if (e instanceof BashtError && e.code === "no_speech") continue;
-        if (e instanceof BashtError && e.code === "voice_unavailable") voiceAvailability.set("transcribe", "no");
-        return end(e instanceof Error ? e.message : "تعذّر تفريغ الصوت.");
-      }
-      if (!running.current) return;
-      setHeard(text);
-      let reply: string;
-      try { reply = await live.ask(voiceNoteText(text)); }
-      catch (e) { return end(e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت."); }
-      if (!running.current) return;
-      setPhase("speaking");
-      const played = await voicePlayer().play("live", reply);
-      if (played === "error") return end(voicePlayer().getSnapshot().error);
-    }
-  };
-
+  const end = () => session.current?.end();
   const start = () => {
-    setError(""); setHeard("");
     voicePlayer().unlock(); primeAudioInput(); // inside the tap: iOS then allows the mic level probe and BASHT's voice later on
-    running.current = true;
-    void loop().finally(() => { if (!running.current) setPhase("idle"); });
+    session.current?.start();
   };
   /** The main button: start · end my turn now · stop BASHT speaking (and listen again). */
   const main = () => {

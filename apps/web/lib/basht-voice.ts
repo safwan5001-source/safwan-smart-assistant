@@ -227,6 +227,99 @@ const micError = (e: unknown) => {
 export const recorderSupported = () => typeof window !== "undefined" && typeof window.MediaRecorder !== "undefined"
   && !!navigator.mediaDevices?.getUserMedia && pickRecorderType((t) => window.MediaRecorder.isTypeSupported?.(t) ?? false) !== null;
 
+type TrackLike = { stop: () => void };
+type StreamLike = { getTracks: () => TrackLike[] };
+type RecorderLike = {
+  state: string; mimeType: string; start: (timeslice?: number) => void; stop: () => void;
+  ondataavailable: ((e: { data: Blob }) => void) | null; onstop: (() => void) | null;
+};
+/** What one recording needs from the browser (injected, so the lifecycle is testable without a DOM). */
+export type RecorderEnv = {
+  getUserMedia: () => Promise<StreamLike>;
+  pickType: () => string | null;
+  createRecorder: (stream: StreamLike, type: string | null) => RecorderLike;
+  /** Input level reader for hands-free end of turn (null: the owner taps to end). */
+  levelProbe?: (stream: StreamLike) => { read: () => number; close: () => void } | null;
+  onPhase: (p: "idle" | "starting" | "recording") => void;
+  onElapsed: (ms: number) => void;
+  onError: (msg: string) => void;
+  now?: () => number;
+};
+const failed = (ended: RecordEnd = "error"): RecordResult => ({ audio: null, ended, ms: 0 });
+
+/**
+ * One recording. The handle exists BEFORE the microphone permission is asked: a cancel (or stop, or unmount) while the permission
+ * prompt is still open is remembered, and once the browser hands over the stream its tracks are stopped at once — nothing is
+ * recorded, nothing is sent, the mic never stays on behind a closed screen.
+ */
+export function startRecording(env: RecorderEnv, { maxMs = MAX_NOTE_MS, silence = false }: { maxMs?: number; silence?: boolean } = {}): { handle: Rec; result: Promise<RecordResult> } {
+  const now = env.now ?? Date.now;
+  let early = false; // stop/cancel before recording started: nothing to keep
+  let endNow: ((why: RecordEnd) => void) | null = null;
+  const handle: Rec = { stop: () => (endNow ? endNow("stop") : (early = true)), cancel: () => (endNow ? endNow("cancel") : (early = true)) };
+  const result = (async (): Promise<RecordResult> => {
+    env.onError(""); env.onPhase("starting"); env.onElapsed(0);
+    let stream: StreamLike;
+    try { stream = await env.getUserMedia(); }
+    catch (e) { env.onPhase("idle"); if (early) return failed("cancel"); env.onError(micError(e)); return failed(); }
+    const release = () => stream.getTracks().forEach((t) => { try { t.stop(); } catch { /* already stopped */ } });
+    if (early) { release(); env.onPhase("idle"); return failed("cancel"); }
+    const type = env.pickType();
+    let mr: RecorderLike;
+    try { mr = env.createRecorder(stream, type); }
+    catch { release(); env.onPhase("idle"); env.onError("هذا المتصفح لا يدعم تسجيل الصوت."); return failed(); }
+
+    return new Promise<RecordResult>((resolve) => {
+      const chunks: Blob[] = [];
+      const started = now();
+      let ended: RecordEnd = "stop";
+      const end = (why: RecordEnd) => { ended = why; if (mr.state !== "inactive") try { mr.stop(); } catch { /* already stopping */ } };
+      const tick = setInterval(() => { const ms = now() - started; env.onElapsed(ms); if (ms >= maxMs) end("limit"); }, 200);
+      // hands-free: the input level decides when the owner has finished speaking
+      let probe: ReturnType<typeof setInterval> | null = null;
+      const level = silence ? env.levelProbe?.(stream) ?? null : null;
+      if (level) {
+        const gate = createSilenceGate();
+        probe = setInterval(() => { const v = gate(level.read(), now()); if (v === "stop") end("silence"); else if (v === "no_speech") end("no_speech"); }, 100);
+      }
+      const finish = () => { clearInterval(tick); if (probe) clearInterval(probe); try { level?.close(); } catch { /* gone */ } release(); };
+      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+      mr.onstop = () => {
+        finish(); // the mic is released between turns (iOS plays BASHT's voice at full volume then)
+        env.onPhase("idle"); env.onElapsed(0);
+        const keep = ended !== "cancel" && ended !== "no_speech" && ended !== "error" && chunks.length > 0;
+        resolve({ audio: keep ? new Blob(chunks, { type: mr.mimeType || type || "audio/webm" }) : null, ended, ms: now() - started });
+      };
+      endNow = end;
+      try { mr.start(1000); env.onPhase("recording"); }
+      catch { endNow = null; finish(); env.onPhase("idle"); env.onError("تعذّر بدء التسجيل."); resolve(failed()); }
+    });
+  })();
+  return { handle, result };
+}
+
+/** The browser's side of a recording: the real microphone, MediaRecorder and (when primed in a tap) the level probe. */
+function browserRecorderEnv(set: Pick<RecorderEnv, "onPhase" | "onElapsed" | "onError">): RecorderEnv {
+  return {
+    ...set,
+    getUserMedia: () => navigator.mediaDevices.getUserMedia({ audio: true }), // the browser's own voice processing defaults
+    pickType: () => pickRecorderType((t) => MediaRecorder.isTypeSupported?.(t) ?? false),
+    createRecorder: (stream, type) => new MediaRecorder(stream as MediaStream, type ? { mimeType: type } : undefined) as unknown as RecorderLike,
+    levelProbe: (stream) => {
+      if (!ctx || ctx.state !== "running") return null;
+      try {
+        const source = ctx.createMediaStreamSource(stream as MediaStream);
+        const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; source.connect(analyser);
+        const buf = new Float32Array(analyser.fftSize);
+        return {
+          read: () => { analyser.getFloatTimeDomainData(buf); let sum = 0; for (const x of buf) sum += x * x; return Math.sqrt(sum / buf.length); },
+          close: () => source.disconnect(),
+        };
+      } catch { return null; }
+    },
+  };
+}
+
 /** Records one voice note / one live turn. `silence: true` ends the turn by itself after a pause (hands-free). */
 export function useVoiceRecorder() {
   const [phase, setPhase] = useState<"idle" | "starting" | "recording">("idle");
@@ -234,57 +327,93 @@ export function useVoiceRecorder() {
   const [error, setError] = useState("");
   const [supported, setSupported] = useState(false);
   const rec = useRef<Rec | null>(null);
+  // leaving the screen cancels a recording — also one still waiting for the microphone permission
   useEffect(() => { setSupported(recorderSupported()); return () => rec.current?.cancel(); }, []);
 
-  const record = useCallback(async ({ maxMs = MAX_NOTE_MS, silence = false }: { maxMs?: number; silence?: boolean } = {}): Promise<RecordResult> => {
-    if (rec.current) return { audio: null, ended: "error", ms: 0 };
-    setError(""); setPhase("starting"); setElapsed(0);
-    let stream: MediaStream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } // the browser's own voice processing defaults
-    catch (e) { setPhase("idle"); setError(micError(e)); return { audio: null, ended: "error", ms: 0 }; }
-    const type = pickRecorderType((t) => MediaRecorder.isTypeSupported?.(t) ?? false);
-    let mr: MediaRecorder;
-    try { mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined); }
-    catch { stream.getTracks().forEach((t) => t.stop()); setPhase("idle"); setError("هذا المتصفح لا يدعم تسجيل الصوت."); return { audio: null, ended: "error", ms: 0 }; }
-
-    return new Promise<RecordResult>((resolve) => {
-      const chunks: Blob[] = [];
-      const started = Date.now();
-      let ended: RecordEnd = "stop";
-      const end = (why: RecordEnd) => { ended = why; if (mr.state !== "inactive") try { mr.stop(); } catch { /* already stopping */ } };
-      const tick = setInterval(() => { const ms = Date.now() - started; setElapsed(ms); if (ms >= maxMs) end("limit"); }, 200);
-      // hands-free: the input level decides when the owner has finished speaking
-      let probe: ReturnType<typeof setInterval> | null = null, source: MediaStreamAudioSourceNode | null = null;
-      if (silence && ctx && ctx.state === "running") {
-        try {
-          source = ctx.createMediaStreamSource(stream);
-          const analyser = ctx.createAnalyser(); analyser.fftSize = 2048; source.connect(analyser);
-          const buf = new Float32Array(analyser.fftSize);
-          const gate = createSilenceGate();
-          probe = setInterval(() => {
-            analyser.getFloatTimeDomainData(buf);
-            let sum = 0; for (const x of buf) sum += x * x;
-            const v = gate(Math.sqrt(sum / buf.length), Date.now());
-            if (v === "stop") end("silence"); else if (v === "no_speech") end("no_speech");
-          }, 100);
-        } catch { /* tap to end instead */ }
-      }
-      mr.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-      mr.onstop = () => {
-        clearInterval(tick); if (probe) clearInterval(probe); try { source?.disconnect(); } catch { /* gone */ }
-        stream.getTracks().forEach((t) => t.stop()); // the mic is released between turns (iOS plays BASHT's voice at full volume then)
-        rec.current = null; setPhase("idle"); setElapsed(0);
-        const ms = Date.now() - started;
-        const keep = ended !== "cancel" && ended !== "no_speech" && ended !== "error" && chunks.length > 0;
-        resolve({ audio: keep ? new Blob(chunks, { type: mr.mimeType || type || "audio/webm" }) : null, ended, ms });
-      };
-      rec.current = { stop: () => end("stop"), cancel: () => end("cancel") };
-      try { mr.start(1000); setPhase("recording"); }
-      catch { rec.current = null; clearInterval(tick); if (probe) clearInterval(probe); stream.getTracks().forEach((t) => t.stop()); setPhase("idle"); setError("تعذّر بدء التسجيل."); resolve({ audio: null, ended: "error", ms: 0 }); }
-    });
+  const record = useCallback(async (opts: { maxMs?: number; silence?: boolean } = {}): Promise<RecordResult> => {
+    rec.current?.cancel(); // never two recordings: a newer one replaces (and cancels) an older one
+    rec.current = null;
+    const mine: { handle: Rec | null } = { handle: null };
+    const only = <T,>(f: (v: T) => void) => (v: T) => { if (rec.current === mine.handle) f(v); }; // a cancelled one no longer drives the UI
+    const { handle, result } = startRecording(browserRecorderEnv({ onPhase: only(setPhase), onElapsed: only(setElapsed), onError: only(setError) }), opts);
+    mine.handle = handle;
+    rec.current = handle;
+    try { return await result; } finally { if (rec.current === handle) { rec.current = null; setPhase("idle"); } }
   }, []);
 
   const stop = useCallback(() => rec.current?.stop(), []);
   const cancel = useCallback(() => rec.current?.cancel(), []);
   return { supported, phase, recording: phase !== "idle", elapsed, error, clearError: () => setError(""), record, stop, cancel };
+}
+
+// ── the live voice session (V4): listen → transcribe → ask BASHT → speak → listen again ─────────────────────────────────
+export type LivePhase = "idle" | "listening" | "thinking" | "speaking";
+export type LiveDeps = {
+  record: () => Promise<RecordResult>;
+  cancelRecord: () => void;
+  transcribe: (audio: Blob) => Promise<string>;
+  /** sends one owner turn (already marked as a voice note) and resolves with BASHT's finished reply */
+  ask: (text: string) => Promise<string>;
+  play: (text: string) => Promise<PlayResult>;
+  stopPlay: () => void;
+  playError: () => string;
+  recordError: () => string;
+  onPhase: (p: LivePhase) => void;
+  onHeard: (text: string) => void;
+  onError: (msg: string) => void;
+  cue?: (kind: "start" | "stop") => void;
+};
+
+/**
+ * Each start() opens a NEW session (a generation token). Every await is followed by a check that this session is still the current
+ * one, so a session that was ended — even one restarted right away — never sends its old transcript, never speaks its old reply over
+ * the new recording, never reports its errors into the new session and never starts another recorder.
+ */
+export function createLiveSession(d: LiveDeps) {
+  let gen = 0;
+  const end = (msg = "") => { gen++; d.cancelRecord(); d.stopPlay(); d.onPhase("idle"); if (msg) d.onError(msg); };
+  async function run(my: number) {
+    const live = () => my === gen;
+    const fail = (msg: string) => { if (live()) end(msg); };
+    let quiet = 0;
+    while (live()) {
+      d.onPhase("listening"); d.cue?.("start");
+      const r = await d.record();
+      if (!live()) return;
+      if (!r.audio) {
+        if (r.ended === "no_speech" && ++quiet < 2) continue; // one quiet turn is forgiven; two end the session
+        return fail(r.ended === "no_speech" ? "لم أسمع كلامًا، فأنهيت الجلسة. اضغط للبدء من جديد." : d.recordError());
+      }
+      quiet = 0;
+      d.cue?.("stop");
+      d.onPhase("thinking");
+      let text: string;
+      try { text = await d.transcribe(r.audio); }
+      catch (e) {
+        if (!live()) return;
+        if (e instanceof BashtError && e.code === "no_speech") continue;
+        return fail(e instanceof Error ? e.message : "تعذّر تفريغ الصوت.");
+      }
+      if (!live()) return;
+      d.onHeard(text);
+      let reply: string;
+      try { reply = await d.ask(voiceNoteText(text)); }
+      catch (e) { return fail(e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت."); }
+      if (!live()) return;
+      d.onPhase("speaking");
+      const played = await d.play(reply);
+      if (!live()) return;
+      if (played === "error") return fail(d.playError());
+    }
+  }
+  return {
+    /** Starts a new session (ending any previous one first). */
+    start() {
+      end(); // a previous session (if any) is over: its recorder and playback stop, its pending awaits are now stale
+      d.onError(""); d.onHeard("");
+      const my = ++gen;
+      void run(my).catch(() => { if (my === gen) end("تعذّر إكمال الجلسة الصوتية."); });
+    },
+    end,
+  };
 }

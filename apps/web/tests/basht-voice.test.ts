@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
-import { clock, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, voiceAvailability, voiceNoteText } from "@/lib/basht-voice";
+import { clock, createLiveSession, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
 const src = (p: string) => readFileSync(join(WEB, p), "utf8");
@@ -149,11 +149,118 @@ describe("one conversation, one mic", () => {
     expect(btn).toMatch(/usePlayer\(\)/); expect(btn).toMatch(/avail\.speak === "no"/);
     expect(chat).toMatch(/const id = await basht\.send\(text\);\s*const end = await basht\.waitRun\(id\);/);
     const panel = src("features/calls/calls-screen.tsx");
-    expect(panel).toMatch(/live\.ask\(voiceNoteText\(text\)\)/);
-    expect(panel).toMatch(/voicePlayer\(\)\.play\("live", reply\)/);
+    expect(panel).toMatch(/ask: \(text\) => latest\.current\.live\.ask\(text\)/);
+    expect(panel).toMatch(/play: \(text\) => voicePlayer\(\)\.play\("live", text\)/);
+    expect(src("lib/basht-voice.ts")).toMatch(/await d\.ask\(voiceNoteText\(text\)\)/);
     expect(panel).not.toMatch(/RTCPeerConnection|talk\.client|getVoices/); // no parallel voice system (no WebRTC, no browser TTS)
   });
   it("no provider key or voice choice lives in the app", () => {
     for (const f of ["lib/basht-voice.ts", "server/basht-chat.ts", "features/calls/calls-screen.tsx"]) expect(src(f)).not.toMatch(/OPENAI|ELEVENLABS|apiKey|speakerVoice|voiceId/);
+  });
+});
+
+
+// ── regressions (review): no recording after a cancel during the permission prompt; no stale live session after a restart ──
+const deferred = <T,>() => { let resolve!: (v: T) => void, reject!: (e: unknown) => void; const promise = new Promise<T>((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
+function fakeMic() {
+  const perm = deferred<{ getTracks: () => { stop: () => void }[] }>();
+  const track = { stop: vi.fn() };
+  const stream = { getTracks: () => [track] };
+  const recorders: { start: ReturnType<typeof vi.fn> }[] = [];
+  const env: RecorderEnv = {
+    getUserMedia: () => perm.promise, pickType: () => "audio/webm",
+    createRecorder: () => {
+      const r = { state: "inactive", mimeType: "audio/webm", ondataavailable: null as null | ((e: { data: Blob }) => void), onstop: null as null | (() => void),
+        start: vi.fn(() => { r.state = "recording"; }), stop: vi.fn(() => { r.state = "inactive"; r.ondataavailable?.({ data: new Blob([new Uint8Array(2000)]) }); r.onstop?.(); }) };
+      recorders.push(r); return r;
+    },
+    onPhase: vi.fn(), onElapsed: vi.fn(), onError: vi.fn(),
+  };
+  return { env, grant: () => perm.resolve(stream), track, recorders };
+}
+
+describe("recording lifecycle (permission prompt)", () => {
+  it.each(["cancel", "stop"] as const)("%s while the permission prompt is open: the mic is released at once and nothing is recorded or sent", async (how) => {
+    const m = fakeMic();
+    const { handle, result } = startRecording(m.env);
+    handle[how](); // the panel closed / the owner cancelled before allowing the microphone
+    m.grant();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.recorders).toHaveLength(0); // no MediaRecorder was ever started
+    expect(m.track.stop).toHaveBeenCalled();
+    expect(await result).toMatchObject({ audio: null, ended: "cancel" });
+    expect(m.env.onPhase).toHaveBeenLastCalledWith("idle");
+  });
+  it("a normal recording still records, and releases the mic when stopped", async () => {
+    const m = fakeMic();
+    const { handle, result } = startRecording(m.env);
+    m.grant();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(m.recorders[0].start).toHaveBeenCalled();
+    handle.stop();
+    const r = await result;
+    expect(r.ended).toBe("stop"); expect(r.audio?.size).toBe(2000);
+    expect(m.track.stop).toHaveBeenCalled();
+  });
+});
+
+describe("live voice session (restart race)", () => {
+  function rig() {
+    const records: ReturnType<typeof deferred<RecordResult>>[] = [];
+    const transcripts: ReturnType<typeof deferred<string>>[] = [];
+    const replies: ReturnType<typeof deferred<string>>[] = [];
+    const calls = { ask: [] as string[], play: [] as string[], errors: [] as string[], phases: [] as string[] };
+    const d: LiveDeps = {
+      record: () => { const x = deferred<RecordResult>(); records.push(x); return x.promise; },
+      cancelRecord: vi.fn(), stopPlay: vi.fn(),
+      transcribe: () => { const x = deferred<string>(); transcripts.push(x); return x.promise; },
+      ask: (t) => { calls.ask.push(t); const x = deferred<string>(); replies.push(x); return x.promise; },
+      play: async (t) => { calls.play.push(t); return "done"; },
+      playError: () => "", recordError: () => "",
+      onPhase: (p) => calls.phases.push(p), onHeard: () => {}, onError: (m) => { if (m) calls.errors.push(m); },
+    };
+    return { s: createLiveSession(d), d, records, transcripts, replies, calls };
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const audio = { audio: new Blob([new Uint8Array(2000)]), ended: "silence" as const, ms: 1500 };
+
+  it("an ended session whose transcription finishes after a restart sends nothing and starts no second recorder", async () => {
+    const t = rig();
+    t.s.start(); await tick();
+    t.records[0].resolve(audio); await tick(); // session 1 is transcribing
+    t.s.end(); t.s.start(); await tick();      // the owner ends it and starts again at once: session 2 is listening
+    expect(t.records).toHaveLength(2);
+    t.transcripts[0].resolve("النص القديم"); await tick();
+    expect(t.calls.ask).toEqual([]);            // the old transcript is never sent
+    expect(t.records).toHaveLength(2);          // and the old loop does not start a competing recorder
+    expect(t.calls.phases.at(-1)).toBe("listening");
+  });
+
+  it("an old reply arriving after a restart is never spoken over the new session", async () => {
+    const t = rig();
+    t.s.start(); await tick();
+    t.records[0].resolve(audio); await tick();
+    t.transcripts[0].resolve("سؤال"); await tick();
+    expect(t.calls.ask).toEqual(["[رسالة صوتية] سؤال"]);
+    t.s.end(); t.s.start(); await tick();
+    t.replies[0].resolve("الرد القديم"); await tick();
+    expect(t.calls.play).toEqual([]);
+    expect(t.records).toHaveLength(2);
+  });
+
+  it("an old session's failure after a restart is not reported into (and does not end) the new one", async () => {
+    const t = rig();
+    t.s.start(); await tick();
+    t.records[0].resolve(audio); await tick();
+    t.s.start(); await tick(); // start again directly (no explicit end)
+    t.transcripts[0].reject(new Error("تعذّر")); await tick();
+    expect(t.calls.errors).toEqual([]);
+    expect(t.calls.phases.at(-1)).toBe("listening");
+    // the new session still works end to end
+    t.records[1].resolve(audio); await tick();
+    t.transcripts[1].resolve("جديد"); await tick();
+    t.replies[0].resolve("رد"); await tick(); await tick();
+    expect(t.calls.ask).toEqual(["[رسالة صوتية] جديد"]);
+    expect(t.calls.play).toEqual(["رد"]);
   });
 });
