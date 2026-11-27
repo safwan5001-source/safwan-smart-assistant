@@ -5,7 +5,7 @@
  * mode, voice sound effects and HQ display prefs.
  */
 import { activityStore, firedStore, noticesStore, prefsStore, pushDeviceStore, remindersStore, tasksStore, threadsStore, tombstonesStore } from "./stores";
-import { eraseRemoteDevice } from "./push-client";
+import { eraseRemoteDevice, resumeSync, suspendSync } from "./push-client";
 import { clearFiles } from "./files-db";
 import { authClient } from "./owner-auth";
 
@@ -20,6 +20,10 @@ export function wipeLeftovers(r: WipeResult): string[] {
 
 /** Wipe the private local data. Reports (never hides) what could not be cleared. */
 export async function clearPrivateData(): Promise<WipeResult> {
+  suspendSync(); // a reminder sync in flight must not repopulate the stores cleared below
+  try { return await wipe(); } finally { resumeSync(); }
+}
+async function wipe(): Promise<WipeResult> {
   // local stores first and synchronously: nothing (a slow network, a closed tab) can leave them behind
   tasksStore.reset(); threadsStore.reset(); activityStore.reset();
   remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset();
