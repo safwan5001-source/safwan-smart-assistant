@@ -201,7 +201,17 @@ export default function ChatScreen() {
             await ensureClaudeSession(prompt);
             setAgentPhase("thinking");
             setStreaming({ threadId: id, text: "" });
-            const out = await assistantService.chat(id, text, { signal: ctl.signal, onDelta: (_d, all) => { if (first) { first = false; setAgentPhase("responding"); } setStreaming({ threadId: id, text: all }); } });
+            const onDelta = (_d: string, all: string) => { if (first) { first = false; setAgentPhase("responding"); } setStreaming({ threadId: id, text: all }); };
+            // the server keeps Claude's context per conversation (capped): when it is full, continue in a fresh one, once
+            let cid = threadsStore.getSnapshot().find((t) => t.id === id)?.claudeId ?? id;
+            const out = await assistantService.chat(cid, text, { signal: ctl.signal, onDelta }).catch(async (e: unknown) => {
+              if (!(e instanceof AssistantRequestError && e.code === "conversation_full")) throw e;
+              const r = await runCommand("chat.claude.rotate", { id });
+              if (r.status !== "executed") throw e;
+              cid = r.data;
+              await runCommand("chat.send", { threadId: id, text: "بدأ سياق جديد للمحادثة لدى Claude؛ الرسائل السابقة باقية هنا.", role: "system" });
+              return assistantService.chat(cid, text, { signal: ctl.signal, onDelta });
+            });
             await keep(out.text);
             setAgentPhase(out.stopped ? "stopped" : "replied");
             if (out.stopped) await runCommand("chat.send", { threadId: id, text: "أُوقف الرد بناءً على طلبك.", role: "system" });

@@ -124,6 +124,15 @@ const chatCommands = {
     const next = parseBrowserRef({ ...msg.browser, ...p.patch, url: msg.browser!.url, mode: msg.browser!.mode }) ?? invalid("طلب التصفح غير صالح.");
     patchThread(p.threadId, (x) => ({ ...x, messages: x.messages.map((m) => (m.id === p.id ? { ...m, browser: next } : m)) }));
   } } satisfies Def<{ threadId: string; id: string; patch: Partial<BrowserRef> }, void>,
+  // The main thread is ONE continuous conversation; its direct-Claude context lives in server conversations capped at 400 messages.
+  // Rotating starts a fresh server context while the visible timeline stays the same.
+  "chat.claude.rotate": { id: "chat.claude.rotate", title: "سياق Claude جديد", risk: "write", run: (p: { id: string }): string => {
+    const t = mustThread(p.id);
+    if (!t.main) invalid("للمحادثة الرئيسية فقط.");
+    const claudeId = uid();
+    patchThread(p.id, (x) => ({ ...x, claudeId }));
+    return claudeId;
+  } } satisfies Def<{ id: string }, string>,
   "chat.rename": { id: "chat.rename", title: "إعادة تسمية", risk: "write", run: (p: { id: string; title: string }) => {
     const title = cleanTitle(p.title, LIMITS.threadTitle);
     mustThread(p.id);

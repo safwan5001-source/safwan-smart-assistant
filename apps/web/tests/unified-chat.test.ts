@@ -41,6 +41,20 @@ describe("U1: one conversation — the app is BASHT", () => {
     expect(chat).toMatch(/if \(quick\.handled\) \{ setDraft\(""\);/);
   });
 
+  it("direct Claude backing the conversation never dead-ends at the server's per-conversation cap", async () => {
+    const r = await runCommand("chat.send", { threadId: null, main: true, text: "x" });
+    expect(r.status).toBe("executed");
+    const id = r.status === "executed" ? r.data : "";
+    const rot = await runCommand("chat.claude.rotate", { id });
+    expect(rot.status).toBe("executed");
+    const cid = rot.status === "executed" ? rot.data : "";
+    expect(cid).toMatch(/^[0-9a-f-]{36}$/); expect(cid).not.toBe(id);
+    expect(parseThreads(JSON.parse(JSON.stringify(threadsStore.getSnapshot()))).find((t) => t.main)?.claudeId).toBe(cid);
+    const old = await runCommand("chat.send", { threadId: null, text: "أرشيف" });
+    expect((await runCommand("chat.claude.rotate", { id: old.status === "executed" ? old.data : "" })).status).not.toBe("executed");
+    expect(src("features/chat/chat-screen.tsx")).toMatch(/e\.code === "conversation_full"[\s\S]*?chat\.claude\.rotate[\s\S]*?assistantService\.chat\(cid/);
+  });
+
   it("a down engine is re-checked automatically and by the conversation's refresh control", () => {
     const chat = src("features/chat/chat-screen.tsx");
     expect(chat).toMatch(/setInterval\(refreshHealth, 20_000\)/);
