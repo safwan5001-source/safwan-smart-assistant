@@ -222,9 +222,12 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     setResetting(true);
     try {
       await bashtClient.newConversation();
-      viewGen.current++;
-      turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null); olderRowsRef.current = []; setOlderRows([]); setOlder(null); setFocusId(null);
-      if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY);
+      turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null);
+      // only the app conversation was reset: another conversation on screen keeps its history, earlier rows and cursor
+      if (keyRef.current === APP_SESSION_KEY) {
+        viewGen.current++; olderRowsRef.current = []; setOlderRows([]); setOlder(null); setFocusId(null);
+        await load(APP_SESSION_KEY);
+      }
       return null;
     } catch (e) {
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
