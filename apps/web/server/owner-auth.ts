@@ -2,9 +2,10 @@ import "server-only";
 /**
  * /api/auth/* — sign in to BASHT once, for the whole app (A1).
  *
- *   GET  status                       → { owner_auth, passkeys, authenticated }
+ *   GET  status                       → { owner_auth, passkeys, authenticated, gate }  (gate = the web switch OWNER_AUTH)
  *   POST login/code {code, remember}  → owner code → session cookie
  *   POST logout · POST logout-all     → this device · every device
+ *   GET  sessions · POST sessions/revoke {id}   (this account's live sessions, by device; end one)
  *   GET  passkeys · POST passkeys/delete {id}
  *   POST passkeys/register/options|verify   (signed-in owner adds Face ID on this device)
  *   POST passkeys/login/options|verify      (Face ID → the same owner session)
@@ -14,7 +15,8 @@ import "server-only";
  */
 import { callBackend as realCallBackend } from "./backend";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
-import { clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerSessionAccount, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
+import { deviceLabel } from "./device-label";
+import { clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerAuthOn, ownerSessionAccount, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
 
 export type Deps = OwnerDeps;
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
@@ -72,12 +74,18 @@ const refusal = (json: unknown): [string, number] => {
   return (typeof code === "string" && REFUSALS[code]) || ["bad_request", 400];
 };
 
+/** A fresh lookup (no cache) of this request's session: used right after ending a session to tell whether it was this one. */
+async function ownerSessionAccountFresh(req: Request, deps: Deps): Promise<string | null> {
+  forgetSession(readSessionCookie(req));
+  return ownerSessionAccount(req, deps);
+}
+
 export async function handleAuth(req: Request, path: string[], deps: Deps = defaultDeps()): Promise<Response> {
   const route = path.join("/");
   const cfg = await ownerAuthConfig(deps);
   if (req.method === "GET" && route === "status") {
     const authenticated = cfg.owner_auth && (await ownerSessionAccount(req, deps)) !== null;
-    return json({ owner_auth: cfg.owner_auth, passkeys: cfg.passkeys, authenticated });
+    return json({ owner_auth: cfg.owner_auth, passkeys: cfg.passkeys, authenticated, gate: ownerAuthOn(deps.env) });
   }
   if (!cfg.owner_auth) return err("disabled", 503);
   if (req.method !== "GET" && !sameOrigin(req)) return err("forbidden", 403);
@@ -98,7 +106,7 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     const data = await readJson(req);
     if (typeof data?.code !== "string" || !data.code || data.code.length > 256) return err("bad_request", 400);
     const remember = data.remember === true;
-    const r = await api("login/code", { code: data.code, remember });
+    const r = await api("login/code", { code: data.code, remember, device: deviceLabel(req.headers.get("user-agent")) });
     if (!r.ok) { if (r.res.status === 401) fails.fail(ip, now); return r.res; }
     return signedIn(r.data, remember);
   }
@@ -121,7 +129,7 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     const challenge = readCookie(req, CHALLENGE_COOKIE);
     if (!data || typeof data.credential !== "object" || !data.credential || !challenge) return err("bad_request", 400);
     const remember = data.remember === true;
-    const r = await api("passkeys/login/verify", { challenge, credential: data.credential, remember });
+    const r = await api("passkeys/login/verify", { challenge, credential: data.credential, remember, device: deviceLabel(req.headers.get("user-agent")) });
     const clear = challengeCookie("", deps, 0);
     if (!r.ok) return new Response(r.res.body, { status: r.res.status, headers: (() => { const h = new Headers(r.res.headers); h.append("Set-Cookie", clear); return h; })() });
     return signedIn(r.data, remember, [clear]);
@@ -129,6 +137,19 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
 
   // everything below belongs to a signed-in owner
   if (!session || (await ownerSessionAccount(req, deps)) === null) return err("unauthorized", 401);
+  if (req.method === "GET" && route === "sessions") {
+    const r = await api("sessions/list", { session });
+    return r.ok ? json({ sessions: Array.isArray(r.data.sessions) ? r.data.sessions : [] }) : r.res;
+  }
+  if (req.method === "POST" && route === "sessions/revoke") {
+    const data = await readJson(req);
+    if (typeof data?.id !== "string" || !UUID.test(data.id)) return err("bad_request", 400);
+    const r = await api("sessions/revoke", { session, id: data.id });
+    if (!r.ok) return r.res;
+    // ending this device's own session from the list is a sign-out: drop the cookie too
+    const self = (await ownerSessionAccountFresh(req, deps)) === null;
+    return self ? json({ ok: true, signedOut: true }, 200, [clearSessionCookieHeader(secure(deps))]) : json({ ok: true, signedOut: false });
+  }
   if (req.method === "GET" && route === "passkeys") {
     const r = await api("passkeys/list", { session });
     return r.ok ? json({ passkeys: Array.isArray(r.data.passkeys) ? r.data.passkeys : [] }) : r.res;

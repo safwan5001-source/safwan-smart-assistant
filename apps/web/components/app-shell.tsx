@@ -10,11 +10,19 @@ import { MORE_PATHS, NAV, TABS, isActive, titleFor } from "@/lib/nav";
 import { BRAND } from "@/lib/brand";
 import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-activity";
 import { useAssistant } from "./assistant-context";
+import { OwnerGateProvider } from "./owner-gate";
+import { LOGIN_PATH } from "@/lib/login-path";
 
 export const OPEN_SEARCH_EVENT = "safwan:open-search";
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  // the login page is the app's front door: no navigation, no app chrome, nothing of the app before sign-in
+  if (pathname === LOGIN_PATH) return <>{children}</>;
+  return <OwnerGateProvider><Shell pathname={pathname}>{children}</Shell></OwnerGateProvider>;
+}
+
+function Shell({ children, pathname }: { children: ReactNode; pathname: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const { status, refresh } = useAssistant();
   const state = agentState(status, useAgentActivity());

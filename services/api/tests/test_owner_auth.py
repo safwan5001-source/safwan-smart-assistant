@@ -226,3 +226,41 @@ def test_passkeys_are_isolated_per_account_under_rls(env, pg_app):
     assert pg_app.execute("SELECT count(*) FROM passkeys").fetchone()[0] == 0
     with pytest.raises(Exception):
         pg_app.execute("UPDATE passkeys SET sign_count = 99")  # counters move only through auth_passkey_used
+
+
+# ── login gate: devices & sessions ────────────────────────────────────────
+def test_sessions_list_names_devices_marks_this_one_and_ends_one(client, env):
+    a = call(client, "/login/code", {"code": CODE, "device": "آيفون · Safari\n\x00"}).json()["session"]
+    b = call(client, "/login/code", {"code": CODE, "remember": True, "device": "ماك · Chrome"}).json()["session"]
+    rows = call(client, "/sessions/list", {"session": a}).json()["sessions"]
+    assert {r["device"] for r in rows} == {"آيفون · Safari", "ماك · Chrome"}   # control characters stripped
+    me = next(r for r in rows if r["current"])
+    other = next(r for r in rows if not r["current"])
+    assert me["device"] == "آيفون · Safari" and other["remember"] is True and "token" not in json.dumps(rows)
+    assert call(client, "/sessions/revoke", {"session": a, "id": other["id"]}).status_code == 200
+    assert call(client, "/session", {"session": b}).json()["detail"]["code"] == "unauthorized"
+    assert [r["current"] for r in call(client, "/sessions/list", {"session": a}).json()["sessions"]] == [True]
+    # already ended / unknown id → not_found; a session can't be listed or ended without a valid one
+    assert call(client, "/sessions/revoke", {"session": a, "id": other["id"]}).json()["detail"]["code"] == "not_found"
+    assert call(client, "/sessions/list", {"session": "x" * 43}).json()["detail"]["code"] == "unauthorized"
+
+
+def test_session_lookup_records_activity_at_most_every_five_minutes(client, env):
+    sid = login(client)
+    assert env.execute("SELECT last_seen_at FROM sessions").fetchone()[0] is None
+    call(client, "/session", {"session": sid})
+    first = env.execute("SELECT last_seen_at FROM sessions").fetchone()[0]
+    call(client, "/session", {"session": sid})
+    assert first is not None and env.execute("SELECT last_seen_at FROM sessions").fetchone()[0] == first
+    env.execute("UPDATE sessions SET last_seen_at = now() - interval '6 minutes'")
+    call(client, "/session", {"session": sid})
+    assert env.execute("SELECT last_seen_at > now() - interval '1 minute' FROM sessions").fetchone()[0] is True
+
+
+def test_another_accounts_session_id_cannot_be_ended(client, env):
+    sid = login(client)
+    other = env.execute("INSERT INTO accounts (display_name) VALUES ('x') RETURNING id").fetchone()[0]
+    env.execute("INSERT INTO sessions (account_id, token_hash, expires_at) VALUES (%s, %s, now() + interval '1 hour')", (other, b"\x01" * 32))
+    foreign = env.execute("SELECT id FROM sessions WHERE account_id = %s", (other,)).fetchone()[0]
+    assert call(client, "/sessions/revoke", {"session": sid, "id": str(foreign)}).json()["detail"]["code"] == "not_found"
+    assert env.execute("SELECT revoked_at FROM sessions WHERE id = %s", (foreign,)).fetchone()[0] is None

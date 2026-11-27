@@ -51,18 +51,18 @@ beforeEach(() => {
 describe("unified owner sign-in: switch", () => {
   it("OWNER_AUTH off: status says off, every route is disabled and the API is never called", async () => {
     const d = deps({ env: base });
-    expect(await (await call("GET", "status", same, undefined, d)).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false });
+    expect(await (await call("GET", "status", same, undefined, d)).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false, gate: false });
     expect((await call("POST", "login/code", same, { code: api.code }, d)).status).toBe(503);
     expect((await call("GET", "passkeys", withSession(), undefined, d)).status).toBe(503);
     expect(backend).not.toHaveBeenCalled();
   });
   it("on in the web but off in the API reads as off (fail closed); an outage is not cached", async () => {
     api.config = { owner_auth: false, passkeys: true };
-    expect(await (await call("GET", "status")).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false });
+    expect(await (await call("GET", "status")).json()).toEqual({ owner_auth: false, passkeys: false, authenticated: false, gate: true }); // gate on + API says off → the login page reports "unavailable"
     resetOwnerSessionCache(); api.down = true;
     expect((await (await call("GET", "status")).json()).owner_auth).toBe(false);
     api.down = false; api.config = { owner_auth: true, passkeys: false };
-    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true });
+    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true, gate: true });
   });
 });
 
@@ -76,7 +76,7 @@ describe("unified owner sign-in: owner code", () => {
     expect(await r.text()).not.toContain(SECRET); // the secret only ever travels in the cookie
     const remembered = (await call("POST", "login/code", same, { code: api.code, remember: true })).headers.get("set-cookie")!;
     expect(remembered).toContain(`Max-Age=${30 * 24 * 3600}`);
-    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false });
+    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false, device: "جهاز" });
   });
   it("wrong code → 401, then throttled per client before reaching the API again", async () => {
     for (let i = 0; i < 5; i++) expect((await call("POST", "login/code", same, { code: "nope" })).status).toBe(401);

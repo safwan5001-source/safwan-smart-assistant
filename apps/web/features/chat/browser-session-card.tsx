@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Icon from "@/components/icon";
+import { useOwnerGate } from "@/components/owner-gate";
 import { Notice } from "@/components/ui";
 import { browserClient } from "@/lib/browser-client";
 import {
@@ -36,6 +37,9 @@ const locator = (kind: Kind, value: string): Locator => (kind === "label" || kin
  */
 export default function BrowserSessionCard({ browser, messageId, onChange }: { browser: BrowserRef; messageId: string; onChange: (patch: Partial<BrowserRef>) => void }) {
   const [gate, setGate] = useState<Gate>("checking");
+  // login gate: with unified sign-in on, a lapsed session goes back to the login page (and returns here), not to a code form
+  const ownerGate = useOwnerGate();
+  useEffect(() => { if (ownerGate.on && gate === "locked") ownerGate.signInAgain(); }, [ownerGate, gate]);
   const [startUrl, setStartUrl] = useState("");
   const [task, setTask] = useState<TaskView | null>(null);
   const [code, setCode] = useState("");
@@ -232,7 +236,7 @@ export default function BrowserSessionCard({ browser, messageId, onChange }: { b
         {gate === "same_site" && <Notice tone="danger">رُفض التحكم التفاعلي: نطاق المختبر يشترك مع تطبيق المساعد (أو واجهته) في الموقع نفسه. يجب أن يكون المختبر على نطاق مستقل تمامًا.</Notice>}
         {gate === "off" && <Notice tone="warn">التحكم التفاعلي غير مفعّل: لم تُحدَّد صفحة مختبر على الخادم (يقررها المالك).</Notice>}
         {gate === "offline" && <Notice tone="warn">تعذر الاتصال بالخادم؛ هذه الميزة تحتاج اتصالاً.</Notice>}
-        {gate === "locked" && unlockForm}
+        {gate === "locked" && !ownerGate.on && unlockForm}
         {gate === "ready" && (
           <div className="row-wrap">
             <button className="btn btn-primary" onClick={() => void start()} disabled={busy}><Icon name="play" size={18} />{busy ? "جارٍ البدء…" : "السماح وبدء الجلسة"}</button>

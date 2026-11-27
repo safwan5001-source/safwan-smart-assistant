@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Icon from "@/components/icon";
+import { useOwnerGate } from "@/components/owner-gate";
 import { Notice } from "@/components/ui";
 import { browserClient } from "@/lib/browser-client";
 import { FAIL_TEXT } from "./browser-text";
@@ -19,6 +20,9 @@ const STATUS_LABEL: Record<TaskView["status"], string> = { running: "قيد ال
  */
 export default function BrowserCard({ browser, onChange }: { browser: BrowserRef; onChange: (patch: Partial<BrowserRef>) => void }) {
   const [gate, setGate] = useState<Gate>("checking");
+  // login gate: with unified sign-in on, a lapsed session goes back to the login page (and returns here), not to a code form
+  const ownerGate = useOwnerGate();
+  useEffect(() => { if (ownerGate.on && gate === "locked") ownerGate.signInAgain(); }, [ownerGate, gate]);
   const [task, setTask] = useState<TaskView | null>(null);
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -143,7 +147,7 @@ export default function BrowserCard({ browser, onChange }: { browser: BrowserRef
         {gate === "checking" && <p className="muted" role="status">جارٍ التحقق من جاهزية الخادم…</p>}
         {gate === "disabled" && <Notice tone="warn">التصفح السحابي غير مفعّل على الخادم؛ يفعّله المالك من إعدادات الخدمة.</Notice>}
         {gate === "offline" && <Notice tone="warn">تعذر الاتصال بالخادم؛ هذه الميزة تحتاج اتصالاً.</Notice>}
-        {gate === "locked" && unlockForm}
+        {gate === "locked" && !ownerGate.on && unlockForm}
         {gate === "ready" && (
           <div className="row-wrap">
             <button className="btn btn-primary" onClick={() => void run()} disabled={busy}><Icon name="play" size={18} />{busy ? "جارٍ البدء…" : "السماح وتشغيل"}</button>

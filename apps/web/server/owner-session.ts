@@ -58,17 +58,22 @@ export async function ownerAuthConfig(deps: OwnerDeps): Promise<AuthConfig> {
 
 /** The owner's account id when the request carries a valid owner session, else null. */
 export async function ownerSessionAccount(req: Request, deps: OwnerDeps): Promise<string | null> {
+  return (await checkOwnerSession(req, deps)).account;
+}
+
+/** Same lookup, telling "not signed in" apart from "the API could not be asked" (`outage`, never cached). */
+export async function checkOwnerSession(req: Request, deps: OwnerDeps): Promise<{ account: string | null; outage: boolean }> {
   const secret = readSessionCookie(req);
-  if (!secret) return null;
+  if (!secret) return { account: null, outage: false };
   const key = digest(secret), now = deps.now();
   const hit = seen.get(key);
-  if (hit && hit.until > now) return hit.account;
+  if (hit && hit.until > now) return { account: hit.account, outage: false };
   const r = await deps.callBackend({ path: "/internal/v1/auth/session", method: "POST", body: { session: secret }, env: deps.env, timeoutMs: 5_000, maxBytes: 4096 });
-  if (r.kind !== "ok") return null; // outage: not signed in, and not cached
+  if (r.kind !== "ok") return { account: null, outage: true }; // outage: not signed in, and not cached
   const account = r.status === 200 && typeof (r.json as { account_id?: unknown })?.account_id === "string" ? (r.json as { account_id: string }).account_id : null;
   if (seen.size > 1000) seen.clear();
   seen.set(key, { until: now + CACHE_MS, account });
-  return account;
+  return { account, outage: false };
 }
 
 /**

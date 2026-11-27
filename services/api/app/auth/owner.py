@@ -53,9 +53,12 @@ from ..service_auth import (
 )
 from .sessions import (
     create_session,
+    list_sessions,
     resolve_session,
     revoke_all_sessions,
     revoke_session,
+    revoke_session_by_id,
+    touch_session,
 )
 
 log = logging.getLogger("safwan.auth")
@@ -188,6 +191,7 @@ def reset_limits() -> None:
 class CodeLogin(BaseModel):
     code: str = Field(min_length=1, max_length=256)
     remember: bool = False
+    device: str | None = Field(default=None, max_length=120)
 
 
 class SessionBody(BaseModel):
@@ -195,6 +199,10 @@ class SessionBody(BaseModel):
 
 
 class PasskeyDelete(SessionBody):
+    id: UUID
+
+
+class SessionRevoke(SessionBody):
     id: UUID
 
 
@@ -208,6 +216,7 @@ class LoginVerify(BaseModel):
     challenge: str = Field(min_length=10, max_length=2048)
     credential: dict[str, Any]
     remember: bool = False
+    device: str | None = Field(default=None, max_length=120)
 
 
 # ── routes ────────────────────────────────────────────────────────────────
@@ -232,7 +241,7 @@ def login_code(body: CodeLogin, settings: Settings = Depends(get_settings), _: S
         owner = conn.execute("SELECT auth_ensure_owner()").fetchone()[0]
         if owner is None:
             raise refuse("owner_disabled")
-        secret, expires = create_session(conn, owner, remember=body.remember)
+        secret, expires = create_session(conn, owner, remember=body.remember, device=body.device)
     audit_log.record("auth.login", method="code", status="ok", remember=body.remember)
     return _issued(secret, expires, owner)
 
@@ -241,7 +250,9 @@ def login_code(body: CodeLogin, settings: Settings = Depends(get_settings), _: S
 def session(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
     with _db(settings) as conn:
-        return {"account_id": str(_session_account(conn, body.session))}
+        account = _session_account(conn, body.session)
+        touch_session(conn, account, body.session)
+        return {"account_id": str(account)}
 
 
 @router.post("/logout")
@@ -262,6 +273,23 @@ def logout_all(body: SessionBody, settings: Settings = Depends(get_settings), _:
         n = revoke_all_sessions(conn, _session_account(conn, body.session))
     audit_log.record("auth.logout", scope="all", sessions=n)
     return {"ok": True, "revoked": n}
+
+
+@router.post("/sessions/list")
+def sessions_list(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
+    _require_on(settings)
+    with _db(settings) as conn:
+        return {"sessions": list_sessions(conn, _session_account(conn, body.session), body.session)}
+
+
+@router.post("/sessions/revoke")
+def sessions_revoke(body: SessionRevoke, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
+    _require_on(settings)
+    with _db(settings) as conn:
+        if not revoke_session_by_id(conn, _session_account(conn, body.session), body.id):
+            raise refuse("not_found")
+    audit_log.record("auth.logout", scope="session")
+    return {"ok": True}
 
 
 @router.post("/passkeys/list")
@@ -360,7 +388,7 @@ def login_verify(body: LoginVerify, settings: Settings = Depends(get_settings), 
             audit_log.record("auth.login", method="passkey", status="rejected")
             raise denied from None
         conn.execute("SELECT auth_passkey_used(%s, %s)", (credential_id, v.new_sign_count))
-        secret, expires = create_session(conn, account, remember=body.remember)
+        secret, expires = create_session(conn, account, remember=body.remember, device=body.device)
     audit_log.record("auth.login", method="passkey", status="ok", remember=body.remember)
     return _issued(secret, expires, account)
 
