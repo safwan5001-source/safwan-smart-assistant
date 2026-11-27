@@ -33,6 +33,7 @@ MIN_TOKEN = 32
 MAX_MESSAGE = 8000
 SEND_PER_MINUTE = 20
 READ_TIMEOUT = 10.0
+SETTINGS_TIMEOUT = 40.0  # model/thinking/fast writes are queued one at a time on the engine (two devices) and spawn its CLI
 MAX_BYTES = 2 * 1024 * 1024
 _KEY_RE = re.compile(r"^agent:[a-z0-9_-]{1,64}:[^\s]{1,200}$", re.I)
 MODEL_REFUSALS = {"unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected"}
@@ -78,7 +79,7 @@ def configured(env=os.environ) -> bool:
     return _config(env) is not None
 
 
-def _call(method: str, path: str, body: dict | None = None, env=os.environ) -> dict[str, Any]:
+def _call(method: str, path: str, body: dict | None = None, env=os.environ, timeout: float = READ_TIMEOUT) -> dict[str, Any]:
     cfg = _config(env)
     if cfg is None:
         raise EngineError(503, "basht_unconfigured")
@@ -88,7 +89,7 @@ def _call(method: str, path: str, body: dict | None = None, env=os.environ) -> d
                   headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
                            **({"Content-Type": "application/json"} if data is not None else {})})
     try:
-        with urlopen(req, timeout=READ_TIMEOUT) as res:  # noqa: S310 - https only, checked in _config
+        with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(MAX_BYTES + 1)
             if len(raw) > MAX_BYTES:
                 raise EngineError(502, "basht_unavailable")
@@ -345,7 +346,7 @@ class FastBody(BaseModel):
 
 def _set(kind: str, path: str, body: dict, value: str) -> dict:
     try:
-        j = _call("POST", path, body)
+        j = _call("POST", path, body, timeout=SETTINGS_TIMEOUT)
     except EngineError as e:
         code = "model_control_unavailable" if e.code in ("not_found", "model_control_unavailable") else e.code
         audit_log.record("basht.model", setting=kind, value=value, status=code)

@@ -109,6 +109,7 @@ describe("BASHT chat door: model control (M)", () => {
     for (const [p, body] of [["model", { model: "openai/gpt-5" }], ["model", { model: "default" }], ["thinking", { level: "high" }], ["fast", { mode: "off" }]] as const)
       expect((await call("POST", p, { ...authed, body })).status, p).toBe(200);
     expect(backend.mock.calls.map((c) => c[0].body)).toEqual([{ model: "openai/gpt-5" }, { model: "default" }, { level: "high" }, { mode: "off" }]);
+    expect(new Set(backend.mock.calls.map((c) => c[0].timeoutMs))).toEqual(new Set([45_000])); // queued on the engine: never cut short
     backend.mockClear();
     for (const [p, body] of [["model", { model: "a b" }], ["model", { model: 5 }], ["thinking", { level: "HIGH!" }], ["fast", { mode: "turbo" }]] as const)
       expect((await call("POST", p, { ...authed, body })).status, JSON.stringify(body)).toBe(400);

@@ -236,6 +236,8 @@ def test_model_changes_pass_validated_values_and_are_audited(client, engine):
     assert call(client, "POST", "/internal/v1/basht/thinking", {"level": "default"}).json() == {"level": None}
     assert call(client, "POST", "/internal/v1/basht/fast", {"mode": "on"}).json() == {"mode": "on"}
     assert [c["body"] for c in calls] == [{"model": "openai/gpt-5"}, {"level": "high"}, {"level": "default"}, {"mode": "on"}]
+    # settings writes wait their turn on the engine (one at a time across devices): a longer timeout than reads
+    assert {c["timeout"] for c in calls} == {bc.SETTINGS_TIMEOUT} and bc.SETTINGS_TIMEOUT > bc.READ_TIMEOUT
     events = [e for e in audit_log.recent(10) if e["event"] == "basht.model"]
     assert {e["setting"] for e in events} >= {"model", "thinking", "fast"}
     # malformed values never reach the engine

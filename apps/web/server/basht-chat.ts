@@ -63,6 +63,8 @@ const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",
 
 /** Model-control refusals the browser may see as they are (a fixed list; never upstream text). */
 const MODEL_CODES = new Set(["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected", "model_control_unavailable"]);
+/** Settings writes wait their turn on the engine (one at a time across devices) and spawn its CLI: give them time. */
+const SETTINGS_MS = 45_000;
 const MODEL_REF = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
 const LEVEL = /^[a-z][a-z0-9_-]{0,39}$/;
 
@@ -100,9 +102,9 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   if (write && !sameOrigin(req)) return err("forbidden", 403);
   if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);
 
-  const relay = async (apiPath: string, method: "GET" | "POST", body?: unknown, pick?: (j: Record<string, unknown>) => unknown) => {
+  const relay = async (apiPath: string, method: "GET" | "POST", body?: unknown, pick?: (j: Record<string, unknown>) => unknown, timeoutMs = 15_000) => {
     // 512 KiB is callBackend's hard ceiling; history pages are kept well under it (the engine also caps one page at 80 KiB)
-    const r = await deps.callBackend({ path: apiPath, method, body, env: deps.env, timeoutMs: 15_000, maxBytes: 512 * 1024 });
+    const r = await deps.callBackend({ path: apiPath, method, body, env: deps.env, timeoutMs, maxBytes: 512 * 1024 });
     if (r.kind !== "ok") return err("unavailable", 503);
     if (r.status !== 200) {
       const code = (r.json as { detail?: { code?: unknown } } | null)?.detail?.code;
@@ -136,16 +138,16 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (route === "model") {
       const model = typeof data?.model === "string" ? data.model.trim() : "";
       if (model !== "default" && !MODEL_REF.test(model)) return err("bad_request", 400);
-      return relay("/internal/v1/basht/model", "POST", { model });
+      return relay("/internal/v1/basht/model", "POST", { model }, undefined, SETTINGS_MS);
     }
     if (route === "thinking") {
       const level = typeof data?.level === "string" ? data.level.trim() : "";
       if (!LEVEL.test(level)) return err("bad_request", 400);
-      return relay("/internal/v1/basht/thinking", "POST", { level });
+      return relay("/internal/v1/basht/thinking", "POST", { level }, undefined, SETTINGS_MS);
     }
     const mode = data?.mode;
     if (mode !== "on" && mode !== "off" && mode !== "default") return err("bad_request", 400);
-    return relay("/internal/v1/basht/fast", "POST", { mode });
+    return relay("/internal/v1/basht/fast", "POST", { mode }, undefined, SETTINGS_MS);
   }
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
