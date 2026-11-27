@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 import app.service_auth as sa
 from app import basht_chat as bc
+from app.audit import audit_log
 from app.main import app
 from app.service_auth import MemoryNonceStore, sign
 
@@ -319,3 +320,166 @@ def test_an_automatic_fallback_pin_is_reported_as_such(client, engine):
     assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "fallback"
     replies["/model"] = {**MODEL_STATE, "model": {**MODEL_STATE["model"], "source": "<x>"}}
     assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "default"
+
+
+# ── Voice V2/V3: BASHT's own voice and transcription from the engine's config ───────────────────────────────────────
+AUDIO = b"OggS" + bytes(range(256)) * 8  # 2 KiB of "audio"
+SPEECH = b"ID3" + bytes(range(256)) * 40
+
+
+class _Bin(io.BytesIO):
+    def __init__(self, data: bytes, ctype: str):
+        super().__init__(data)
+        self.headers = {"Content-Type": ctype}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.fixture
+def voice(monkeypatch):
+    """Fake engine voice routes: records raw requests; answers from `replies[path]` (bytes+type, a dict, or an exception)."""
+    calls, replies = [], {}
+
+    def fake(req, timeout):
+        calls.append({"url": req.full_url, "method": req.get_method(), "auth": req.get_header("Authorization"),
+                      "type": req.get_header("Content-type"), "data": req.data, "timeout": timeout})
+        r = replies[req.full_url.removeprefix(URL + "/app/v1")]
+        if isinstance(r, Exception):
+            raise r
+        if isinstance(r, dict):
+            return _Bin(json.dumps(r).encode(), "application/json; charset=utf-8")
+        return _Bin(*r)
+
+    monkeypatch.setattr(bc, "urlopen", fake)
+    return calls, replies
+
+
+def raw_call(client, target, data: bytes, ctype: str, *, signed_body: bytes | None = None):
+    ts, nonce = int(time.time()), f"nonce{time.monotonic_ns():020d}"[-24:]
+    sig = sign(SECRET.encode(), "POST", target, ts, nonce, data if signed_body is None else signed_body)
+    return client.post(target, content=data, headers={"x-svc-ts": str(ts), "x-svc-nonce": nonce, "x-svc-sig": sig, "content-type": ctype})
+
+
+def _engine_error(code: int, error: str | None = None):
+    body = json.dumps({"ok": False, "error": error}).encode() if error else b"<html>"
+    return HTTPError(URL, code, "x", {}, io.BytesIO(body))
+
+
+def test_speak_returns_bashts_audio_and_sends_only_the_text(client, voice):
+    calls, replies = voice
+    replies["/speak"] = (SPEECH, "audio/mpeg")
+    audit_log.clear()
+    r = call(client, "POST", "/internal/v1/basht/speak", {"text": "  مرحبا يا **صفوان**  "})
+    assert r.status_code == 200
+    assert r.content == SPEECH
+    assert r.headers["content-type"] == "audio/mpeg"
+    assert r.headers["cache-control"] == "no-store"
+    assert calls[0]["url"] == URL + "/app/v1/speak" and calls[0]["method"] == "POST"
+    assert calls[0]["auth"] == f"Bearer {TOKEN}" and calls[0]["type"] == "application/json"
+    assert json.loads(calls[0]["data"]) == {"text": "مرحبا يا **صفوان**"}, "no voice, provider or session from the app"
+    entry = audit_log.recent(1)[0]
+    assert entry["event"] == "basht.speak" and entry["status"] == "ok" and entry["chars"] == len("مرحبا يا **صفوان**") and entry["bytes"] == len(SPEECH)
+    assert "صفوان" not in json.dumps(entry, ensure_ascii=False), "never the content"
+
+
+def test_speak_validates_text_before_the_engine(client, voice):
+    calls, _ = voice
+    for body in [{}, {"text": ""}, {"text": "   "}, {"text": "ا" * 1501}, {"text": 5}]:
+        assert call(client, "POST", "/internal/v1/basht/speak", body).status_code == 422, body
+    assert calls == []
+
+
+@pytest.mark.parametrize("reply,status,code", [
+    (_engine_error(503, "voice_unavailable"), 400, "voice_unavailable"),   # engine voice not configured / tool not allowed
+    (_engine_error(404, "not_found"), 400, "voice_unavailable"),           # an older engine bridge without voice
+    (_engine_error(502, "engine_unavailable"), 502, "basht_unavailable"),
+    (_engine_error(429, "rate_limited"), 429, "rate_limited"),
+    (_engine_error(401), 502, "basht_unavailable"),
+    (URLError("down"), 502, "basht_unavailable"),
+    ((b"x" * (bc.MAX_SPEECH_BYTES + 1), "audio/mpeg"), 502, "basht_unavailable"),
+    ((b"<html>not audio</html>", "text/html"), 502, "basht_unavailable"),
+    ((b"", "audio/mpeg"), 502, "basht_unavailable"),
+])
+def test_speak_error_mapping(client, voice, reply, status, code):
+    _, replies = voice
+    replies["/speak"] = reply
+    r = call(client, "POST", "/internal/v1/basht/speak", {"text": "مرحبا"})
+    assert (r.status_code, r.json()["detail"]["code"]) == (status, code)
+
+
+def test_speak_is_rate_limited_and_needs_configuration(client, voice, monkeypatch):
+    _, replies = voice
+    replies["/speak"] = (SPEECH, "audio/mpeg")
+    for _ in range(bc.SPEAK_PER_MINUTE):
+        assert call(client, "POST", "/internal/v1/basht/speak", {"text": "x"}).status_code == 200
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "x"}).status_code == 429
+    bc.reset_limits()
+    monkeypatch.delenv("BASHT_APP_TOKEN")
+    r = call(client, "POST", "/internal/v1/basht/speak", {"text": "x"})
+    assert (r.status_code, r.json()["detail"]["code"]) == (503, "basht_unconfigured")
+
+
+def test_transcribe_passes_the_raw_signed_audio_and_returns_the_transcript(client, voice):
+    calls, replies = voice
+    replies["/transcribe"] = {"ok": True, "text": "  نص الملاحظة  "}
+    audit_log.clear()
+    r = raw_call(client, "/internal/v1/basht/transcribe", AUDIO, "audio/webm;codecs=opus")
+    assert r.status_code == 200 and r.json() == {"text": "نص الملاحظة"}
+    assert calls[0]["url"] == URL + "/app/v1/transcribe" and calls[0]["data"] == AUDIO
+    assert calls[0]["type"] == "audio/webm" and calls[0]["auth"] == f"Bearer {TOKEN}"
+    assert calls[0]["timeout"] >= 90
+    entry = audit_log.recent(1)[0]
+    assert entry["event"] == "basht.transcribe" and entry["status"] == "ok" and entry["bytes"] == len(AUDIO) and entry["chars"] == 11
+    assert "ms" in entry and "الملاحظة" not in json.dumps(entry, ensure_ascii=False)
+
+
+def test_transcribe_refuses_unsigned_tampered_wrong_type_tiny_and_oversized_audio(client, voice):
+    calls, replies = voice
+    replies["/transcribe"] = {"ok": True, "text": "x"}
+    target = "/internal/v1/basht/transcribe"
+    assert client.post(target, content=AUDIO, headers={"content-type": "audio/ogg"}).status_code == 401
+    assert raw_call(client, target, AUDIO, "audio/ogg", signed_body=AUDIO[:-1] + b"!").status_code == 401
+    for ctype in ["application/json", "text/plain", "application/octet-stream", "video/webm", "audio/aac"]:
+        r = raw_call(client, target, AUDIO, ctype)
+        assert (r.status_code, r.json()["detail"]["code"]) == (415, "unsupported_audio"), ctype
+    r = raw_call(client, target, b"x" * 1023, "audio/ogg")
+    assert (r.status_code, r.json()["detail"]["code"]) == (422, "no_speech")
+    assert raw_call(client, target, b"x" * (10 * 1024 * 1024 + 1), "audio/ogg").status_code == 413
+    assert calls == []
+    # a 2 MiB voice note is fine here, while every other signed route keeps its 1 MiB ceiling
+    assert raw_call(client, target, b"x" * (2 * 1024 * 1024), "audio/mp4").status_code == 200
+    big = json.dumps({"message": "x" * (2 * 1024 * 1024)}).encode()
+    assert raw_call(client, "/internal/v1/basht/send", big, "application/json").status_code == 413
+
+
+@pytest.mark.parametrize("reply,status,code", [
+    ({"ok": True, "text": "   "}, 422, "no_speech"),
+    ({"ok": True}, 422, "no_speech"),
+    (_engine_error(422, "no_speech"), 422, "no_speech"),
+    (_engine_error(503, "voice_unavailable"), 400, "voice_unavailable"),
+    (_engine_error(404, "not_found"), 400, "voice_unavailable"),
+    (_engine_error(413, "too_large"), 413, "too_large"),
+    (_engine_error(415, "unsupported_audio"), 415, "unsupported_audio"),
+    (_engine_error(429, "rate_limited"), 429, "rate_limited"),
+    (_engine_error(502, "engine_unavailable"), 502, "basht_unavailable"),
+    (TimeoutError(), 502, "basht_unavailable"),
+    ((b"not json", "text/plain"), 502, "basht_unavailable"),
+])
+def test_transcribe_error_mapping(client, voice, reply, status, code):
+    _, replies = voice
+    replies["/transcribe"] = reply
+    r = raw_call(client, "/internal/v1/basht/transcribe", AUDIO, "audio/ogg")
+    assert (r.status_code, r.json()["detail"]["code"]) == (status, code)
+
+
+def test_transcribe_caps_the_transcript_and_is_rate_limited(client, voice):
+    _, replies = voice
+    replies["/transcribe"] = {"ok": True, "text": "ب" * 9000}
+    assert len(raw_call(client, "/internal/v1/basht/transcribe", AUDIO, "audio/ogg").json()["text"]) == bc.MAX_MESSAGE
+    for _ in range(bc.TRANSCRIBE_PER_MINUTE - 1):
+        assert raw_call(client, "/internal/v1/basht/transcribe", AUDIO, "audio/ogg").status_code == 200
+    assert raw_call(client, "/internal/v1/basht/transcribe", AUDIO, "audio/ogg").status_code == 429

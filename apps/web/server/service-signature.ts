@@ -21,7 +21,7 @@ export function sign(secret: string, method: string, target: string, ts: number,
 /** 24 URL-safe chars (144 bits). A fresh nonce for every request; the API rejects reuse. */
 export const newNonce = (): string => randomBytes(18).toString("base64url");
 
-export type SignInput = { method: string; target: string; body?: string; account?: string | null; now?: () => number; nonce?: string };
+export type SignInput = { method: string; target: string; body?: string | Uint8Array; account?: string | null; now?: () => number; nonce?: string };
 
 export function signedHeaders(secret: string, input: SignInput): Record<string, string> {
   const account = input.account ? input.account.toLowerCase() : null;

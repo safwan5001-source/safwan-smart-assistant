@@ -33,6 +33,8 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
   model_not_selectable: "لا يمكن اختيار هذا النموذج يدويًا.", unsupported_level: "النموذج الحالي لا يدعم مستوى التفكير هذا.",
   fast_mode_unsupported: "النموذج الحالي لا يدعم الوضع السريع.", rejected: "رفض المحرك هذا التغيير.",
   model_control_unavailable: "التحكم بالنماذج غير متاح في نسخة المحرك الحالية.",
+  voice_unavailable: "صوت باشت غير مفعّل في المحرك الآن.", no_speech: "لم أسمع كلامًا واضحًا في التسجيل. حاول مرة أخرى.",
+  too_large: "التسجيل أطول من الحد المسموح (3 دقائق).", unsupported_audio: "صيغة التسجيل غير مدعومة في هذا المتصفح.",
   not_found: "المحادثة غير متاحة.", bad_request: "طلب غير صالح.", unavailable: "تعذّر الوصول إلى محرك باشت الآن.", network: "انقطع الاتصال بالخادم.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
@@ -66,6 +68,24 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     setModel: async (model: string) => { await call("model", post({ model })); },
     setThinking: async (level: string) => { await call("thinking", post({ level })); },
     setFast: async (mode: "on" | "off" | "default") => { await call("fast", post({ mode })); },
+    /** One chunk (≤ 1500 chars) spoken in BASHT's own voice (the engine's config). Resolves with the audio. */
+    async speak(text: string, signal?: AbortSignal): Promise<Blob> {
+      let res: Response;
+      try { res = await fetchImpl("/api/basht/speak", { credentials: "same-origin", cache: "no-store", ...post({ text }), signal }); }
+      catch (e) { if (signal?.aborted) throw e; throw new BashtError("network"); }
+      const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+      if (res.ok && type.startsWith("audio/")) {
+        try { return await res.blob(); } catch (e) { if (signal?.aborted) throw e; throw new BashtError("network"); }
+      }
+      let code = "unavailable";
+      try { const j = await res.json() as { error?: unknown }; if (typeof j.error === "string") code = j.error; } catch { /* not JSON */ }
+      throw new BashtError(code);
+    },
+    /** A voice note → the engine's transcript (its own audio config, as on WhatsApp). */
+    transcribe: async (audio: Blob, signal?: AbortSignal) => {
+      const type = (audio.type || "audio/webm").split(";")[0].trim();
+      return (await call<{ text: string }>("transcribe", { method: "POST", headers: { "content-type": type }, body: audio, signal })).text;
+    },
   };
 }
 export const bashtClient = createBashtClient();

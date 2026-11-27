@@ -190,3 +190,36 @@ describe("cachedHealth (public route cannot amplify load on the API or PostgreSQ
     expect((await cachedHealth(() => 2, good)).status).toBe(200);
   });
 });
+
+describe("binary transport for BASHT voice", () => {
+  it("callBackend sends a raw audio body with its type, signed over the exact bytes", async () => {
+    const { createHmac, createHash } = await import("node:crypto");
+    const f = vi.fn(async () => ok({ text: "x" }));
+    const bytes = new Uint8Array([0, 1, 2, 250, 251, 252]);
+    await callBackend({ path: "/internal/v1/basht/transcribe", method: "POST", rawBody: { bytes, type: "audio/webm" }, env, fetchImpl: f as unknown as typeof fetch });
+    const [, init] = f.mock.calls[0] as unknown as [URL, RequestInit & { headers: Record<string, string> }];
+    expect(init.headers["content-type"]).toBe("audio/webm");
+    expect(init.body).toBe(bytes);
+    const h = init.headers;
+    const canon = ["safwan-svc-v1", "POST", "/internal/v1/basht/transcribe", h["x-svc-ts"], h["x-svc-nonce"], createHash("sha256").update(bytes).digest("hex"), "-"].join("\n");
+    expect(h["x-svc-sig"]).toBe(createHmac("sha256", SECRET).update(canon, "utf8").digest("hex"));
+  });
+  it("callBackend refuses a raw body that is not audio", async () => {
+    const f = vi.fn();
+    await expect(callBackend({ path: "/internal/v1/basht/transcribe", method: "POST", rawBody: { bytes: new Uint8Array(3), type: "text/html" }, env, fetchImpl: f as unknown as typeof fetch })).rejects.toThrow();
+    expect(f).not.toHaveBeenCalled();
+  });
+  it("streamBackend hands back the content type and allows up to 4 MiB (never more)", async () => {
+    const { streamBackend } = await import("@/server/backend");
+    const five = new Uint8Array(5 * 1024 * 1024);
+    const f = vi.fn(async () => new Response(five, { status: 200, headers: { "content-type": "audio/mpeg" } }));
+    const r = await streamBackend({ path: "/internal/v1/basht/speak", body: { text: "x" }, accept: "audio/*", maxBytes: 64 * 1024 * 1024, env, fetchImpl: f as unknown as typeof fetch });
+    expect(r.kind).toBe("stream");
+    if (r.kind !== "stream") return;
+    expect(r.contentType).toBe("audio/mpeg");
+    const init = (f.mock.calls[0] as unknown as [URL, RequestInit & { headers: Record<string, string> }])[1];
+    expect(init.headers.accept).toBe("audio/*");
+    expect(init.headers["x-svc-acct"]).toBeUndefined();
+    await expect(new Response(r.body).arrayBuffer()).rejects.toThrow();
+  });
+});
