@@ -31,6 +31,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .audit import audit_log
 from .basht_core import ENV_VAR as URL_VAR
+from .basht_signing import engine_request, ensure_signed
 from .service_auth import MAX_AUDIO_BODY_BYTES, ServiceCall, require_service_call, require_service_call_audio
 
 TOKEN_VAR = "BASHT_APP_TOKEN"
@@ -67,7 +68,7 @@ _opener = urllib_request.build_opener(urllib_request.ProxyHandler({}), _NoRedire
 
 def urlopen(req: Request, timeout: float):
     """Single seam for tests (monkeypatched). Never follows redirects, never uses an environment proxy."""
-    return _opener.open(req, timeout=timeout)
+    return _opener.open(ensure_signed(req), timeout=timeout)  # ensure_signed: a request to the bridge can never leave unsigned by mistake
 
 
 router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
@@ -103,9 +104,9 @@ def _call(method: str, path: str, body: dict | None = None, env=os.environ, time
         raise EngineError(503, "basht_unconfigured")
     base, token = cfg
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(f"{base}/app/v1{path}", data=data, method=method,
-                  headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
-                           **({"Content-Type": "application/json"} if data is not None else {})})
+    req = engine_request(base, path, method=method, data=data, env=env,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
+                                  **({"Content-Type": "application/json"} if data is not None else {})})
     try:
         with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(MAX_BYTES + 1)
@@ -430,9 +431,9 @@ def _voice_call(path: str, data: bytes, content_type: str, *, timeout: float, ma
     if cfg is None:
         raise EngineError(503, "basht_unconfigured")
     base, token = cfg
-    req = Request(f"{base}/app/v1{path}", data=data, method="POST",
-                  headers={"Authorization": f"Bearer {token}", "Accept": "audio/*, application/json", "User-Agent": "basht-app/1",
-                           "Content-Type": content_type})
+    req = engine_request(base, path, method="POST", data=data, env=env,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "audio/*, application/json", "User-Agent": "basht-app/1",
+                                  "Content-Type": content_type})
     try:
         with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(max_bytes + 1)

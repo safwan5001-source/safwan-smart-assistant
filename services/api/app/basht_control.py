@@ -17,12 +17,12 @@ import re
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, StrictBool
 
 from . import basht_chat as _chat
+from .basht_signing import engine_request
 from .audit import audit_log
 from .service_auth import ServiceCall, require_service_call
 
@@ -51,9 +51,9 @@ def _call(method: str, path: str, body: dict | None = None, timeout: float = REA
         raise _chat.EngineError(503, "basht_unconfigured")
     base, token = cfg
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(f"{base}/app/v1{path}", data=data, method=method,
-                  headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
-                           **({"Content-Type": "application/json"} if data is not None else {})})
+    req = engine_request(base, path, method=method, data=data,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
+                                  **({"Content-Type": "application/json"} if data is not None else {})})
     try:
         with _chat.urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(_chat.MAX_BYTES + 1)

@@ -18,13 +18,13 @@ import threading
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from . import basht_chat as bc
 from .audit import audit_log
+from .basht_signing import engine_request
 from .service_auth import ServiceCall, require_service_call
 
 router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
@@ -73,9 +73,9 @@ def _live(method: str, path: str, body: dict | None = None, timeout: float = LIV
         raise LiveError(503, "basht_unconfigured")
     base, token = cfg
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(f"{base}/app/v1{path}", data=data, method=method,
-                  headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
-                           **({"Content-Type": "application/json"} if data is not None else {})})
+    req = engine_request(base, path, method=method, data=data,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
+                                  **({"Content-Type": "application/json"} if data is not None else {})})
     try:
         with bc.urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in bc._config
             raw = res.read(bc.MAX_BYTES + 1)
