@@ -12,7 +12,8 @@ export type Role = "user" | "system" | "assistant";
 /** A browser-task card inside the conversation. Only the reference is stored locally: never the page text, the screenshot or any session data. */
 export type BrowserRef = { url: string; mode?: "interactive"; state: "offer" | "started" | "done" | "dismissed"; taskId?: string; outcome?: "succeeded" | "failed" | "cancelled" };
 export type Message = { id: string; text: string; created: number; role?: Role; attachments?: Attachment[]; edited?: boolean; browser?: BrowserRef };
-export type Thread = { id: string; title: string; created: number; messages: Message[]; archived?: boolean; updated?: number };
+/** `main`: the one on-device thread of the BASHT conversation (its local events: commands, browser cards). Every other thread is the local archive. */
+export type Thread = { id: string; title: string; created: number; messages: Message[]; archived?: boolean; updated?: number; main?: true; claudeId?: string };
 
 export const LIMITS = { tasks: 1000, threads: 500, title: 200, threadTitle: 80, notes: 2000, messageText: 20000 } as const;
 
@@ -69,6 +70,7 @@ function parseMessage(v: unknown): Message | null {
 export function parseThreads(value: unknown): Thread[] {
   if (!Array.isArray(value)) return [];
   const out: Thread[] = [];
+  let archived = 0, hasMain = false;
   for (const v of value) {
     if (!isObj(v) || !isStr(v.id) || !Array.isArray(v.messages)) continue;
     const t: Thread = {
@@ -79,8 +81,16 @@ export function parseThreads(value: unknown): Thread[] {
     };
     if (v.archived === true) t.archived = true;
     if (isNum(v.updated)) t.updated = v.updated;
+    // the conversation's single `main` thread is in addition to the archive's cap, so saving it can never push an archive out
+    if (v.main === true && !hasMain) {
+      t.main = true; hasMain = true;
+      // direct-Claude backend conversation of the main thread (rotated when the server's per-conversation cap is reached)
+      if (isStr(v.claudeId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(v.claudeId)) t.claudeId = v.claudeId;
+      out.push(t); continue;
+    }
+    if (archived >= LIMITS.threads) continue;
+    archived++;
     out.push(t);
-    if (out.length >= LIMITS.threads) break;
   }
   return out;
 }

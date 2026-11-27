@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import { Badge, Notice, PageHeader, VoiceOrb } from "@/components/ui";
@@ -8,7 +7,8 @@ import { useDictation } from "@/lib/speech";
 import { useStore } from "@/lib/hooks";
 import { earcon, voiceFxStore } from "@/lib/earcons";
 
-export default function CallsScreen() {
+/** The voice session, opened as a panel INSIDE the conversation (/chat?voice=1): the transcript goes into the same composer. */
+export default function VoicePanel({ onUse }: { onUse: (text: string) => void }) {
   const d = useDictation();
   const [text, setText] = useState("");
   const fx = useStore(voiceFxStore);
@@ -24,7 +24,7 @@ export default function CallsScreen() {
   };
 
   return (
-    <div className="page">
+    <div className="stack" style={{ gap: 16 }}>
       <PageHeader icon="wave" eyebrow="الصوت" title="الجلسة الصوتية" description="تحدّث مع باشت بصوتك. المتاح الآن: إملاء عربي يحوّل كلامك إلى نص ترسله للمحادثة. الرد الصوتي المباشر والمكالمات لم تُفعَّل بعد." />
 
       <section className="voice" data-state={state} aria-labelledby="voice-h">
@@ -56,9 +56,9 @@ export default function CallsScreen() {
         <div className="transcript" aria-live="polite" aria-label="نص الكلام">{text || <span className="muted">سيظهر نص كلامك هنا.</span>}</div>
         {d.error && <Notice tone="danger" role="alert">{d.error}</Notice>}
         <div className="row-wrap">
-          <Link href={text.trim() ? "/chat?draft=" + encodeURIComponent(text.trim()) : "/chat"} className={"btn btn-primary" + (text.trim() ? "" : " is-disabled")} aria-disabled={!text.trim()} onClick={(e) => { if (!text.trim()) e.preventDefault(); else d.abort(); }}>
+          <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={() => { const t = text.trim(); if (!t) return; d.abort(); onUse(t); }}>
             <Icon name="send" size={18} style={{ transform: "scaleX(-1)" }} />راجع وأرسل لباشت
-          </Link>
+          </button>
         </div>
         <small className="muted">تفريغ صوتي فقط: يُفتح النص في المحادثة لتراجعه قبل الإرسال. قد يعالج المتصفح (أو مزوّده) الصوت عبر خدمة خارجية.</small>
       </section>

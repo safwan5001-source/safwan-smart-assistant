@@ -52,18 +52,20 @@ export function agentState(status: AssistantStatus, activity: AgentActivity): Ag
   if (activity.phase !== "idle") return activity.phase;
   if (status.server === "checking") return "connecting";
   if (status.server === "offline") return "offline";
+  // BASHT (the engine) is the app's default brain; direct Claude only backs the chat when no engine is configured.
+  if (status.bashtChat) return status.basht === "connected" ? "ready" : "offline";
   return status.assistant ? "ready" : "notes";
 }
 
 export const AGENT_STATE_TEXT: Record<AgentState, { label: string; detail: string; tone: "live" | "ok" | "muted" | "warn" | "danger" | "info" }> = {
   connecting: { label: "يتحقق من الاتصال", detail: "يفحص الخادم الآن", tone: "muted" },
-  offline: { label: "غير متصل", detail: "تعذّر الوصول إلى الخادم؛ ما على جهازك يعمل كالمعتاد", tone: "warn" },
-  notes: { label: "وضع الملاحظات", detail: "الذكاء الاصطناعي غير مفعّل؛ تُحفظ رسائلك وأوامرك محليًا", tone: "muted" },
-  ready: { label: "جاهز", detail: "متصل ويعمل بـ Claude", tone: "ok" },
+  offline: { label: "غير متصل", detail: "تعذّر الوصول إلى باشت؛ لن تُرسل الرسائل حتى يعود الاتصال", tone: "warn" },
+  notes: { label: "غير مفعّل", detail: "لا يوجد محرك مفعّل؛ الأوامر السريعة وحدها تعمل على جهازك", tone: "muted" },
+  ready: { label: "جاهز", detail: "متصل وجاهز لطلباتك", tone: "ok" },
   thinking: { label: "يفكّر", detail: "أُرسل طلبك وينتظر أول رد", tone: "live" },
   responding: { label: "يكتب الرد", detail: "يصل الرد الآن", tone: "live" },
-  replied: { label: "اكتمل الرد", detail: "وصل رد Claude كاملًا — رد نصي، لم يُنفَّذ أي إجراء", tone: "info" },
-  reply_failed: { label: "تعذّر الرد", detail: "لم يكتمل رد Claude؛ التفاصيل في المحادثة", tone: "danger" },
+  replied: { label: "اكتمل الرد", detail: "وصل الرد كاملًا — رد نصي، لم يُنفَّذ أي إجراء من التطبيق", tone: "info" },
+  reply_failed: { label: "تعذّر الرد", detail: "لم يكتمل الرد؛ التفاصيل في المحادثة", tone: "danger" },
   stopped: { label: "أُوقف", detail: "أُوقف بناءً على طلبك", tone: "muted" },
   task_done: { label: "نُفّذت المهمة", detail: "اكتمل إجراء تنفيذي فعلًا وسُجّل في النشاط", tone: "ok" },
   task_failed: { label: "تعذّر التنفيذ", detail: "لم يكتمل الإجراء؛ التفاصيل في المحادثة", tone: "danger" },

@@ -79,7 +79,7 @@ const taskCommands = {
 };
 
 // ── chat ────────────────────────────────────────────────────────────────
-type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role; browser?: BrowserRef };
+type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role; browser?: BrowserRef; main?: boolean };
 const titleFrom = (text: string, att?: Attachment[]) => (text.trim() || att?.[0]?.name || "مرفقات").slice(0, 48);
 const mkMessage = (text: string, attachments?: Attachment[], role?: Role, browser?: BrowserRef): Message => {
   const m: Message = { id: uid(), text: text.trim().slice(0, LIMITS.messageText), created: Date.now() };
@@ -89,7 +89,7 @@ const mkMessage = (text: string, attachments?: Attachment[], role?: Role, browse
   return m;
 };
 const patchThread = (id: string, fn: (t: Thread) => Thread) => threadsStore.set((old) => old.map((t) => (t.id === id ? fn(t) : t)));
-const assertRoomForThread = () => { if (threadsStore.getSnapshot().length >= LIMITS.threads) invalid("بلغت الحد الأقصى للمحادثات؛ احذف أو أرشف محادثات قديمة."); };
+const assertRoomForThread = () => { if (threadsStore.getSnapshot().filter((t) => !t.main).length >= LIMITS.threads) invalid("بلغت الحد الأقصى للمحادثات؛ احذف أو أرشف محادثات قديمة."); };
 const mustThread = (id: string) => threadsStore.getSnapshot().find((t) => t.id === id) ?? invalid("المحادثة غير موجودة.");
 
 const chatCommands = {
@@ -103,8 +103,12 @@ const chatCommands = {
     const m = mkMessage(p.text, p.attachments, p.role, p.browser);
     if (!m.text && !m.attachments?.length) invalid("الرسالة فارغة.");
     if (!p.threadId) {
-      assertRoomForThread();
-      const t: Thread = { id: uid(), title: titleFrom(m.text, m.attachments), created: Date.now(), messages: [m] };
+      // the BASHT conversation has exactly one local thread: reuse it instead of creating a second one
+      const main = p.main ? threadsStore.getSnapshot().find((t) => t.main) : undefined;
+      if (main) { patchThread(main.id, (t) => ({ ...t, messages: [...t.messages, m], updated: Date.now() })); return main.id; }
+      // the conversation's own thread is a single system thread: never refused by the archive's thread cap
+      if (!p.main) assertRoomForThread();
+      const t: Thread = { id: uid(), title: p.main ? "باشت" : titleFrom(m.text, m.attachments), created: Date.now(), messages: [m], ...(p.main ? { main: true as const } : {}) };
       threadsStore.set((old) => [t, ...old]);
       return t.id;
     }
@@ -120,6 +124,15 @@ const chatCommands = {
     const next = parseBrowserRef({ ...msg.browser, ...p.patch, url: msg.browser!.url, mode: msg.browser!.mode }) ?? invalid("طلب التصفح غير صالح.");
     patchThread(p.threadId, (x) => ({ ...x, messages: x.messages.map((m) => (m.id === p.id ? { ...m, browser: next } : m)) }));
   } } satisfies Def<{ threadId: string; id: string; patch: Partial<BrowserRef> }, void>,
+  // The main thread is ONE continuous conversation; its direct-Claude context lives in server conversations capped at 400 messages.
+  // Rotating starts a fresh server context while the visible timeline stays the same.
+  "chat.claude.rotate": { id: "chat.claude.rotate", title: "سياق Claude جديد", risk: "write", run: (p: { id: string }): string => {
+    const t = mustThread(p.id);
+    if (!t.main) invalid("للمحادثة الرئيسية فقط.");
+    const claudeId = uid();
+    patchThread(p.id, (x) => ({ ...x, claudeId }));
+    return claudeId;
+  } } satisfies Def<{ id: string }, string>,
   "chat.rename": { id: "chat.rename", title: "إعادة تسمية", risk: "write", run: (p: { id: string; title: string }) => {
     const title = cleanTitle(p.title, LIMITS.threadTitle);
     mustThread(p.id);
