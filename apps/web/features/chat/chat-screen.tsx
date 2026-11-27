@@ -582,7 +582,9 @@ export default function ChatScreen() {
           </div>
 
           {view.kind === "main" ? (
-            <div className="composer">
+            <div className="composer" onMouseDown={(e) => { if ((e.target as HTMLElement).closest("button")) e.preventDefault(); }}>
+              {/* ↑ a press on a composer button never moves focus (the draft keeps it, with the keyboard and the layout): nothing can
+                  shift between press and release and drop the tap. Keyboard focus is unchanged. */}
               <input ref={picker} type="file" multiple hidden aria-label="إضافة مرفقات من الجهاز" onChange={(e) => void addFiles(e.target.files)} />
               {bashtOn && basht.failedTurn && !live && <RetryBar text={basht.failedTurn.text} images={basht.failedTurn.images} disabled={busy || !ready} onRetry={() => void basht.retry()} />}
               <ComposerImages images={pics.images} preparing={pics.preparing} onRemove={pics.remove} submitting={pics.submitting}
