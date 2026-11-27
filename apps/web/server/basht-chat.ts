@@ -11,6 +11,7 @@ import "server-only";
  *
  * Voice (V2/V3): POST speak {text} → BASHT's reply spoken in its OWN voice (the engine's agent tts config), streamed back as audio;
  * POST transcribe <raw audio> → the engine's transcript. Same owner gate, same-origin check and bounded bodies; no provider key here.
+ * Failures carry an optional allowlisted `reason`; GET voice-status answers a fixed `{speak, reason?, features}` shape (`{speak:"unknown"}` on any failure).
  */
 import { hkdfSync } from "node:crypto";
 import { callBackend as realCallBackend, streamBackend as realStreamBackend } from "./backend";
@@ -93,7 +94,26 @@ async function readBytes(req: Request, max: number): Promise<Uint8Array | null |
   }
   return total ? new Uint8Array(Buffer.concat(chunks)) : null;
 }
-const voiceErr = (code: unknown) => (typeof code === "string" && Object.hasOwn(VOICE_CODES, code) ? err(code, VOICE_CODES[code]) : err("unavailable", 503));
+/** Why the engine's voice failed (fixed list, additive to the code). Anything else is dropped; engine/API free text never reaches the browser. */
+export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout"] as const;
+const voiceReason = (reason: unknown): (typeof VOICE_REASONS)[number] | undefined => (VOICE_REASONS as readonly unknown[]).includes(reason) ? (reason as (typeof VOICE_REASONS)[number]) : undefined;
+/** `{ error: <code>, reason?: <allowlisted reason> }` with the status of the code (unknown codes: 503 unavailable, as before). */
+const voiceErr = (code: unknown, reason?: unknown) => {
+  const r = voiceReason(reason);
+  const known = typeof code === "string" && Object.hasOwn(VOICE_CODES, code);
+  return json({ error: known ? code : "unavailable", ...(r ? { reason: r } : {}) }, known ? VOICE_CODES[code] : 503);
+};
+
+/** GET voice-status: the one fixed shape the browser may see. Anything unexpected is `{ speak: "unknown" }` (never an error to the UI). */
+export const VOICE_SPEAK_STATES = ["ready", "degraded", "unconfigured", "mismatch", "unknown"] as const;
+export const VOICE_FEATURES = ["voice.speak.v2", "voice.transcribe.v1", "voice.status.v1", "signing.v1"] as const;
+export function voiceStatusView(j: unknown): { speak: string; reason?: string; features?: string[] } {
+  const o = (j && typeof j === "object" ? j : {}) as { speak?: unknown; reason?: unknown; features?: unknown };
+  if (!(VOICE_SPEAK_STATES as readonly unknown[]).includes(o.speak)) return { speak: "unknown" };
+  const reason = voiceReason(o.reason);
+  const feats = Array.isArray(o.features) ? o.features : [];
+  return { speak: o.speak as string, ...(reason ? { reason } : {}), features: VOICE_FEATURES.filter((f) => feats.includes(f)) };
+}
 
 /** Model-control refusals the browser may see as they are (a fixed list; never upstream text). */
 const MODEL_CODES = new Set(["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected", "model_control_unavailable"]);
@@ -154,6 +174,11 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   // B1/B2: photos on a turn, files out, «محادثة جديدة», search (server/basht-extras.ts)
   const extra = await handleBashtExtras(req, route, { relay, deps });
   if (extra) return extra;
+  if (req.method === "GET" && route === "voice-status") {
+    // can BASHT speak right now? Same owner session as every read; any failure on the way reads as "unknown", never as an error
+    const r = await deps.callBackend({ path: "/internal/v1/basht/voice-status", method: "GET", env: deps.env, timeoutMs: 8_000 });
+    return json(r.kind === "ok" && r.status === 200 ? voiceStatusView(r.json) : { speak: "unknown" });
+  }
   if (req.method === "GET" && route === "sessions") return relay("/internal/v1/basht/sessions", "GET", undefined, (j) => ({ sessions: Array.isArray(j.sessions) ? j.sessions : [] }));
   if (req.method === "GET" && route === "history") {
     const u = new URL(req.url);
@@ -203,7 +228,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
       if (!SPEECH_TYPES.has(r.contentType)) { await r.body.cancel().catch(() => {}); return err("unavailable", 502); }
       return new Response(r.body, { status: 200, headers: { "Content-Type": r.contentType, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
     }
-    return r.kind === "error" ? voiceErr(r.code) : err("unavailable", 503);
+    return r.kind === "error" ? voiceErr(r.code, r.reason) : err("unavailable", 503);
   }
   // Voice (V3): a voice note → the engine's transcript (its own audio config). The raw audio is passed through, never kept.
   if (req.method === "POST" && route === "transcribe") {
@@ -214,7 +239,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (!bytes || bytes.byteLength < MIN_AUDIO_BYTES) return err("no_speech", 422);
     const r = await deps.callBackend({ path: "/internal/v1/basht/transcribe", method: "POST", rawBody: { bytes, type }, env: deps.env, timeoutMs: 110_000, maxBytes: 64 * 1024 });
     if (r.kind !== "ok") return err("unavailable", 503);
-    if (r.status !== 200) return voiceErr((r.json as { detail?: { code?: unknown } } | null)?.detail?.code);
+    if (r.status !== 200) { const d = (r.json as { detail?: { code?: unknown; reason?: unknown } } | null)?.detail; return voiceErr(d?.code, d?.reason); }
     const text = (r.json as { text?: unknown } | null)?.text;
     return typeof text === "string" && text.trim() ? json({ text: text.trim().slice(0, MAX_MESSAGE) }) : err("no_speech", 422);
   }

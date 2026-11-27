@@ -52,7 +52,46 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
   not_found: "المحادثة غير متاحة.", bad_request: "طلب غير صالح.", unavailable: "تعذّر الوصول إلى محرك باشت الآن.", network: "انقطع الاتصال بالخادم.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
-export class BashtError extends Error { constructor(public code: string) { super(bashtErrorText(code)); this.name = "BashtError"; } }
+
+/** Why BASHT's engine voice is unavailable (`reason` of a voice error / voice-status; a fixed list, never upstream text). */
+export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout"] as const;
+export type VoiceReason = (typeof VOICE_REASONS)[number];
+export const isVoiceReason = (v: unknown): v is VoiceReason => (VOICE_REASONS as readonly unknown[]).includes(v);
+export const VOICE_REASON_TEXT: Record<VoiceReason, string> = {
+  identity_mismatch: "صوت باشت موقوف: المحرك المتصل لا يطابق هوية باشت المعتمدة في التطبيق.",
+  tool_denied: "أداة النطق غير مسموحة لباشت في إعدادات المحرك.",
+  unconfigured: "لم يُضبط صوت باشت (النطق) في المحرك بعد.",
+  provider_error: "مزوّد الصوت رفض الطلب أو تعذّر الآن (قد يكون الرصيد أو الحصة).",
+  link_down: "الاتصال بمحرك باشت منقطع الآن.",
+  timeout: "تأخّر مزوّد الصوت في الرد فانتهت المهلة.",
+};
+/** Reasons that will not fix themselves on the next try (configuration): the UI hides «استمع» for them. */
+export const DURABLE_VOICE_REASONS: readonly VoiceReason[] = ["identity_mismatch", "tool_denied", "unconfigured"];
+export const voiceReasonText = (reason: string | null | undefined): string => (isVoiceReason(reason) ? VOICE_REASON_TEXT[reason] : "");
+
+export class BashtError extends Error {
+  /** `reason`: the allowlisted cause of a voice error (POST speak / transcribe), when the server gave one. */
+  constructor(public code: string, public reason?: VoiceReason) {
+    super(code === "voice_unavailable" && reason ? `${bashtErrorText(code)} ${VOICE_REASON_TEXT[reason]}` : bashtErrorText(code));
+    this.name = "BashtError";
+  }
+}
+
+/** GET /api/basht/voice-status: what the engine says about BASHT's voice (always answers; "unknown" when it cannot tell). */
+export type VoiceSpeakState = "ready" | "degraded" | "unconfigured" | "mismatch" | "unknown";
+export type VoiceStatus = { speak: VoiceSpeakState; reason?: VoiceReason; features: string[] };
+export const UNKNOWN_VOICE_STATUS: VoiceStatus = { speak: "unknown", features: [] };
+const SPEAK_STATES: readonly string[] = ["ready", "degraded", "unconfigured", "mismatch", "unknown"];
+export function parseVoiceStatus(j: unknown): VoiceStatus {
+  const o = (j && typeof j === "object" ? j : {}) as { speak?: unknown; reason?: unknown; features?: unknown };
+  if (typeof o.speak !== "string" || !SPEAK_STATES.includes(o.speak)) return { ...UNKNOWN_VOICE_STATUS };
+  const features = Array.isArray(o.features) ? o.features.filter((f): f is string => typeof f === "string").slice(0, 32) : [];
+  return { speak: o.speak as VoiceSpeakState, ...(isVoiceReason(o.reason) ? { reason: o.reason } : {}), features };
+}
+const errorOf = (body: unknown): BashtError => {
+  const b = body as { error?: unknown; reason?: unknown } | null;
+  return new BashtError(typeof b?.error === "string" ? b.error : "unavailable", isVoiceReason(b?.reason) ? b.reason : undefined);
+};
 
 type Fetch = typeof fetch;
 export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
@@ -61,7 +100,7 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     try { res = await fetchImpl(`/api/basht/${path}`, { credentials: "same-origin", cache: "no-store", ...init }); } catch { throw new BashtError("network"); }
     let body: unknown = null;
     try { body = await res.json(); } catch { /* not JSON */ }
-    if (!res.ok) throw new BashtError(typeof (body as { error?: unknown })?.error === "string" ? (body as { error: string }).error : "unavailable");
+    if (!res.ok) throw errorOf(body);
     return body as T;
   };
   const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -103,9 +142,17 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
       if (res.ok && type.startsWith("audio/")) {
         try { return await res.blob(); } catch (e) { if (signal?.aborted) throw e; throw new BashtError("network"); }
       }
-      let code = "unavailable";
-      try { const j = await res.json() as { error?: unknown }; if (typeof j.error === "string") code = j.error; } catch { /* not JSON */ }
-      throw new BashtError(code);
+      let body: unknown = null;
+      try { body = await res.json(); } catch { /* not JSON */ }
+      throw errorOf(body);
+    },
+    /** What the engine says about BASHT's voice. Never throws: any failure is `{ speak: "unknown", features: [] }`. */
+    async voiceStatus(): Promise<VoiceStatus> {
+      try {
+        const res = await fetchImpl("/api/basht/voice-status", { credentials: "same-origin", cache: "no-store" });
+        if (!res.ok) return { ...UNKNOWN_VOICE_STATUS };
+        return parseVoiceStatus(await res.json());
+      } catch { return { ...UNKNOWN_VOICE_STATUS }; }
     },
     /** A voice note → the engine's transcript (its own audio config, as on WhatsApp). */
     transcribe: async (audio: Blob, signal?: AbortSignal) => {

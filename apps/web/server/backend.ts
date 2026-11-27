@@ -107,7 +107,7 @@ export async function callBackend(opts: CallOptions): Promise<BackendResult> {
  */
 export type StreamResult =
   | { kind: "stream"; body: ReadableStream<Uint8Array>; contentType: string }
-  | { kind: "error"; status: number; code: string }
+  | { kind: "error"; status: number; code: string; reason?: string }
   | { kind: "unconfigured" }
   | { kind: "unreachable" };
 
@@ -132,12 +132,19 @@ export async function streamBackend(opts: { path: string; body: unknown; account
     res = await (opts.fetchImpl ?? fetch)(url, { method: "POST", headers, body, redirect: "manual", cache: "no-store", signal: ctl.signal });
   } catch { cleanup(); return { kind: "unreachable" }; }
   if (res.status !== 200 || !res.body) {
-    let code = "unavailable";
-    if (res.status >= 400 && res.status < 500 && res.status !== 401) {
-      try { const t = await readCapped(res, 2048); const d = t ? (JSON.parse(t) as { detail?: { code?: unknown } }).detail?.code : undefined; if (typeof d === "string" && /^[a-z_]{1,40}$/.test(d)) code = d; } catch { /* keep generic */ }
+    let code = "unavailable", reason: string | undefined;
+    if (res.status >= 400 && res.status !== 401) {
+      try {
+        const t = await readCapped(res, 2048);
+        const d = t ? (JSON.parse(t) as { detail?: { code?: unknown; reason?: unknown } }).detail : undefined;
+        // the code is read from 4xx answers only (a 5xx is always generic); the optional `reason` (BASHT voice) from any: a short token,
+        // never free text. The caller filters it against its own allowlist.
+        if (res.status < 500 && typeof d?.code === "string" && /^[a-z_]{1,40}$/.test(d.code)) code = d.code;
+        if (typeof d?.reason === "string" && /^[a-z_]{1,40}$/.test(d.reason)) reason = d.reason;
+      } catch { /* keep generic */ }
     } else await discard(res);
     cleanup(); ctl.abort();
-    return { kind: "error", status: res.status, code };
+    return { kind: "error", status: res.status, code, ...(reason ? { reason } : {}) };
   }
   const max = Math.min(Math.max(opts.maxBytes ?? 256 * 1024, 1), MAX_STREAM_BYTES_CEILING);
   const contentType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();

@@ -73,6 +73,10 @@
 ويصير الميكروفون للإملاء المتصفحي، وتعرض اللوحة الإملاء مع تنبيه. لا يُعدّ شيء «مُرسلًا» إلا إذا قبله باشت؛ وإن تعذّر الإرسال بعد
 التفريغ يوضع النص في مربع الكتابة. انتهاء جلسة المالك (401) يعيد إلى صفحة الدخول.
 
+**أسباب الفشل وحالة الصوت (إضافة متوافقة للخلف):**
+- عند فشل `/app/v1/speak` قد يضيف المحرك `reason` من قائمة ثابتة: `identity_mismatch` و`tool_denied` و`unconfigured` و`provider_error` و`link_down` و`timeout`. يمرّره الـAPI والـBFF حقلًا إضافيًا `{error, reason?}` بنفس الرموز وحالات HTTP السابقة؛ أي قيمة خارج القائمة تُسقط، ولا يصل نص حر من المحرك إلى المتصفح. المحرك القديم (بلا `reason`، أو 404) يعطي الرد العام كما كان.
+- `GET /api/basht/voice-status` (جلسة المالك، `Cache-Control: no-store`) ← `GET /internal/v1/basht/voice-status` في الـAPI ← `GET /app/v1/status` في المحرك. الشكل الثابت: `{speak: ready|degraded|unconfigured|mismatch|unknown, reason?, features: [...]}` (الميزات من قائمة ثابتة فقط). يُخزَّن 30 ث في الـAPI، وأي فشل أو محرك قديم بلا حقل `voice` يعيد `{speak:"unknown"}` بحالة 200 لا خطأ. التدقيق `basht.voice_status` بالحالة والسبب فقط.
+
 **متطلبات الإنتاج:**
 - `agents.entries.main.tts` (أو `tts` العام) بمزوّد مُعدّ؛ لمزوّد OpenAI يُقرأ المفتاح من `tts.providers.openai.apiKey` أو
   `OPENAI_API_KEY` — `models.providers.openai` وحده لا يكفي للنطق.
