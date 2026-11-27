@@ -8,7 +8,7 @@ const json = (body: unknown, init: ResponseInit = {}) =>
 describe("assistant service", () => {
   it("reports online with the assistant OFF when /health says so", async () => {
     const svc = createAssistantService(async () => json({ status: "ok", version: "0.2.0", features: { assistant: false } }));
-    expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0", basht: "unconfigured" });
+    expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0", basht: "unconfigured", bashtChat: false });
   });
   it("carries BASHT's engine state from /health, failing closed on unknown values", async () => {
     const st = async (basht: unknown) => createAssistantService(async () => json({ status: "ok", features: { assistant: false, basht } })).status();

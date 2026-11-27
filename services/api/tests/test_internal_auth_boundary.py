@@ -48,6 +48,12 @@ SIGNED_ROUTES = {
     ("GET", "/internal/v1/assistant/conversations/{conversation_id}"),
     ("POST", "/internal/v1/assistant/conversations/{conversation_id}/delete"),
     ("POST", "/internal/v1/assistant/chat"),
+    # BASHT Core C2/C4 (tests/test_basht_chat.py): same signature; the engine bridge holds the gateway token, the API its app token
+    ("GET", "/internal/v1/basht/sessions"),
+    ("POST", "/internal/v1/basht/history"),
+    ("POST", "/internal/v1/basht/send"),
+    ("GET", "/internal/v1/basht/runs/{run_id}"),
+    ("POST", "/internal/v1/basht/runs/{run_id}/stop"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
 
