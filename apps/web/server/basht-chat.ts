@@ -15,6 +15,7 @@ import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
+import { DECIDE_CODES, handleBashtLive } from "./basht-live";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 
 export const BASHT_COOKIE = "safwan_basht";
@@ -109,7 +110,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (r.kind !== "ok") return err("unavailable", 503);
     if (r.status !== 200) {
       const code = (r.json as { detail?: { code?: unknown } } | null)?.detail?.code;
-      if (r.status === 400 && typeof code === "string" && MODEL_CODES.has(code)) return err(code, 400);
+      if (r.status === 400 && typeof code === "string" && (MODEL_CODES.has(code) || DECIDE_CODES.has(code))) return err(code, 400);
       const m = API_ERRORS[r.status]; return m ? err(m[1], m[0]) : err("unavailable", 502);
     }
     const j = (r.json ?? {}) as Record<string, unknown>;
@@ -156,5 +157,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
       firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null }));
     if (req.method === "POST" && run[2]) return relay(`/internal/v1/basht/runs/${run[1]}/stop`, "POST", {});
   }
+  // B3/B4: approvals and the push link (server/basht-live.ts), behind the same gate, origin check and limiters as above
+  const live = await handleBashtLive(req, route, { relay, readJson });
+  if (live) return live;
   return err("not_found", 404);
 }

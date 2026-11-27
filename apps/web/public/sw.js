@@ -18,7 +18,7 @@ function readPayload(event) {
     if (!p || typeof p !== "object") return null;
     const str = (v, max) => (typeof v === "string" ? v.slice(0, max) : "");
     return {
-      key: str(p.key, 200), kind: p.kind === "test" ? "test" : "reminder", title: str(p.title, 200), body: str(p.body, 500),
+      key: str(p.key, 200), kind: p.kind === "test" || p.kind === "basht" ? p.kind : "reminder", title: str(p.title, 200), body: str(p.body, 500),
       url: str(p.url, 200), priority: ["low", "normal", "high", "critical"].includes(p.priority) ? p.priority : "normal",
       reminderId: str(p.reminderId, 80), tag: str(p.tag, 200),
     };

@@ -11,12 +11,16 @@ export type DeviceRec = {
   prefs: ServerPrefs;
   createdAt: number;
   lastSeenAt: number;
+  /** B4: the OWNER linked this device to BASHT alerts (set only through /api/basht/push, behind the owner session). */
+  bashtAlerts?: boolean;
 };
 /** Thrown by syncReminders when the resulting collection would exceed REMINDER_LIMITS.perDevice (nothing is written). */
 export class ReminderLimitError extends Error {}
+/** "basht": alerts from the owner's BASHT engine (approval needed, reply ready, automation failed, offline/online) — B4. */
+export type DeliveryKind = "reminder" | "test" | "basht";
 export type DeliveryStatus = "pending" | "sent" | "failed" | "gone" | "expired" | "cancelled";
 export type NewDelivery = {
-  key: string; reminderId: string | null; kind: "reminder" | "test"; payload: string; priority: ReminderPriority; createdAt: number; expiresAt: number;
+  key: string; reminderId: string | null; kind: DeliveryKind; payload: string; priority: ReminderPriority; createdAt: number; expiresAt: number;
 };
 export type DeliveryRec = NewDelivery & { deviceId: string; status: DeliveryStatus; attempts: number; nextAttemptAt: number; sentAt?: number; lastError?: string };
 
@@ -48,6 +52,13 @@ export interface NotifyStore {
   listDeliveries(deviceId: string, limit: number): Promise<DeliveryRec[]>;
   /** retention: drops finished deliveries older than 14 days and devices idle for 180 days */
   purge(now: number): Promise<number>;
+  /** B4: links / unlinks a device to BASHT alerts (owner-gated at the HTTP layer). Unsubscribing also unlinks. */
+  setBashtAlerts(id: string, on: boolean): Promise<void>;
+  /** B4: subscribed devices linked to BASHT alerts */
+  bashtDevices(limit: number): Promise<DeviceRec[]>;
+  /** B4: small named cursors (the BASHT event feed position); null when never written */
+  getCursor(name: string): Promise<string | null>;
+  setCursor(name: string, value: string, now: number): Promise<void>;
   /** runs `fn` while holding a cluster-wide dispatcher lock; null when another instance holds it */
   withLock<T>(fn: () => Promise<T>): Promise<T | null>;
   close(): Promise<void>;

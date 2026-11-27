@@ -116,6 +116,24 @@ describe.each(impls)("NotifyStore contract — %s", (_name, make) => {
     expect(keys).toContain("L2"); expect(keys).not.toContain("L1");
   });
 
+  it("B4: BASHT alert links need a subscription and fall with it; named cursors persist", async () => {
+    const id = await newDevice(true), bare = await newDevice(false);
+    await store.setBashtAlerts(id, true); await store.setBashtAlerts(bare, true);
+    const linked = (await store.bashtDevices(1000)).map((d) => d.id);
+    expect(linked).toContain(id); expect(linked).not.toContain(bare);
+    expect((await store.getDevice(id))!.bashtAlerts).toBe(true);
+    await store.setSubscription(id, null, NOW);
+    expect((await store.bashtDevices(1000)).map((d) => d.id)).not.toContain(id);
+    await store.setSubscription(id, makeSubscription().sub, NOW);
+    expect((await store.bashtDevices(1000)).map((d) => d.id)).not.toContain(id); // re-subscribing does not silently re-link
+    const name = `c-${randomUUID()}`;
+    expect(await store.getCursor(name)).toBeNull();
+    await store.setCursor(name, "{\"after\":1}", NOW); await store.setCursor(name, "{\"after\":2}", NOW + 1);
+    expect(await store.getCursor(name)).toBe("{\"after\":2}");
+    expect((await store.addDelivery(id, del("basht:approval:x", { kind: "basht", reminderId: null }))) ).toBe(true);
+    expect((await store.listDeliveries(id, 5))[0].kind).toBe("basht");
+  });
+
   it("withLock is exclusive", async () => {
     let inner: unknown = "unset";
     const out = await store.withLock(async () => { inner = await store.withLock(async () => "nested"); return "outer"; });

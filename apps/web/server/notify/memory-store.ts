@@ -14,6 +14,7 @@ export function createMemoryStore(): NotifyStore {
   const devices = new Map<string, DeviceRec>();
   const reminders = new Map<string, Map<string, { r: Reminder; alertAt: number | null }>>();
   const deliveries = new Map<string, Map<string, DeliveryRec>>();
+  const cursors = new Map<string, string>();
   let locked = false;
   const clone = <T,>(v: T): T => structuredClone(v);
   const bucket = (id: string) => { let m = reminders.get(id); if (!m) reminders.set(id, (m = new Map())); return m; };
@@ -29,7 +30,7 @@ export function createMemoryStore(): NotifyStore {
     async setSubscription(id: string, sub: PushSub | null, now: number) {
       const d = devices.get(id); if (!d) return;
       d.subscription = sub ? clone(sub) : null; d.lastSeenAt = now;
-      if (!sub) { reminders.delete(id); }
+      if (!sub) { reminders.delete(id); d.bashtAlerts = false; }
     },
     async setPrefs(id: string, prefs: ServerPrefs) { const d = devices.get(id); if (d) d.prefs = clone(prefs); },
     async deleteDevice(id) { devices.delete(id); reminders.delete(id); deliveries.delete(id); },
@@ -104,6 +105,10 @@ export function createMemoryStore(): NotifyStore {
       for (const b of deliveries.values()) for (const [k, dl] of b) if (dl.status !== "pending" && now - dl.createdAt > RETENTION_DELIVERIES) { b.delete(k); n++; }
       return n;
     },
+    async setBashtAlerts(id, on) { const d = devices.get(id); if (d) d.bashtAlerts = on && !!d.subscription; },
+    async bashtDevices(limit) { return [...devices.values()].filter((d) => d.bashtAlerts && d.subscription).slice(0, limit).map(clone); },
+    async getCursor(name) { return cursors.get(name) ?? null; },
+    async setCursor(name, value) { cursors.set(name, value); },
     async withLock(fn) {
       if (locked) return null;
       locked = true;

@@ -13,6 +13,7 @@ import { LEAD_OPTIONS, leadLabel } from "@/lib/reminders";
 import { DEFAULT_TZ, TZ_LABEL } from "@/lib/tz";
 import { detectCaps, disablePush, enablePush, getPushState, sendTestPush, type PushState } from "@/lib/push-client";
 import type { NotifyPrefs } from "@/lib/notify-prefs";
+import BashtAlertsRow, { linkBashtAlerts } from "./basht-alerts-row";
 
 const PLAY_MSG: Record<PlayResult, string> = {
   played: "", muted: "الصوت مكتوم (مستوى الصوت صفر).", blocked: "منع المتصفح تشغيل الصوت. المس الشاشة ثم أعد المحاولة.",
@@ -42,7 +43,7 @@ export default function NotificationSettings() {
     try { const z = Intl.DateTimeFormat().resolvedOptions().timeZone; if (z && z !== DEFAULT_TZ) setDeviceTz(z); } catch { /* ignore */ }
   }, [refresh]);
 
-  const enable = async () => { setBusy(true); const s = await enablePush(); setState(s); setBusy(false); if (s === "on") toast("تم تفعيل الإشعارات على هذا الجهاز"); };
+  const enable = async () => { setBusy(true); const s = await enablePush(); setState(s); setBusy(false); if (s === "on") { toast("تم تفعيل الإشعارات على هذا الجهاز"); void linkBashtAlerts(); } };
   const disable = async () => { setBusy(true); setState(await disablePush()); setBusy(false); toast("تم إيقاف الإشعارات على هذا الجهاز"); };
   const test = async () => {
     setBusy(true); const r = await sendTestPush(); setBusy(false);
@@ -93,6 +94,7 @@ export default function NotificationSettings() {
         </div>
         <div className="setting-row"><span><strong>إظهار نص التذكير على الشاشة المقفلة</strong><small>مغلق افتراضياً: يظهر «لديك تذكير» فقط حفاظاً على خصوصيتك. عند التفعيل يظهر عنوان التذكير لكل من يرى شاشتك.</small></span>
           <label className="switch"><input type="checkbox" role="switch" checked={prefs.lockScreenContent} onChange={(e) => set({ lockScreenContent: e.target.checked })} aria-label="إظهار نص التذكير على الشاشة المقفلة" /></label></div>
+        {state === "on" && <BashtAlertsRow />}
         {caps?.ios && caps.standalone && <small className="muted">ملاحظة: يحدد iOS صوت إشعارات الويب (الصوت الافتراضي للنظام) ولا يسمح للتطبيق بتغييره. النغمات المخصصة أدناه تُسمع أثناء فتح التطبيق.</small>}
       </section>
 

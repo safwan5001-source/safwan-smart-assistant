@@ -60,6 +60,11 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/basht/model"),
     ("POST", "/internal/v1/basht/thinking"),
     ("POST", "/internal/v1/basht/fast"),
+    # B3/B4 approvals + live feed (tests/test_basht_live.py): same signature; allow-once/deny only, audited, never automatic
+    ("GET", "/internal/v1/basht/approvals"),
+    ("POST", "/internal/v1/basht/approvals/history"),
+    ("POST", "/internal/v1/basht/approvals/decide"),
+    ("POST", "/internal/v1/basht/events"),
     # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
     ("POST", "/internal/v1/auth/config"),
     ("POST", "/internal/v1/auth/login/code"),
