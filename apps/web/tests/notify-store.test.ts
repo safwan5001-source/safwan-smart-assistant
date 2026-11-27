@@ -116,6 +116,36 @@ describe.each(impls)("NotifyStore contract — %s", (_name, make) => {
     expect(keys).toContain("L2"); expect(keys).not.toContain("L1");
   });
 
+  it("B4: BASHT alert links need a subscription and fall with it; named cursors persist", async () => {
+    const id = await newDevice(true), bare = await newDevice(false);
+    await store.setBashtAlerts(id, true); await store.setBashtAlerts(bare, true);
+    const linked = (await store.bashtDevices(1000)).map((d) => d.id);
+    expect(linked).toContain(id); expect(linked).not.toContain(bare);
+    expect((await store.getDevice(id))!.bashtAlerts).toBe(true);
+    await store.setSubscription(id, null, NOW);
+    expect((await store.bashtDevices(1000)).map((d) => d.id)).not.toContain(id);
+    await store.setSubscription(id, makeSubscription().sub, NOW);
+    expect((await store.bashtDevices(1000)).map((d) => d.id)).not.toContain(id); // re-subscribing does not silently re-link
+    const name = `c-${randomUUID()}`;
+    expect(await store.getCursor(name)).toBeNull();
+    await store.setCursor(name, "{\"after\":1}", NOW); await store.setCursor(name, "{\"after\":2}", NOW + 1);
+    expect(await store.getCursor(name)).toBe("{\"after\":2}");
+    expect((await store.addDelivery(id, del("basht:approval:x", { kind: "basht", reminderId: null }))) ).toBe(true);
+    expect((await store.listDeliveries(id, 5))[0].kind).toBe("basht");
+  });
+
+  it("B4 (Codex #2): unlinking BASHT alerts cancels only that device's pending BASHT deliveries", async () => {
+    const id = await newDevice(true);
+    await store.setBashtAlerts(id, true);
+    await store.addDelivery(id, del("basht:reply:1", { kind: "basht", reminderId: null }));
+    await store.addDelivery(id, del("rem-1"));
+    await store.setBashtAlerts(id, false);
+    const ds = await store.listDeliveries(id, 10);
+    expect(ds.find((d) => d.key === "basht:reply:1")!.status).toBe("cancelled");
+    expect(ds.find((d) => d.key === "rem-1")!.status).toBe("pending");
+    expect((await store.dueDeliveries(NOW + 1, 1000)).some((x) => x.delivery.key === "basht:reply:1")).toBe(false);
+  });
+
   it("withLock is exclusive", async () => {
     let inner: unknown = "unset";
     const out = await store.withLock(async () => { inner = await store.withLock(async () => "nested"); return "outer"; });

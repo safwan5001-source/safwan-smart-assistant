@@ -30,6 +30,7 @@ import MessageBody from "./message-body";
 import { useBashtModel } from "./use-basht-model";
 import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/basht-model";
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
+import ApprovalInlineCard from "./approval-inline-card";
 import { AssistantRequestError, assistantService } from "@/lib/assistant";
 import { ensureClaudeSession } from "@/lib/claude-session";
 import { useOwnerGate } from "@/components/owner-gate";
@@ -453,6 +454,7 @@ export default function ChatScreen() {
                     </article>
                   </>
                 )}
+                {bashtOn && basht.gate === "open" && <ApprovalInlineCard active={!!live} />}
                 {claudeLive && (
                   <article className="bubble assistant streaming" aria-busy="true">
                     <span className="who"><BrandMark size="xs" />باشت</span>

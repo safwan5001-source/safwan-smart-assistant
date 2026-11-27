@@ -8,7 +8,7 @@ import { parseServerPrefs, type ServerPrefs } from "@/lib/notify-prefs";
 import { authenticate, bearerMatches, hashToken, newDeviceId, newToken } from "./auth";
 import { dispatchTick } from "./dispatch";
 import { deliveryOf, testPayload, topicOf, ttlOf, urgencyOf } from "./push";
-import { isReady, type Runtime } from "./runtime";
+import { isReady, pollBasht, type Runtime } from "./runtime";
 import { ReminderLimitError } from "./types";
 import { parseSubscription, parseSyncBody, readJson, SYNC_MAX_BYTES } from "./validate";
 import { clientIp } from "../client-ip";
@@ -51,7 +51,9 @@ export async function handleNotify(req: Request, path: string[], rt: Runtime): P
       if (!rt.cfg.dispatchSecret) return err("not_configured", 503);
       if (!bearerMatches(req, rt.cfg.dispatchSecret)) return err("unauthorized", 401);
       if (!isReady(rt)) return err("not_configured", 503);
-      return json(await dispatchTick(rt.store!, rt.send!, now));
+      const basht = await pollBasht(rt);
+      // a fresh clock after the poll (as the in-process loop does): deliveries it just queued are due now, not next minute
+      return json({ ...(await dispatchTick(rt.store!, rt.send!, rt.now())), ...(basht?.polled ? { basht } : {}) });
     }
     if (!isReady(rt)) return err("not_configured", 503);
     const store = rt.store!;

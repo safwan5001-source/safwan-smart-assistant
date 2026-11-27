@@ -8,14 +8,18 @@ import "server-only";
  */
 import { fire } from "@/lib/reminders";
 import { shouldHold, quietEnd } from "@/lib/quiet-hours";
-import { applyPrivacy, deliveryOf, reminderPayload, topicOf, ttlOf, urgencyOf, type PushSender } from "./push";
+import { applyPrivacy, bashtTtl, deliveryOf, reminderPayload, topicOf, ttlOf, urgencyOf, type BashtAlert, type PushSender } from "./push";
 import type { NotifyStore } from "./types";
 
 export const MAX_ATTEMPTS = 6;
+/** Below this much time left a BASHT alert is not worth sending (it would arrive about the moment it stops being true). */
+export const BASHT_MIN_TTL_S = 10;
 const BACKOFF_MS = [30_000, 120_000, 600_000, 1_800_000, 3_600_000];
 const BATCH = 200;
 const PURGE_EVERY_MS = 3600_000;
 let lastPurge = 0;
+
+const alertOf = (payload: string): BashtAlert | undefined => { try { return (JSON.parse(payload) as { alert?: BashtAlert }).alert; } catch { return undefined; } };
 
 export type TickReport = { errors: number; fired: number; held: number; sent: number; retried: number; failed: number; gone: number; expired: number; skipped: boolean };
 
@@ -45,13 +49,24 @@ export async function dispatchTick(store: NotifyStore, send: PushSender, now: nu
       if (now > delivery.expiresAt) { await store.markDelivery(device.id, delivery.key, { status: "expired", attempts: delivery.attempts }); rep.expired++; continue; }
       // quiet hours are evaluated again at SEND time with the device's CURRENT prefs: a retry backing off into the quiet window,
       // or quiet hours switched on after the push was queued, must not wake the user (explicit test pushes are exempt)
-      if (delivery.kind === "reminder" && shouldHold(now, device.prefs.quiet, device.prefs.tz, delivery.priority)) {
+      if ((delivery.kind === "reminder" || delivery.kind === "basht") && shouldHold(now, device.prefs.quiet, device.prefs.tz, delivery.priority)) {
         await store.markDelivery(device.id, delivery.key, { status: "pending", attempts: delivery.attempts, nextAttemptAt: quietEnd(now, device.prefs.quiet, device.prefs.tz) });
         rep.held++; continue;
       }
+      // BASHT alerts go only to devices the owner still links to them (unlinked since it was queued: withdraw, never send)
+      if (delivery.kind === "basht" && device.bashtAlerts !== true) {
+        await store.markDelivery(device.id, delivery.key, { status: "cancelled", attempts: delivery.attempts, lastError: "unlinked" }); continue;
+      }
       // the batch was read earlier: a reminder deleted/rescheduled while previous pushes were in flight has had its delivery cancelled since
       if (!(await store.isDeliveryPending(device.id, delivery.key))) continue;
-      const r = await send(device.subscription, applyPrivacy(delivery.payload, device.prefs), { ttl: ttlOf(delivery.kind), urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
+      let ttl = ttlOf(delivery.kind);
+      if (delivery.kind === "basht") {
+        // a BASHT alert is only useful while its subject is (an approval expires): never let the push service hold it past that
+        const left = Math.floor((delivery.expiresAt - now) / 1000);
+        if (left < BASHT_MIN_TTL_S) { await store.markDelivery(device.id, delivery.key, { status: "expired", attempts: delivery.attempts }); rep.expired++; continue; }
+        ttl = Math.min(bashtTtl(alertOf(delivery.payload)), left);
+      }
+      const r = await send(device.subscription, applyPrivacy(delivery.payload, device.prefs), { ttl, urgency: urgencyOf(delivery.priority), topic: topicOf(delivery.key) });
       const attempts = delivery.attempts + 1;
       if (r.status >= 200 && r.status < 300) { await store.markDelivery(device.id, delivery.key, { status: "sent", attempts, sentAt: now }); rep.sent++; }
       else if (r.status === 404 || r.status === 410) {

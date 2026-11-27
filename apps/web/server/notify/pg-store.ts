@@ -49,16 +49,22 @@ CREATE TABLE IF NOT EXISTS notify.deliveries (
   PRIMARY KEY (device_id, key)
 );
 CREATE INDEX IF NOT EXISTS deliveries_due_idx ON notify.deliveries (next_attempt_at) WHERE status = 'pending';
+ALTER TABLE notify.devices ADD COLUMN IF NOT EXISTS basht_alerts boolean NOT NULL DEFAULT false;
+CREATE TABLE IF NOT EXISTS notify.cursors (
+  name text PRIMARY KEY,
+  value text NOT NULL,
+  updated_at bigint NOT NULL
+);
 `;
 
 type Row = Record<string, unknown>;
 const num = (v: unknown) => Number(v);
 const toDevice = (r: Row): DeviceRec => ({
   id: String(r.id), tokenHash: String(r.token_hash), subscription: (r.subscription as PushSub | null) ?? null,
-  prefs: parseServerPrefs(r.prefs), createdAt: num(r.created_at), lastSeenAt: num(r.last_seen_at),
+  prefs: parseServerPrefs(r.prefs), createdAt: num(r.created_at), lastSeenAt: num(r.last_seen_at), bashtAlerts: r.basht_alerts === true,
 });
 const toDelivery = (r: Row): DeliveryRec => ({
-  deviceId: String(r.device_id), key: String(r.key), reminderId: (r.reminder_id as string | null) ?? null, kind: r.kind as "reminder" | "test",
+  deviceId: String(r.device_id), key: String(r.key), reminderId: (r.reminder_id as string | null) ?? null, kind: r.kind as DeliveryRec["kind"],
   payload: String(r.payload), priority: r.priority as DeliveryRec["priority"], status: r.status as DeliveryRec["status"], attempts: num(r.attempts),
   nextAttemptAt: num(r.next_attempt_at), createdAt: num(r.created_at), expiresAt: num(r.expires_at),
   ...(r.sent_at != null ? { sentAt: num(r.sent_at) } : {}), ...(r.last_error != null ? { lastError: String(r.last_error) } : {}),
@@ -83,7 +89,7 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
       const c = await pool.connect();
       try {
         await c.query("BEGIN");
-        await c.query("UPDATE notify.devices SET subscription = $2, last_seen_at = $3 WHERE id = $1", [id, sub ? JSON.stringify(sub) : null, now]);
+        await c.query("UPDATE notify.devices SET subscription = $2, last_seen_at = $3, basht_alerts = (basht_alerts AND $2::jsonb IS NOT NULL) WHERE id = $1", [id, sub ? JSON.stringify(sub) : null, now]);
         if (!sub) await c.query("DELETE FROM notify.reminders WHERE device_id = $1", [id]);
         await c.query("COMMIT");
       } catch (e) { await c.query("ROLLBACK").catch(() => undefined); throw e; } finally { c.release(); }
@@ -159,11 +165,11 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
     },
     async dueDeliveries(now, limit) {
       const res = await q(
-        `SELECT dl.*, d.id AS d_id, d.token_hash, d.subscription, d.prefs, d.created_at AS d_created, d.last_seen_at
+        `SELECT dl.*, d.id AS d_id, d.token_hash, d.subscription, d.prefs, d.created_at AS d_created, d.last_seen_at, d.basht_alerts
          FROM notify.deliveries dl JOIN notify.devices d ON d.id = dl.device_id
          WHERE dl.status = 'pending' AND dl.next_attempt_at <= $1 ORDER BY dl.next_attempt_at LIMIT $2`, [now, limit]);
       return res.rows.map((row) => ({
-        device: toDevice({ id: row.d_id, token_hash: row.token_hash, subscription: row.subscription, prefs: row.prefs, created_at: row.d_created, last_seen_at: row.last_seen_at }),
+        device: toDevice({ id: row.d_id, token_hash: row.token_hash, subscription: row.subscription, prefs: row.prefs, created_at: row.d_created, last_seen_at: row.last_seen_at, basht_alerts: row.basht_alerts }),
         delivery: toDelivery(row),
       }));
     },
@@ -184,6 +190,19 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
       const a = await q("DELETE FROM notify.deliveries WHERE status <> 'pending' AND created_at < $1", [now - RETENTION_DELIVERIES]);
       const b = await q("DELETE FROM notify.devices WHERE last_seen_at < $1", [now - RETENTION_DEVICES]);
       return (a.rowCount ?? 0) + (b.rowCount ?? 0);
+    },
+    async setBashtAlerts(id, on) {
+      await q("UPDATE notify.devices SET basht_alerts = ($2 AND subscription IS NOT NULL) WHERE id = $1", [id, on]);
+      // unlinking withdraws what is still queued (held by quiet hours / waiting for a retry)
+      if (!on) await q("UPDATE notify.deliveries SET status = 'cancelled', last_error = 'unlinked' WHERE device_id = $1 AND kind = 'basht' AND status = 'pending'", [id]);
+    },
+    async bashtDevices(limit) {
+      const res = await q("SELECT * FROM notify.devices WHERE basht_alerts AND subscription IS NOT NULL ORDER BY created_at LIMIT $1", [limit]);
+      return res.rows.map(toDevice);
+    },
+    async getCursor(name) { const r = await q("SELECT value FROM notify.cursors WHERE name = $1", [name]); return r.rows[0] ? String(r.rows[0].value) : null; },
+    async setCursor(name, value, now) {
+      await q("INSERT INTO notify.cursors (name, value, updated_at) VALUES ($1,$2,$3) ON CONFLICT (name) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at", [name, value, now]);
     },
     async withLock(fn) {
       await init();

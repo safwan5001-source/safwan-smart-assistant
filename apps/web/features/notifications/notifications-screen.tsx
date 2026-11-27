@@ -1,12 +1,14 @@
 "use client";
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Icon, { type IconName } from "@/components/icon";
 import { Badge, Empty, ListSkeleton, Notice, PageHeader } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
 import { useHydrated, useStore, useStoreError } from "@/lib/hooks";
 import { noticesStore } from "@/lib/stores";
 import { runCommand } from "@/lib/commands";
+import ApprovalsPanel from "./approvals";
+import { sectionFromQuery } from "@/lib/basht-approvals";
 import {
   NOTICE_PRIORITIES, NOTICE_PRIORITY_LABEL, NOTICE_TYPES, TYPE_LABEL, filterNotices, unreadCount,
   type Notice as Item, type NoticePriority, type NoticeType, type Tab,
@@ -33,6 +35,10 @@ export default function NotificationsScreen() {
   const [type, setType] = useState<NoticeType | "all">("all");
   const [priority, setPriority] = useState<NoticePriority | "all">("all");
   const [query, setQuery] = useState("");
+  // B3: «الموافقات» is a section of this screen (deep link: /notifications?tab=approvals&focus=<id>). Derived from the URL on every
+  // render, so a notification tapped while this screen is already open (query-only navigation) switches section and focus too.
+  const { section, focus } = sectionFromQuery(useSearchParams());
+  const show = (s: "notices" | "approvals") => router.replace(s === "approvals" ? "/notifications?tab=approvals" : "/notifications", { scroll: false });
   const now = useMemo(() => (hydrated ? Date.now() : 0), [hydrated, list]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const shown = useMemo(() => filterNotices(list, { tab, type, priority, query }), [list, tab, type, priority, query]);
@@ -56,7 +62,12 @@ export default function NotificationsScreen() {
   return (
     <div className="page">
       <PageHeader icon="bell" eyebrow="الإشعارات" title="مركز الإشعارات" description="كل تنبيه وصلك يُحفظ هنا على هذا الجهاز، حتى لو فاتك صوته."
-        actions={<button className="btn" onClick={() => void markAll()} disabled={!unread}><Icon name="check" size={18} />تعليم الكل كمقروء</button>} />
+        actions={section === "notices" ? <button className="btn" onClick={() => void markAll()} disabled={!unread}><Icon name="check" size={18} />تعليم الكل كمقروء</button> : undefined} />
+      <div className="chips" role="group" aria-label="أقسام المركز" style={{ marginBlockEnd: 12 }}>
+        <button className="chip" aria-pressed={section === "notices"} onClick={() => show("notices")}><Icon name="bell" size={16} />الإشعارات</button>
+        <button className="chip" aria-pressed={section === "approvals"} onClick={() => show("approvals")}><Icon name="shield" size={16} />الموافقات</button>
+      </div>
+      {section === "approvals" ? <ApprovalsPanel focus={focus} /> : <>
       {err && <Notice tone="warn" role="alert">{err}</Notice>}
       <div className="stack">
         <div className="search"><Icon name="search" size={18} />
@@ -102,6 +113,7 @@ export default function NotificationsScreen() {
         )}
         {tab === "archived" && archivedCount > 0 && <div style={{ marginBlockStart: 12 }}><button className="btn btn-sm btn-danger" onClick={() => void clearArchived()}><Icon name="trash" size={16} />حذف المؤرشفة</button></div>}
       </section>
+      </>}
     </div>
   );
 }
