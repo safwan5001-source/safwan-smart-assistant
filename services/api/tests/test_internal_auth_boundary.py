@@ -54,6 +54,12 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/basht/send"),
     ("GET", "/internal/v1/basht/runs/{run_id}"),
     ("POST", "/internal/v1/basht/runs/{run_id}/stop"),
+    # Model control (M): app session only, values validated against the engine's own catalog
+    ("GET", "/internal/v1/basht/models"),
+    ("GET", "/internal/v1/basht/model"),
+    ("POST", "/internal/v1/basht/model"),
+    ("POST", "/internal/v1/basht/thinking"),
+    ("POST", "/internal/v1/basht/fast"),
     # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
     ("POST", "/internal/v1/auth/config"),
     ("POST", "/internal/v1/auth/login/code"),

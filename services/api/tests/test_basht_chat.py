@@ -132,7 +132,7 @@ def test_run_view_and_stop(client, engine):
     replies[f"/runs/{RUN}/stop"] = {"ok": True}
     replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "running", "text": "جارٍ", "error": None}
     r = call(client, "GET", f"/internal/v1/basht/runs/{RUN}")
-    assert r.json() == {"run_id": RUN, "status": "running", "text": "جارٍ", "failed": False}
+    assert r.json() == {"run_id": RUN, "status": "running", "text": "جارٍ", "failed": False, "first_token_ms": None, "total_ms": None}
     assert call(client, "POST", f"/internal/v1/basht/runs/{RUN}/stop", {}).status_code == 200
     assert call(client, "GET", "/internal/v1/basht/runs/not-a-uuid").status_code == 404
 
@@ -176,3 +176,146 @@ def test_a_redirect_is_never_followed_with_the_token(client, monkeypatch):
         assert [p for p, _ in hits] == ["/app/v1/sessions"], "the redirect target must never be requested"
     finally:
         srv.shutdown()
+
+
+# ── Model control (M) ──────────────────────────────────────────────────────
+def _err(code: int, body: dict) -> HTTPError:
+    return HTTPError(URL, code, "x", {}, io.BytesIO(json.dumps(body).encode()))
+
+
+MODEL_STATE = {"ok": True, "sessionKey": "agent:main:app:owner",
+               "model": {"id": "anthropic/claude-sonnet-4-5", "provider": "anthropic", "model": "claude-sonnet-4-5", "source": "override"},
+               "thinking": {"level": "low", "default": "medium", "effective": "low", "levels": ["off", "low", "medium", "high", "Bad Level!"]},
+               "fast": {"supported": False, "enabled": False, "source": "default"},
+               "usage": {"inputTokens": 1200, "outputTokens": 300, "contextTokens": 1500, "contextWindow": 200000},
+               "lastReply": {"provider": "openai", "model": "gpt-5", "at": 9, "fallback": {"from": "anthropic/claude-sonnet-4-5", "to": "openai/gpt-5", "reason": "server_error"}},
+               "fallback": {"from": "anthropic/claude-sonnet-4-5", "to": "openai/gpt-5", "reason": "server_error", "at": 8},
+               "lastRun": {"runId": RUN, "status": "done", "startedAt": 1, "firstTokenMs": 812, "totalMs": 2400},
+               "baseUrl": "http://10.0.0.1/secret"}
+
+
+def test_models_are_shaped_with_only_engine_capabilities(client, engine):
+    calls, replies = engine
+    replies["/models"] = {"ok": True, "fetchedAt": 5, "models": [
+        {"id": "anthropic/claude-sonnet-4-5", "name": "Claude Sonnet 4.5", "provider": "anthropic", "available": True, "contextWindow": 200000,
+         "reasoning": True, "thinkingLevels": ["off", "low", "<script>"], "supportsFastMode": False, "supportsTools": True,
+         "input": ["text", "image", "telepathy"], "selectable": True, "apiKey": "sk-never", "baseUrl": "http://10.0.0.1"},
+        {"id": "bad id with spaces", "name": "x"}, "junk"]}
+    r = call(client, "GET", "/internal/v1/basht/models")
+    assert r.status_code == 200
+    body = r.json()
+    assert [m["id"] for m in body["models"]] == ["anthropic/claude-sonnet-4-5"]
+    m = body["models"][0]
+    assert m["thinking_levels"] == ["off", "low"] and m["input"] == ["text", "image"] and m["fast_mode"] is False and m["tools"] is True
+    assert "sk-never" not in r.text and "10.0.0.1" not in r.text and "apiKey" not in r.text
+    assert calls[0]["url"] == URL + "/app/v1/models" and calls[0]["auth"] == f"Bearer {TOKEN}"
+
+
+def test_model_state_reports_the_real_reply_model_fallback_and_latency(client, engine):
+    _, replies = engine
+    replies["/model"] = MODEL_STATE
+    r = call(client, "GET", "/internal/v1/basht/model")
+    assert r.status_code == 200
+    j = r.json()
+    assert j["model"] == {"id": "anthropic/claude-sonnet-4-5", "provider": "anthropic", "source": "override"}
+    assert j["thinking"]["levels"] == ["off", "low", "medium", "high"]
+    assert j["last_reply"]["model"] == "gpt-5" and j["last_reply"]["fallback"]["reason"] == "server_error"
+    assert j["fallback"] == {"from": "anthropic/claude-sonnet-4-5", "to": "openai/gpt-5", "reason": "server_error", "at": 8}
+    assert j["last_run"] == {"status": "done", "first_token_ms": 812, "total_ms": 2400}
+    assert j["usage"]["context_window"] == 200000 and "10.0.0.1" not in r.text
+
+
+def test_model_changes_pass_validated_values_and_are_audited(client, engine):
+    from app.audit import audit_log
+    calls, replies = engine
+    replies["/model"] = {"ok": True, "model": {"id": "openai/gpt-5"}}
+    replies["/thinking"] = {"ok": True}
+    replies["/fast"] = {"ok": True}
+    assert call(client, "POST", "/internal/v1/basht/model", {"model": "openai/gpt-5"}).json() == {"model": "openai/gpt-5"}
+    assert call(client, "POST", "/internal/v1/basht/thinking", {"level": "high"}).json() == {"level": "high"}
+    assert call(client, "POST", "/internal/v1/basht/thinking", {"level": "default"}).json() == {"level": None}
+    assert call(client, "POST", "/internal/v1/basht/fast", {"mode": "on"}).json() == {"mode": "on"}
+    assert [c["body"] for c in calls] == [{"model": "openai/gpt-5"}, {"level": "high"}, {"level": "default"}, {"mode": "on"}]
+    # settings writes wait their turn on the engine (one at a time across devices): a longer timeout than reads
+    assert {c["timeout"] for c in calls} == {bc.SETTINGS_TIMEOUT} and bc.SETTINGS_TIMEOUT > bc.READ_TIMEOUT
+    events = [e for e in audit_log.recent(10) if e["event"] == "basht.model"]
+    assert {e["setting"] for e in events} >= {"model", "thinking", "fast"}
+    # malformed values never reach the engine
+    n = len(calls)
+    assert call(client, "POST", "/internal/v1/basht/model", {"model": "a b"}).status_code == 400
+    assert call(client, "POST", "/internal/v1/basht/thinking", {"level": "High Level"}).status_code == 400
+    assert call(client, "POST", "/internal/v1/basht/fast", {"mode": "turbo"}).status_code == 422
+    assert len(calls) == n
+
+
+@pytest.mark.parametrize("code", ["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected"])
+def test_engine_refusals_keep_their_specific_code(client, engine, code):
+    _, replies = engine
+    replies["/thinking"] = _err(400, {"ok": False, "error": code})
+    r = call(client, "POST", "/internal/v1/basht/thinking", {"level": "high"})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == code
+
+
+def test_unknown_refusal_text_is_never_relayed(client, engine):
+    _, replies = engine
+    replies["/model"] = _err(400, {"ok": False, "error": "<b>internal detail</b>"})
+    r = call(client, "POST", "/internal/v1/basht/model", {"model": "openai/gpt-5"})
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "bad_request" and "internal" not in r.text
+
+
+@pytest.mark.parametrize("err", [_err(404, {"error": "not_found"}), _err(503, {"ok": False, "error": "not_available"})])
+def test_an_engine_without_model_control_reads_as_unavailable_not_as_an_outage(client, engine, err):
+    _, replies = engine
+    replies["/models"] = err
+    r = call(client, "GET", "/internal/v1/basht/models")
+    assert r.status_code == 400 and r.json()["detail"]["code"] == "model_control_unavailable"
+
+
+def test_history_and_runs_carry_the_answering_model_and_latency(client, engine):
+    _, replies = engine
+    replies["/history"] = {"ok": True, "messages": [
+        {"role": "user", "text": "hi", "at": 1, "model": "should-not-appear"},
+        {"role": "assistant", "text": "yo", "at": 2, "provider": "mock", "model": "echo2",
+         "fallback": {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error"}}]}
+    j = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:app:owner"}).json()
+    assert "model" not in j["messages"][0]
+    assert j["messages"][1]["model"] == "echo2" and j["messages"][1]["fallback"]["to"] == "mock/echo2"
+    replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "done", "text": "x", "firstTokenMs": 700, "totalMs": 1900}
+    r = call(client, "GET", f"/internal/v1/basht/runs/{RUN}").json()
+    assert r["first_token_ms"] == 700 and r["total_ms"] == 1900
+
+
+def test_openclaws_switch_notice_is_folded_into_the_reply_it_preceded(client, engine):
+    _, replies = engine
+    replies["/history"] = {"ok": True, "messages": [
+        {"role": "user", "text": "اختبار", "at": 1},
+        {"role": "assistant", "text": "Model switched from mock/echo to mock/echo2 (server_error)", "at": 2, "provider": "openclaw",
+         "model": "delivery-mirror", "fallback": {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error"}},
+        {"role": "assistant", "text": "الرد", "at": 3, "provider": "mock", "model": "echo2"},
+        {"role": "assistant", "text": "رد لاحق", "at": 4, "provider": "mock", "model": "echo"}]}
+    msgs = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:app:owner"}).json()["messages"]
+    assert [m["text"] for m in msgs] == ["اختبار", "الرد", "رد لاحق"]  # the English notice is never shown as a BASHT reply
+    assert msgs[1]["model"] == "echo2" and msgs[1]["fallback"] == {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error", "at": None}
+    assert "fallback" not in msgs[2]  # only the reply that the switch happened for
+
+
+def test_only_the_switch_notice_is_folded_other_openclaw_deliveries_stay(client, engine):
+    _, replies = engine
+    replies["/history"] = {"ok": True, "messages": [
+        {"role": "assistant", "text": "تذكير: اجتماع الساعة 4", "at": 1, "provider": "openclaw", "model": "delivery-mirror"},
+        {"role": "user", "text": "س", "at": 2},
+        {"role": "assistant", "text": "Model switched …", "at": 3, "provider": "openclaw", "model": "delivery-mirror",
+         "fallback": {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error"}},
+        {"role": "user", "text": "سؤال لاحق", "at": 4},  # the switched turn produced no text reply
+        {"role": "assistant", "text": "رد من الأساسي", "at": 5, "provider": "mock", "model": "echo"}]}
+    msgs = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:main"}).json()["messages"]
+    assert [m["text"] for m in msgs] == ["تذكير: اجتماع الساعة 4", "س", "سؤال لاحق", "رد من الأساسي"]  # a cron delivery is kept
+    assert "fallback" not in msgs[-1]  # a switch never lands on a later turn's reply
+
+
+def test_an_automatic_fallback_pin_is_reported_as_such(client, engine):
+    _, replies = engine
+    replies["/model"] = {**MODEL_STATE, "model": {**MODEL_STATE["model"], "source": "fallback"}}
+    assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "fallback"
+    replies["/model"] = {**MODEL_STATE, "model": {**MODEL_STATE["model"], "source": "<x>"}}
+    assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "default"

@@ -74,10 +74,13 @@ export async function ownerSessionAccount(req: Request, deps: OwnerDeps): Promis
 /**
  * What a door needs: is it usable at all (`enabled`), and is this request the owner (`authenticated`)?
  * `legacy` = the door's own code gate (kept during the transition): `on` when configured, `ok` when its cookie is valid.
+ * `ok` counts only while unified sign-in is off.
  */
 export async function doorAccess(req: Request, deps: OwnerDeps, legacy: { on: boolean; ok: boolean }): Promise<{ enabled: boolean; authenticated: boolean; account: string | null }> {
-  if (legacy.ok) return { enabled: true, authenticated: true, account: null };
   const owner = ownerAuthOn(deps.env);
+  // With unified sign-in on, the owner session is the ONLY credential: a per-door cookie issued before the switch no longer
+  // opens anything, so signing out of the app really closes every door on this device.
+  if (legacy.ok && !owner) return { enabled: true, authenticated: true, account: null };
   // no session cookie → no lookup at all (an anonymous request, or a door that is off, never reaches the API)
   const account = owner && readSessionCookie(req) ? await ownerSessionAccount(req, deps) : null;
   return { enabled: legacy.on || owner, authenticated: account !== null, account };

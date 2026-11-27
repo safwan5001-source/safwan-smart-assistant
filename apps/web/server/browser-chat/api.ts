@@ -148,6 +148,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
       return json({ authenticated: true }, 200, { "Set-Cookie": setCookieHeader(issueCookieValue(gate, now), secure) });
     }
     if (route === "DELETE /session") {
+      if (ownerAuthOn(deps.env)) return handleAuth(req, ["logout"], { env: deps.env, callBackend: deps.callBackend, now: deps.now }); // A1: lock = sign out
       if (!sameOrigin(req)) return err("forbidden", 403);
       return json({ authenticated: false }, 200, { "Set-Cookie": `${COOKIE_NAME}=; Path=${COOKIE_PATH}; Max-Age=0; HttpOnly; SameSite=Strict${secure ? "; Secure" : ""}` });
     }
