@@ -32,6 +32,11 @@ describe("U1: one conversation — the app is BASHT", () => {
     expect((await runCommand("chat.send", { threadId: null, text: "سلسلة جديدة" })).status).not.toBe("executed");
     expect((await runCommand("chat.send", { threadId: null, main: true, text: "/مهمة" })).status).toBe("executed");
     expect(threadsStore.getSnapshot().filter((t) => t.main)).toHaveLength(1);
+    // save → reload round trip keeps ALL 500 archived conversations plus the main thread
+    const reloaded = parseThreads(JSON.parse(JSON.stringify(threadsStore.getSnapshot())));
+    expect(reloaded).toHaveLength(501);
+    expect(reloaded.filter((t) => !t.main)).toHaveLength(500);
+    expect(reloaded.some((t) => t.id === "t499")).toBe(true);
     const chat = src("features/chat/chat-screen.tsx");
     expect(chat).toMatch(/if \(quick\.handled\) \{ setDraft\(""\);/);
   });

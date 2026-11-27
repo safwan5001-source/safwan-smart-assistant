@@ -70,6 +70,7 @@ function parseMessage(v: unknown): Message | null {
 export function parseThreads(value: unknown): Thread[] {
   if (!Array.isArray(value)) return [];
   const out: Thread[] = [];
+  let archived = 0, hasMain = false;
   for (const v of value) {
     if (!isObj(v) || !isStr(v.id) || !Array.isArray(v.messages)) continue;
     const t: Thread = {
@@ -79,10 +80,12 @@ export function parseThreads(value: unknown): Thread[] {
       messages: v.messages.map(parseMessage).filter((m): m is Message => m !== null),
     };
     if (v.archived === true) t.archived = true;
-    if (v.main === true) t.main = true;
     if (isNum(v.updated)) t.updated = v.updated;
+    // the conversation's single `main` thread is in addition to the archive's cap, so saving it can never push an archive out
+    if (v.main === true && !hasMain) { t.main = true; hasMain = true; out.push(t); continue; }
+    if (archived >= LIMITS.threads) continue;
+    archived++;
     out.push(t);
-    if (out.length >= LIMITS.threads) break;
   }
   return out;
 }

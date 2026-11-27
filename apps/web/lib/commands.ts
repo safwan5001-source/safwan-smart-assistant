@@ -89,7 +89,7 @@ const mkMessage = (text: string, attachments?: Attachment[], role?: Role, browse
   return m;
 };
 const patchThread = (id: string, fn: (t: Thread) => Thread) => threadsStore.set((old) => old.map((t) => (t.id === id ? fn(t) : t)));
-const assertRoomForThread = () => { if (threadsStore.getSnapshot().length >= LIMITS.threads) invalid("بلغت الحد الأقصى للمحادثات؛ احذف أو أرشف محادثات قديمة."); };
+const assertRoomForThread = () => { if (threadsStore.getSnapshot().filter((t) => !t.main).length >= LIMITS.threads) invalid("بلغت الحد الأقصى للمحادثات؛ احذف أو أرشف محادثات قديمة."); };
 const mustThread = (id: string) => threadsStore.getSnapshot().find((t) => t.id === id) ?? invalid("المحادثة غير موجودة.");
 
 const chatCommands = {
