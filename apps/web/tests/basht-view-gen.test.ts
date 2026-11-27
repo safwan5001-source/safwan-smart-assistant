@@ -21,7 +21,7 @@ describe("an older page for an abandoned history view is dropped", () => {
   it("loadEarlier checks the view generation it started in before applying", () => {
     const fn = body(hook, /const loadEarlier = useCallback\(async \(\) => \{/);
     expect(fn).toMatch(/const view = viewGen\.current;/);
-    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| view !== viewGen\.current\) return;/);
+    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| view !== viewGen\.current( \|\| [^)]*\))?\) return;/);
     expect(fn.search(/view !== viewGen\.current/)).toBeLessThan(fn.search(/setOlderRows\(/));
   });
   // Review (Codex, round 8): «عرض الرسائل السابقة» pressed while a search window was loading captured the generation jumpTo had
@@ -45,5 +45,28 @@ describe("the merged history keeps its identity across unrelated renders", () =>
   it("is computed with useMemo([olderRows, messages])", () => {
     expect(hook).toMatch(/const shown = useMemo\(\(\) => \(messages === null \? null : olderRows\.length \? mergeRows\(olderRows, messages\) : messages\), \[olderRows, messages\]\);/);
     expect(hook).toMatch(/messages: shown/);
+  });
+});
+
+// Review (Codex, round 9): after a refresh started, «عرض الرسائل السابقة» could still use the discarded cursor and land rows
+// before a gap paging can never fill. The refresh drops the cursor, and an older page lands only on the cursor it used.
+describe("an older page lands only on the cursor it was requested with", () => {
+  it("refresh drops the old cursor until the refreshed page installs its own", () => {
+    expect(body(hook, /const refresh = useCallback/)).toMatch(/viewGen\.current\+\+; olderRowsRef\.current = \[\]; setOlderRows\(\[\]\); setOlder\(null\);/);
+    expect(hook).toMatch(/const setOlder = useCallback\(\(o: Older\) => \{ olderRef\.current = o; setOlderState\(o\); \}, \[\]\);/);
+  });
+  it("loadEarlier compares its cursor with the one in force before applying", () => {
+    const fn = body(hook, /const loadEarlier = useCallback\(async \(\) => \{/);
+    expect(fn).toMatch(/const cursor = older;/);
+    expect(fn).toMatch(/bashtClient\.historyPage\(k, cursor\)/);
+    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| view !== viewGen\.current \|\| !sameOlder\(cursor, olderRef\.current\)\) return;/);
+    expect(fn.search(/!sameOlder\(cursor, olderRef\.current\)/)).toBeLessThan(fn.search(/setOlderRows\(/));
+  });
+  it("sameOlder compares cursors by value", async () => {
+    const { sameOlder } = await import("../features/chat/use-basht");
+    expect(sameOlder({ offset: 50 }, { offset: 50 })).toBe(true);
+    expect(sameOlder({ offset: 50 }, { offset: 52 })).toBe(false);
+    expect(sameOlder({ before: "a" }, null)).toBe(false);
+    expect(sameOlder(null, null)).toBe(true);
   });
 });
