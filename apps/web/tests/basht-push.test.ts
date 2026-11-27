@@ -76,6 +76,34 @@ describe("B4: polling the feed into deliveries", () => {
     expect((await payloads(store, id)).map((d) => d.key)).toEqual([`basht:approval:${AID}`]);
     expect(JSON.parse((await store.getCursor(CURSOR))!)).toMatchObject({ after: 103, initialized: true });
   });
+  // Review (Codex, round 12): an approval on page 1 whose resolution is on page 2 was pushed when page 2 failed to load.
+  it("an approval is held while a later page could not be read, then dropped once its resolution is read", async () => {
+    const { store, id } = await setup();
+    await store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false, initialized: true }), NOW);
+    const paged = (r: FeedResult, nextAfter: number, more: boolean): FeedResult => (r.kind === "ok" ? { ...r, nextAfter, more } : r);
+    const page1 = paged(ok([approval(11), { id: 12, type: "chat.final", at: NOW, seen: false }], 13), 12, true);
+    const page2 = paged(ok([{ id: 13, type: "approval.resolved", at: NOW, approval_id: AID }], 13), 13, false);
+    const { feed, asked } = feedOf(page1, { kind: "offline" }, page1, page2);
+    await pollBashtEvents(store, feed, NOW); // page 2 failed: the approval is held, the cursor stays before it
+    expect((await payloads(store, id)).map((d) => d.key)).toEqual(["basht:reply:12"]);
+    expect(JSON.parse((await store.getCursor(CURSOR))!).after).toBe(10);
+    await pollBashtEvents(store, feed, NOW + 1000); // both pages read: answered meanwhile, never pushed; the reply is not repeated
+    expect((await payloads(store, id)).map((d) => d.key)).toEqual(["basht:reply:12"]);
+    expect(asked).toEqual([10, 12, 10, 12]);
+    expect(JSON.parse((await store.getCursor(CURSOR))!).after).toBe(13);
+  });
+  it("a held approval that is still waiting is pushed once the rest of the feed has been read", async () => {
+    const { store, id } = await setup();
+    await store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false, initialized: true }), NOW);
+    const paged = (r: FeedResult, nextAfter: number, more: boolean): FeedResult => (r.kind === "ok" ? { ...r, nextAfter, more } : r);
+    const page1 = paged(ok([approval(11)], 12), 11, true);
+    const page2 = paged(ok([{ id: 12, type: "cron.failed", at: NOW, name: "x" }], 12), 12, false);
+    const { feed } = feedOf(page1, { kind: "offline" }, page1, page2);
+    await pollBashtEvents(store, feed, NOW);
+    expect(await payloads(store, id)).toEqual([]);
+    await pollBashtEvents(store, feed, NOW + 1000);
+    expect((await payloads(store, id)).map((d) => d.key).sort()).toEqual([`basht:approval:${AID}`, "basht:cron:12"]);
+  });
   it("Codex #5: a first poll that failed (outage cursor saved) still starts from now on recovery — no backlog burst", async () => {
     const { store, id } = await setup();
     const { feed } = feedOf({ kind: "offline" }, ok([{ id: 100, type: "chat.final", at: NOW, seen: false }, approval(101), { id: 102, type: "cron.failed", at: NOW, name: "x" }], 102));

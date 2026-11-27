@@ -109,9 +109,10 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
     const collected = [...r.events];
     let reached = pageEnd(r, cur.after);
     let complete = r.more !== true;
+    let failed = false; // a later page could not be read: its resolutions are unknown this tick
     for (let page = 1; !complete && page < MAX_PAGES; page++) {
       const n = await feed(reached);
-      if (n.kind !== "ok") break; // keep what was read; the next tick continues from `reached`
+      if (n.kind !== "ok") { failed = true; break; } // keep what was read; the next tick continues from `reached`
       collected.push(...n.events);
       const next = pageEnd(n, reached);
       complete = n.more !== true || next <= reached;
@@ -120,6 +121,7 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
     const events = collected.filter((e, i, a) => a.findIndex((x) => x.id === e.id) === i).sort((a, b) => a.id - b.id);
     rep.events = events.length;
     // an approval answered within this same page (requested … resolved) is never pushed: reconcile before queuing
+    let deferred = Number.POSITIVE_INFINITY;
     const answered = new Set(events.filter((e) => e.type === "approval.resolved" && e.approval_id).map((e) => e.approval_id!));
     for (const e of events) {
       if (started && e.id <= cur.after) continue;
@@ -134,11 +136,15 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
         continue;
       }
       if (e.type === "approval.requested" && e.approval?.id && answered.has(e.approval.id)) continue;
+      // its resolution may sit on the page that failed: hold the push (and the cursor) until the rest has been read
+      if (failed && e.type === "approval.requested" && e.approval?.id) { deferred = Math.min(deferred, e.id); continue; }
       // first poll ever: start from "now" (the backlog is in the app); still announce approvals that are waiting right now
       if (!started && e.type !== "approval.requested") continue;
       const a = alertFor(e, now);
       if (a) await queue(a);
     }
+    // the next tick re-reads from the first held approval (pushes are idempotent per key, so nothing is sent twice)
+    if (deferred !== Number.POSITIVE_INFINITY) reached = Math.min(reached, deferred - 1);
     // a fully read first poll starts at the ring's latest record (an older API may not say how far a page reached)
     if (!started && complete && r.latest !== null) reached = Math.max(reached, r.latest);
     // a new ring whose ids are all below our cursor (should not happen: ids are seeded with the engine's boot time) restarts at 0
