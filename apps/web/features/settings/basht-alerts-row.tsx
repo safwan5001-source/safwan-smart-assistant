@@ -10,11 +10,22 @@ import { useStore } from "@/lib/hooks";
 import { approvalsClient, ApprovalError } from "@/lib/basht-approvals";
 import { useDialogs } from "@/components/dialogs";
 
+// The automatic link (when push is turned on) runs outside the row: its result is published here, and a read of the switch that
+// started before it finished is ignored, so the switch shows what the server now holds.
+let linkSeq = 0;
+const linkSubs = new Set<(linked: boolean) => void>();
+export const onBashtAlertsLinked = (fn: (linked: boolean) => void) => { linkSubs.add(fn); return () => { linkSubs.delete(fn); }; };
+export const bashtAlertsLinkSeq = () => linkSeq;
+
 /** Best effort, after the owner turned push on: link this device to BASHT alerts (owner session required server-side). */
 export async function linkBashtAlerts(): Promise<boolean> {
   const d = pushDeviceStore.getSnapshot();
   if (!d?.subscribed) return false;
-  try { return await approvalsClient.setPushLinked(d, true); } catch { return false; }
+  let linked: boolean;
+  try { linked = await approvalsClient.setPushLinked(d, true); } catch { return false; }
+  linkSeq++;
+  for (const fn of linkSubs) fn(linked);
+  return linked;
 }
 
 export default function BashtAlertsRow() {
@@ -23,10 +34,12 @@ export default function BashtAlertsRow() {
   const [on, setOn] = useState<boolean | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => onBashtAlertsLinked((v) => { setOn(v); setNote(""); }), []);
   useEffect(() => {
     if (!device?.subscribed) { setOn(null); return; }
     let alive = true;
-    approvalsClient.pushLinked(device).then((v) => { if (alive) { setOn(v); setNote(""); } })
+    const seq = linkSeq; // an automatic link that finishes meanwhile wins over this (possibly older) read
+    approvalsClient.pushLinked(device).then((v) => { if (alive && seq === linkSeq) { setOn(v); setNote(""); } })
       .catch((e) => { if (alive) { setOn(null); setNote(e instanceof ApprovalError && e.code === "unauthorized" ? "سجّل الدخول لربط تنبيهات باشت بهذا الجهاز." : e instanceof Error ? e.message : ""); } });
     return () => { alive = false; };
   }, [device]);
