@@ -39,13 +39,16 @@ export type FeedResult =
   | { kind: "unconfigured" };
 export type Feed = (after: number) => Promise<FeedResult>;
 
-type Cursor = { after: number; epoch: string | null; offlineSince: number | null; offlineNotified: boolean };
+/** `initialized`: a feed page has been read at least once (a saved outage cursor alone is not a start point). */
+type Cursor = { after: number; epoch: string | null; offlineSince: number | null; offlineNotified: boolean; initialized: boolean };
 const parseCursor = (raw: string | null): Cursor | null => {
   try {
     const c = raw ? JSON.parse(raw) : null;
     if (!c || typeof c !== "object" || !Number.isSafeInteger(c.after) || c.after < 0) return null;
     return { after: c.after, epoch: typeof c.epoch === "string" ? c.epoch : null, offlineSince: Number.isSafeInteger(c.offlineSince) ? c.offlineSince : null,
-      offlineNotified: c.offlineNotified === true };
+      offlineNotified: c.offlineNotified === true,
+      // cursors written before this field: one that has an epoch or a position came from a successful read
+      initialized: typeof c.initialized === "boolean" ? c.initialized : typeof c.epoch === "string" || c.after > 0 };
   } catch { return null; }
 };
 
@@ -72,7 +75,9 @@ export function alertFor(e: FeedEvent, now: number): Alert | null {
 export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: number): Promise<BashtReport> {
   const rep: BashtReport = { polled: false, events: 0, queued: 0, cancelled: 0, offline: false };
   const saved = parseCursor(await store.getCursor(CURSOR));
-  const cur: Cursor = saved ?? { after: 0, epoch: null, offlineSince: null, offlineNotified: false };
+  const cur: Cursor = saved ?? { after: 0, epoch: null, offlineSince: null, offlineNotified: false, initialized: false };
+  // only a cursor that has consumed a feed page is a start point: a first poll that failed (an outage cursor) still starts from "now"
+  const started = cur.initialized;
   const r = await feed(cur.after);
   if (r.kind === "unconfigured") return { ...rep, skipped: "unconfigured" };
   rep.polled = true;
@@ -117,7 +122,7 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
     // an approval answered within this same page (requested … resolved) is never pushed: reconcile before queuing
     const answered = new Set(events.filter((e) => e.type === "approval.resolved" && e.approval_id).map((e) => e.approval_id!));
     for (const e of events) {
-      if (saved && e.id <= cur.after) continue;
+      if (started && e.id <= cur.after) continue;
       if (e.type === "approval.resolved" && e.approval_id) {
         // answered elsewhere (or expired) before the push went out (e.g. held by quiet hours): withdraw it
         for (const d of devices) {
@@ -130,15 +135,16 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
       }
       if (e.type === "approval.requested" && e.approval?.id && answered.has(e.approval.id)) continue;
       // first poll ever: start from "now" (the backlog is in the app); still announce approvals that are waiting right now
-      if (!saved && e.type !== "approval.requested") continue;
+      if (!started && e.type !== "approval.requested") continue;
       const a = alertFor(e, now);
       if (a) await queue(a);
     }
     // a fully read first poll starts at the ring's latest record (an older API may not say how far a page reached)
-    if (!saved && complete && r.latest !== null) reached = Math.max(reached, r.latest);
+    if (!started && complete && r.latest !== null) reached = Math.max(reached, r.latest);
     // a new ring whose ids are all below our cursor (should not happen: ids are seeded with the engine's boot time) restarts at 0
-    cur.after = saved && r.latest !== null && r.epoch !== cur.epoch && r.latest < cur.after ? 0 : Math.max(reached, saved ? cur.after : 0);
+    cur.after = started && r.latest !== null && r.epoch !== cur.epoch && r.latest < cur.after ? 0 : Math.max(reached, started ? cur.after : 0);
     cur.epoch = r.epoch;
+    cur.initialized = true;
   }
   await store.setCursor(CURSOR, JSON.stringify(cur), now);
   return rep;

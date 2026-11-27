@@ -64,6 +64,15 @@ describe("B4: which BASHT records become a push", () => {
 });
 
 describe("B4: polling the feed into deliveries", () => {
+  it("Codex #5: a first poll that failed (outage cursor saved) still starts from now on recovery — no backlog burst", async () => {
+    const { store, id } = await setup();
+    const { feed } = feedOf({ kind: "offline" }, ok([{ id: 100, type: "chat.final", at: NOW, seen: false }, approval(101), { id: 102, type: "cron.failed", at: NOW, name: "x" }], 102));
+    await pollBashtEvents(store, feed, NOW); // fails: an outage cursor (after 0) is saved, no page was read
+    expect(JSON.parse((await store.getCursor(CURSOR))!)).toMatchObject({ after: 0, initialized: false });
+    await pollBashtEvents(store, feed, NOW + 1000);
+    expect((await payloads(store, id)).map((d) => d.key)).toEqual([`basht:approval:${AID}`]); // only what is waiting right now
+    expect(JSON.parse((await store.getCursor(CURSOR))!)).toMatchObject({ after: 102, initialized: true });
+  });
   it("first poll starts from now (no backlog burst) but still announces approvals waiting right now", async () => {
     const { store, id, other } = await setup();
     const { feed, asked } = feedOf(ok([{ id: 100, type: "chat.final", at: NOW, seen: false }, approval(101), { id: 102, type: "cron.failed", at: NOW, name: "x" }], 102));
