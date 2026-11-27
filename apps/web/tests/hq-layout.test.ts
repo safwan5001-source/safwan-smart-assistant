@@ -122,7 +122,7 @@ describe("HQ floor plan", () => {
 describe("HQ plan export (tools/hq-assets/layout.json — the Blender generator's input)", () => {
   const file = resolve(__dirname, "../../../tools/hq-assets/layout.json");
   it("is in sync with lib/hq/layout.ts (HQ_WRITE_LAYOUT=1 pnpm test:web regenerates it)", () => {
-    const json = JSON.stringify(exportPlan(), null, 1) + "\n";
+    const json = JSON.stringify(exportPlan()) + "\n"; // generated input for the Blender scripts: compact
     if (process.env.HQ_WRITE_LAYOUT === "1") writeFileSync(file, json);
     expect(existsSync(file)).toBe(true);
     expect(readFileSync(file, "utf8")).toBe(json);

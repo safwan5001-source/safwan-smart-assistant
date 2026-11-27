@@ -6,7 +6,6 @@
 #   tools/hq-assets/build.sh characters   # BASHT robot (+ procedural stand-ins)    (≈10 s)
 #   tools/hq-assets/build.sh humans       # 13 realistic people + mocap clip libraries from Microsoft Rocketbox (MIT) (≈1 min)
 #                                         #   needs ROCKETBOX=<git clone of github.com/microsoft/Microsoft-Rocketbox>
-#   tools/hq-assets/build.sh lineup       # QA render of all characters (idle + walk)
 #   tools/hq-assets/build.sh publish      # meshopt-compress into apps/web/public/hq-assets/<version>/ + manifest
 #
 # Requirements: a Python with Blender as a module (pip install -r tools/hq-assets/requirements.txt) → HQ_BLENDER_PY,
@@ -23,8 +22,7 @@ case "${1:-all}" in
   building)   "$PY" "$HERE/blender/build_building.py" -- --out "$OUT" "${@:2}" ;;
   characters) "$PY" "$HERE/blender/build_characters.py" -- --out "$OUT" "${@:2}" ;;
   humans)     "$PY" "$HERE/blender/build_humans.py" -- --out "$OUT" "${@:2}" ;;
-  lineup)     "$PY" "$HERE/blender/render_lineup.py" -- "$OUT" idle && "$PY" "$HERE/blender/render_lineup.py" -- "$OUT" walk ;;
   publish)    HQ_BLENDER_PY="$PY" node "$HERE/publish.mjs" "$OUT" "${@:2}" ;;
   all)        "$0" building && "$0" characters && "$0" humans && "$0" publish ;;
-  *) echo "usage: $0 [all|building|characters|humans|lineup|publish]"; exit 2 ;;
+  *) echo "usage: $0 [all|building|characters|humans|publish]"; exit 2 ;;
 esac

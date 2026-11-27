@@ -3,11 +3,11 @@ BASHT HQ — character generator (Blender, headless).
 
     tools/hq-assets/build.sh characters [ID ...]
 
-For every character in tools/hq-assets/layout.json ("characters", sourced from apps/web/lib/hq/roster.ts) this builds:
-  - one skinned mesh with per-corner colours (ONE material → one draw call per character),
+Builds BASHT, the official robot mascot (the 13 people come from build_humans.py — Microsoft Rocketbox):
+  - one skinned mesh with per-corner colours (+ an emissive material for the eyes),
   - an armature with the shared bone names (see BONES), procedural skin weights (no bone-heat failure modes),
   - the animation clips the web app plays: idle, walk, sit, type, talk (rotation tracks + hips height),
-and exports <ID>.glb. Characters are built from their own proportions and look, so no two files are alike.
+and exports BASHT.glb.
 
 Plan axes: x east, y up, z south; a character faces +z (towards the camera) in its own frame. Blender: (x, -z, y).
 """
@@ -30,8 +30,6 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--out", default=os.path.join(ROOT, "out"))
 ap.add_argument("--only", nargs="*", default=[])
 ap.add_argument("--preview", action="store_true", help="also render a Cycles preview PNG per character")
-ap.add_argument("--procedural-humans", action="store_true",
-                help="also build the procedural human stand-ins for people that have a realistic model (build_humans.py)")
 args, _ = ap.parse_known_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else sys.argv[1:])
 os.makedirs(args.out, exist_ok=True)
 PLAN = json.load(open(os.path.join(ROOT, "layout.json")))
@@ -266,108 +264,6 @@ TORSO = ["hips", "spine", "chest"]
 ROBE = ["hips", "spine", "thigh.L", "thigh.R", "shin.L", "shin.R"]
 
 
-def shade(hexc, k):
-    r, g, b = (int(hexc[i:i + 2], 16) for i in (1, 3, 5))
-    f = lambda c: max(0, min(255, int(c * k)))  # noqa: E731
-    return "#%02x%02x%02x" % (f(r), f(g), f(b))
-
-
-def build_human(ch):
-    L = ch["look"]
-    H = L["height"]
-    s = H / 1.75
-    wide = {"slim": 0.92, "regular": 1.0, "broad": 1.12}[L["build"]]
-    J = joints(H, wide)
-    body = Body()
-    skin_c, out_c, acc_c = L["skin"], L["outfit"], L["accent"]
-    dark = "#1d1820"
-    abaya = L["attire"] == "abaya"
-    extras = set(L["extras"])
-
-    # robe (thobe / abaya): shoulders → ankles, slightly flared; neckline accent
-    rr = lambda v: v * s * wide  # noqa: E731
-    profile = [(rr(0.17), 0.07 * s), (rr(0.165), 0.3 * s), (rr(0.16), 0.6 * s), (rr(0.165), 0.92 * s), (rr(0.155), 1.1 * s), (rr(0.165), 1.28 * s),
-               (rr(0.16), 1.38 * s), (rr(0.12), 1.44 * s), (rr(0.065), 1.47 * s)]
-    body.lathe(out_c, "ROBE", 0, 0, profile, segs=26)
-    if not abaya:
-        body.box(acc_c if L["head"] != "ghutra" else shade(out_c, 0.85), {"chest": 1.0}, -0.012, 0.012, 1.18 * s, 1.43 * s, rr(0.135), rr(0.15))  # placket
-    else:
-        body.lathe(acc_c, "ROBE", 0, 0, [(rr(0.172), 0.07 * s), (rr(0.174), 0.13 * s)], segs=26)  # hem trim
-    # sleeves + hands
-    for side in ("L", "R"):
-        sh, el, wr = J["upperarm." + side], J["forearm." + side], J["hand." + side]
-        body.capsule(out_c, ["upperarm." + side, "chest"], sh, el, rr(0.056), rr(0.05))
-        body.capsule(out_c, ["forearm." + side, "upperarm." + side], el, wr, rr(0.05), rr(0.054))
-        body.sphere(skin_c, {"hand." + side: 1.0}, wr[0], wr[1] - 0.05 * s, wr[2] + 0.01, 0.045 * s, sx=0.85, sy=1.3, sz=0.7)
-        if "watch" in extras and side == "L":
-            body.torus("#d4a017", {"forearm.L": 0.7, "hand.L": 0.3}, wr[0], wr[1] + 0.01, wr[2], 0.05 * s, 0.009, segs=14, ring=5)
-    # shoes peeking out
-    for side in ("L", "R"):
-        fx = J["foot." + side][0]
-        body.box(dark, {"foot." + side: 1.0}, fx - 0.045 * s, fx + 0.045 * s, 0.0, 0.07 * s, -0.04 * s, 0.15 * s, bevel=0.02)
-        body.capsule(out_c if not abaya else shade(out_c, 0.9), ["shin." + side, "foot." + side], (fx, 0.4 * s, 0.0), (fx, 0.1 * s, 0.01), rr(0.06), rr(0.055))
-
-    # head: neck, skull, ears, nose, eyes, brows, facial hair
-    hx, hy, hz = 0, 1.6 * s, 0.0
-    body.capsule(skin_c, ["neck", "head"], (0, 1.43 * s, 0), (0, 1.55 * s, 0.005), 0.05 * s)
-    body.sphere(skin_c, {"head": 1.0}, hx, hy, hz, 0.112 * s, sx=0.92, sy=1.12, sz=1.0, subdiv=3)
-    body.sphere(skin_c, {"head": 1.0}, hx, hy - 0.05 * s, hz + 0.03 * s, 0.07 * s, sx=1.05, sy=0.8, sz=1.0, subdiv=2)  # jaw
-    body.sphere(shade(skin_c, 0.95), {"head": 1.0}, hx, hy - 0.005 * s, hz + 0.105 * s, 0.022 * s, sx=0.75, sy=1.35, sz=1.0)  # nose
-    for ex in (0.038, -0.038):
-        body.sphere("#f6f3ee", {"head": 1.0}, hx + ex * s, hy + 0.02 * s, hz + 0.088 * s, 0.017 * s, sz=0.6)
-        body.sphere("#24170f", {"head": 1.0}, hx + ex * s, hy + 0.02 * s, hz + 0.099 * s, 0.009 * s, sz=0.5)
-        body.box("#2a1c14", {"head": 1.0}, hx + ex * s - 0.022 * s, hx + ex * s + 0.022 * s, hy + 0.048 * s, hy + 0.056 * s, hz + 0.085 * s, hz + 0.1 * s)
-    body.box(shade(skin_c, 0.78), {"head": 1.0}, hx - 0.022 * s, hx + 0.022 * s, hy - 0.052 * s, hy - 0.045 * s, hz + 0.092 * s, hz + 0.1 * s)  # lips
-    if not abaya:
-        for ex in (0.098, -0.098):
-            body.sphere(skin_c, {"head": 1.0}, hx + ex * s, hy + 0.005 * s, hz, 0.025 * s, sx=0.45, sy=1.2)
-    if "beard" in extras:
-        body.sphere("#1f1712", {"head": 1.0}, hx, hy - 0.07 * s, hz + 0.045 * s, 0.072 * s, sx=1.15, sy=0.75, sz=0.95)
-    if "beard" in extras or "moustache" in extras:
-        body.box("#1f1712", {"head": 1.0}, hx - 0.035 * s, hx + 0.035 * s, hy - 0.035 * s, hy - 0.022 * s, hz + 0.093 * s, hz + 0.108 * s, bevel=0.004)
-    if "glasses" in extras:
-        for ex in (0.038, -0.038):
-            body.torus("#20161d", {"head": 1.0}, hx + ex * s, hy + 0.02 * s, hz + 0.104 * s, 0.026 * s, 0.0035, segs=16, ring=4)
-        body.box("#20161d", {"head": 1.0}, -0.012 * s, 0.012 * s, hy + 0.019 * s, hy + 0.024 * s, hz + 0.104 * s, hz + 0.108 * s)
-    if "headset" in extras:
-        body.torus("#1f2937", {"head": 1.0}, hx, hy + 0.02 * s, hz, 0.112 * s, 0.009, segs=20, ring=5)
-        body.sphere("#1f2937", {"head": 1.0}, hx + 0.11 * s, hy, hz, 0.03 * s, sx=0.5)
-        body.capsule("#1f2937", ["head"], (0.1 * s, hy - 0.01 * s, 0.02 * s), (0.04 * s, hy - 0.06 * s, 0.1 * s), 0.006)
-
-    # head covering
-    head_c = {"shemagh": "#f7f5f1", "ghutra": "#f8f7f3", "hijab": acc_c}[L["head"]]
-    face_gap = math.radians(110)
-    start = math.pi / 2 + face_gap / 2  # leave the face (+z) open
-    arc = 2 * math.pi - face_gap
-    if L["head"] in ("shemagh", "ghutra"):
-        cloth = [(0.045 * s, 1.765 * s), (0.1 * s, 1.75 * s), (0.122 * s, 1.68 * s), (0.13 * s, 1.58 * s), (0.155 * s, 1.47 * s), (0.2 * s, 1.36 * s), (0.215 * s, 1.27 * s)]
-        stripes = ("#c62f36", "#f7f5f1", 2) if L["head"] == "shemagh" else None
-        body.lathe(head_c, ["head", "neck", "chest"], 0, -0.005, cloth, segs=30, arc=arc, start=start, stripes=stripes)
-        body.lathe(head_c, {"head": 1.0}, 0, -0.005, [(0.105 * s, 1.66 * s), (0.112 * s, 1.73 * s), (0.04 * s, 1.765 * s)], segs=24, cap_top=True)  # crown
-        # agal: double black cord
-        body.torus("#151216", {"head": 1.0}, 0, 1.705 * s, -0.008, 0.112 * s, 0.011, segs=26, ring=6)
-        body.torus("#151216", {"head": 1.0}, 0, 1.728 * s, -0.012, 0.106 * s, 0.01, segs=26, ring=6)
-    else:
-        hij = [(0.05 * s, 1.77 * s), (0.105 * s, 1.745 * s), (0.124 * s, 1.67 * s), (0.122 * s, 1.56 * s), (0.11 * s, 1.47 * s), (0.17 * s, 1.4 * s), (0.2 * s, 1.33 * s)]
-        hface = math.radians(80)
-        body.lathe(acc_c, ["head", "neck", "chest"], 0, -0.004, hij, segs=30, arc=2 * math.pi - hface, start=math.pi / 2 + hface / 2)
-        body.lathe(acc_c, {"head": 1.0}, 0, -0.004, [(0.104 * s, 1.69 * s), (0.11 * s, 1.74 * s), (0.04 * s, 1.772 * s)], segs=24, cap_top=True)
-        body.lathe(shade(acc_c, 0.8), {"head": 1.0}, 0, -0.004, [(0.113 * s, 1.655 * s), (0.116 * s, 1.67 * s)], segs=24, arc=2 * math.pi - hface, start=math.pi / 2 + hface / 2)
-    if "bisht" in extras:
-        cloak = [(rr(0.2), 0.25 * s), (rr(0.2), 0.7 * s), (rr(0.195), 1.1 * s), (rr(0.21), 1.32 * s), (rr(0.17), 1.42 * s)]
-        bgap = math.radians(60)
-        body.lathe("#3b2417", "ROBE", 0, -0.01, cloak, segs=28, arc=2 * math.pi - bgap, start=math.pi / 2 + bgap / 2)
-        for sgn in (1, -1):  # gold zari trim along the opening
-            a = math.pi / 2 + sgn * bgap / 2
-            body.capsule("#d4a017", "ROBE", (rr(0.212) * math.cos(a), 1.33 * s, rr(0.212) * math.sin(a)), (rr(0.2) * math.cos(a), 0.3 * s, rr(0.2) * math.sin(a)), 0.012, segs=6)
-    if "lanyard" in extras:
-        body.box("#f8fafc", {"chest": 1.0}, -0.035 * s, 0.035 * s, 1.15 * s, 1.24 * s, rr(0.16), rr(0.168))
-    if "tablet" in extras:
-        wr = J["hand.L"]
-        body.box("#1f2937", {"hand.L": 1.0}, wr[0] - 0.09 * s, wr[0] + 0.02 * s, wr[1] - 0.1 * s, wr[1] + 0.04 * s, wr[2] + 0.02, wr[2] + 0.03)
-    return body, J
-
-
 # ── BASHT (official mascot: purple robot, white dasmal with the red band, cyan smiling eyes, jambiya) ──────────────────
 def build_robot():
     J = joints(1.62, 1.08)
@@ -580,13 +476,13 @@ summary = {}
 for ch in PLAN["characters"]:
     if args.only and ch["id"] not in args.only:
         continue
-    if ch["look"].get("model") and not args.procedural_humans:
-        continue  # realistic person: built by build_humans.py (this script would overwrite <ID>.glb)
+    if ch["look"]["kind"] != "robot":
+        continue  # the people are built by build_humans.py (Microsoft Rocketbox); this script builds BASHT
     t = time.time()
     reset_scene()
     bpy.context.scene.render.fps = FPS
     robot = ch["look"]["kind"] == "robot"
-    body, J = build_robot() if robot else build_human(ch)
+    body, J = build_robot()
     mesh = finish_mesh(body, ch["id"])
     rig = make_armature(ch["id"], J)
     skin(mesh, rig, body, J)

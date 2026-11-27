@@ -38,9 +38,8 @@ export HQ_KTX_BIN=~/tools/ktx/KTX-Software-4.4.0-Linux-x86_64/bin
 | `tools/hq-assets/build.sh building` | architecture, furniture, materials; Cycles bake of a 2048² lightmap (direct + indirect light) | ≈ 6 min |
 | `tools/hq-assets/build.sh characters` | BASHT: skinned robot + 6 clips (idle, walk, sit, type, talk, stand) | ≈ 1 s |
 | `tools/hq-assets/build.sh humans` | 13 realistic people (Rocketbox, composed per `roster.ts`) + one mocap clip library per skeleton | ≈ 1 min |
-| `tools/hq-assets/build.sh lineup` | QA render of all characters (idle, walk) | ≈ 1 min |
 | `tools/hq-assets/build.sh publish` | KTX2 textures (ETC1S; lightmap UASTC) + meshopt, copy into the app with the Basis transcoder, regenerate `assets.generated.ts` | ≈ 2 min |
-| `tools/hq-assets/build.sh all` | everything above except the lineup | |
+| `tools/hq-assets/build.sh all` | everything above | |
 
 ## Design rules
 
