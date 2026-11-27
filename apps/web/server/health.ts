@@ -7,7 +7,7 @@ export type HealthBody = {
   web: "ok";
   backend: "ok" | "unconfigured" | "unreachable" | "rejected" | "unavailable" | "invalid_response";
   version?: string;
-  features?: { assistant: boolean; connected_integrations: number; task_execution: boolean; basht?: CoreState };
+  features?: { assistant: boolean; connected_integrations: number; task_execution: boolean; basht?: CoreState; basht_chat?: boolean };
 };
 
 /** Rebuilds the features from known fields only, so nothing unexpected from the backend is ever echoed publicly. */
@@ -17,6 +17,7 @@ function readFeatures(v: unknown): HealthBody["features"] | null {
     typeof f.connected_integrations !== "number" || !Number.isInteger(f.connected_integrations)) return null;
   const out: NonNullable<HealthBody["features"]> = { assistant: f.assistant, connected_integrations: f.connected_integrations, task_execution: f.task_execution };
   // BASHT engine state (C1): optional for older APIs; an unknown value reads as offline (fail closed)
+  if (typeof f.basht_chat === "boolean") out.basht_chat = f.basht_chat; // C2/C4: the app can chat with BASHT
   if (f.basht !== undefined) out.basht = (CORE_STATES as readonly unknown[]).includes(f.basht) ? (f.basht as CoreState) : "offline";
   return out;
 }

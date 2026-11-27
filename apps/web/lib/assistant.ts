@@ -9,7 +9,7 @@ import { parseCoreState, type CoreState } from "@/lib/hq/source";
 export type AssistantStatus =
   | { server: "checking" }
   | { server: "offline" }
-  | { server: "online"; assistant: boolean; version: string; basht: CoreState };
+  | { server: "online"; assistant: boolean; version: string; basht: CoreState; bashtChat: boolean };
 
 export class AssistantUnavailableError extends Error {
   constructor(message = "المساعد الذكي غير مفعّل.") { super(message); this.name = "AssistantUnavailableError"; }
@@ -69,9 +69,9 @@ export function createAssistantService(fetchImpl: Fetch = (...a) => fetch(...a),
         const res = await call("/health");
         if (!res.ok || !(res.headers.get("content-type") ?? "").includes("application/json")) return { server: "offline" };
         const body: unknown = await res.json();
-        const b = body as { status?: unknown; version?: unknown; features?: { assistant?: unknown; basht?: unknown } };
+        const b = body as { status?: unknown; version?: unknown; features?: { assistant?: unknown; basht?: unknown; basht_chat?: unknown } };
         if (b?.status !== "ok") return { server: "offline" };
-        return { server: "online", assistant: b.features?.assistant === true, version: typeof b.version === "string" ? b.version : "?", basht: parseCoreState(b.features?.basht) };
+        return { server: "online", assistant: b.features?.assistant === true, version: typeof b.version === "string" ? b.version : "?", basht: parseCoreState(b.features?.basht), bashtChat: b.features?.basht_chat === true };
       } catch { return { server: "offline" }; }
     },
     async sessionStatus(): Promise<{ enabled: boolean; authenticated: boolean }> {

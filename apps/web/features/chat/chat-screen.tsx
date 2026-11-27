@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Icon from "@/components/icon";
@@ -222,6 +223,11 @@ export default function ChatScreen() {
     <div className="page">
       <h1 className="sr-only">المحادثات</h1>
       {storageError && <Notice tone="warn" role="alert">{storageError}</Notice>}
+      {status.server === "online" && status.bashtChat && (
+        <Link href="/chat/basht" className="card card-pad row" style={{ marginBlockEnd: 10, gap: 10 }}>
+          <BrandMark size="sm" /><span className="grow"><strong>تحدّث مع باشت الفعلي</strong><small className="muted" style={{ display: "block" }}>محادثة مباشرة مع محرك باشت وإرسال المهام، بذاكرته المشتركة</small></span><Icon name="forward" size={18} />
+        </Link>
+      )}
       <div className="chat">
         <aside className="chat-side" aria-label="المحادثات">{desktop && list}</aside>
         <section className="chat-main" aria-label="المحادثة الحالية">

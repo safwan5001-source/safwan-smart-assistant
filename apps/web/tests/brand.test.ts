@@ -159,8 +159,8 @@ describe("agent state: a Claude reply is not an executed task", () => {
     const idle = { phase: "idle" as const, at: 0 };
     expect(agentState({ server: "checking" }, idle)).toBe("connecting");
     expect(agentState({ server: "offline" }, idle)).toBe("offline");
-    expect(agentState({ server: "online", assistant: false, version: "1", basht: "unconfigured" }, idle)).toBe("notes");
-    expect(agentState({ server: "online", assistant: true, version: "1", basht: "unconfigured" }, idle)).toBe("ready");
+    expect(agentState({ server: "online", assistant: false, version: "1", basht: "unconfigured", bashtChat: false }, idle)).toBe("notes");
+    expect(agentState({ server: "online", assistant: true, version: "1", basht: "unconfigured", bashtChat: false }, idle)).toBe("ready");
   });
 
   it("reply and task outcomes have different labels, and the reply one says nothing was executed", () => {
@@ -197,7 +197,7 @@ describe("agent state: a Claude reply is not an executed task", () => {
   it("outcomes are shown briefly, then the agent returns to idle", () => {
     vi.useFakeTimers();
     setAgentPhase("thinking");
-    expect(agentState({ server: "online", assistant: true, version: "1", basht: "unconfigured" }, getAgentActivity())).toBe("thinking");
+    expect(agentState({ server: "online", assistant: true, version: "1", basht: "unconfigured", bashtChat: false }, getAgentActivity())).toBe("thinking");
     for (const p of ["replied", "reply_failed", "task_done", "task_failed", "stopped"] as const) {
       setAgentPhase(p);
       expect(getAgentActivity().phase).toBe(p);
