@@ -81,7 +81,7 @@ describe("BASHT chat door: relay", () => {
     // every relayed path is a fixed /internal/v1/* route, which the real callBackend enforces (no query strings)
     for (const c of backend.mock.calls) expect(c[0].path).toMatch(/^\/internal\/v1\/[a-z0-9/_-]+$/);
     backend.mockResolvedValueOnce(ok(200, { run_id: RUN, status: "done", text: "تم", failed: false, extra: "x" }));
-    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "تم", failed: false });
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "تم", failed: false, firstTokenMs: null, totalMs: null });
     backend.mockResolvedValueOnce({ kind: "unreachable" });
     expect((await call("GET", "sessions", authed)).status).toBe(503);
   });
@@ -94,5 +94,42 @@ describe("browser client", () => {
     const offline = createBashtClient(async () => { throw new Error("network down"); });
     await expect(offline.sessions()).rejects.toThrow("انقطع الاتصال");
     expect(await offline.status()).toEqual({ enabled: false, authenticated: false });
+  });
+});
+
+describe("BASHT chat door: model control (M)", () => {
+  it("reads the catalog and state through fixed API paths", async () => {
+    backend.mockResolvedValueOnce(ok(200, { models: [{ id: "mock/echo" }] })).mockResolvedValueOnce(ok(200, { model: { id: "mock/echo" } }));
+    expect(await (await call("GET", "models", authed)).json()).toEqual({ models: [{ id: "mock/echo" }] });
+    expect((await call("GET", "model", authed)).status).toBe(200);
+    expect(backend.mock.calls.map((c) => [c[0].path, c[0].method])).toEqual([["/internal/v1/basht/models", "GET"], ["/internal/v1/basht/model", "GET"]]);
+  });
+  it("writes only validated values; malformed input never reaches the API", async () => {
+    backend.mockResolvedValue(ok(200, {}));
+    for (const [p, body] of [["model", { model: "openai/gpt-5" }], ["model", { model: "default" }], ["thinking", { level: "high" }], ["fast", { mode: "off" }]] as const)
+      expect((await call("POST", p, { ...authed, body })).status, p).toBe(200);
+    expect(backend.mock.calls.map((c) => c[0].body)).toEqual([{ model: "openai/gpt-5" }, { model: "default" }, { level: "high" }, { mode: "off" }]);
+    backend.mockClear();
+    for (const [p, body] of [["model", { model: "a b" }], ["model", { model: 5 }], ["thinking", { level: "HIGH!" }], ["fast", { mode: "turbo" }]] as const)
+      expect((await call("POST", p, { ...authed, body })).status, JSON.stringify(body)).toBe(400);
+    expect(backend).not.toHaveBeenCalled();
+  });
+  it("needs the owner and same-origin like every other route", async () => {
+    expect((await call("GET", "models", { headers: same })).status).toBe(401);
+    const cross = { headers: { ...authed.headers, origin: "https://evil.example", "sec-fetch-site": "cross-site" } };
+    expect((await call("POST", "model", { ...cross, body: { model: "openai/gpt-5" } })).status).toBe(403);
+    expect(backend).not.toHaveBeenCalled();
+  });
+  it("passes the engine's specific refusal codes through; anything else stays generic", async () => {
+    backend.mockResolvedValueOnce(ok(400, { detail: { code: "fast_mode_unsupported" } }));
+    expect(await (await call("POST", "fast", { ...authed, body: { mode: "on" } })).json()).toEqual({ error: "fast_mode_unsupported" });
+    backend.mockResolvedValueOnce(ok(400, { detail: { code: "model_control_unavailable" } }));
+    expect(await (await call("GET", "models", authed)).json()).toEqual({ error: "model_control_unavailable" });
+    backend.mockResolvedValueOnce(ok(400, { detail: { code: "<script>" } }));
+    expect(await (await call("POST", "model", { ...authed, body: { model: "x/y" } })).json()).toEqual({ error: "bad_request" });
+  });
+  it("a run carries the bridge-measured latency", async () => {
+    backend.mockResolvedValueOnce(ok(200, { status: "done", text: "x", failed: false, first_token_ms: 640, total_ms: 2100 }));
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "x", failed: false, firstTokenMs: 640, totalMs: 2100 });
   });
 });

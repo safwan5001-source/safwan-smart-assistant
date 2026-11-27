@@ -3,12 +3,35 @@
  * the credential). Every failure becomes an Arabic message; upstream text never reaches the UI.
  */
 export type BashtSession = { key: string; label: string; channel: string; updated_at: number; writable: boolean };
-export type BashtMessage = { role: "user" | "assistant"; text: string; at: number };
-export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean };
+export type BashtFallback = { from: string | null; to: string | null; reason: string | null; at?: number | null };
+/** `provider`/`model`: the model that actually wrote an assistant reply (as the engine recorded it), with any fallback. */
+export type BashtMessage = { role: "user" | "assistant"; text: string; at: number; provider?: string | null; model?: string | null; fallback?: BashtFallback };
+export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean; firstTokenMs?: number | null; totalMs?: number | null };
+
+/** One model the engine offers this agent (models.list, the agent's allowlist). Nothing here is invented by the app. */
+export type BashtModel = {
+  id: string; name: string; provider: string | null; provider_name: string | null; available: boolean; unavailable_reason: string | null;
+  unavailable_until: number | null; context_window: number | null; reasoning: boolean; thinking_levels: string[]; thinking_default: string | null;
+  fast_mode: boolean; tools: boolean | null; input: string[]; recommended: boolean; selectable: boolean;
+};
+/** The app conversation's current settings, as the engine reports them. */
+export type BashtModelState = {
+  model: { id: string | null; provider: string | null; source: "override" | "default" };
+  thinking: { level: string | null; default: string | null; effective: string | null; levels: string[] };
+  fast: { supported: boolean | null; enabled: boolean | null };
+  usage: { input_tokens: number | null; output_tokens: number | null; context_tokens: number | null; context_window: number | null };
+  last_reply: { provider: string | null; model: string | null; fallback?: BashtFallback; at: number | null } | null;
+  fallback: BashtFallback | null;
+  last_run: { status: string | null; first_token_ms: number | null; total_ms: number | null } | null;
+};
 
 export const BASHT_ERROR_TEXT: Record<string, string> = {
   unauthorized: "يلزم فتح جلسة باشت برمز وصول المالك.", disabled: "محادثة باشت غير مفعّلة على الخادم.", forbidden: "غير مصرّح بهذا الطلب.",
   rate_limited: "طلبات كثيرة؛ انتظر قليلًا ثم أعد المحاولة.", busy: "باشت ينفّذ طلبًا سابقًا الآن؛ انتظر حتى يكتمل.",
+  unknown_model: "هذا النموذج غير موجود في قائمة باشت المعتمدة.", model_unavailable: "هذا النموذج غير متاح الآن.",
+  model_not_selectable: "لا يمكن اختيار هذا النموذج يدويًا.", unsupported_level: "النموذج الحالي لا يدعم مستوى التفكير هذا.",
+  fast_mode_unsupported: "النموذج الحالي لا يدعم الوضع السريع.", rejected: "رفض المحرك هذا التغيير.",
+  model_control_unavailable: "التحكم بالنماذج غير متاح في نسخة المحرك الحالية.",
   not_found: "المحادثة غير متاحة.", bad_request: "طلب غير صالح.", unavailable: "تعذّر الوصول إلى محرك باشت الآن.", network: "انقطع الاتصال بالخادم.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
@@ -37,6 +60,11 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     send: async (message: string) => (await call<{ runId: string }>("send", post({ message }))).runId,
     run: (id: string) => call<BashtRun>(`runs/${id}`),
     stop: async (id: string) => { await call(`runs/${id}/stop`, post({})); },
+    models: async () => (await call<{ models: BashtModel[] }>("models")).models,
+    modelState: () => call<BashtModelState>("model"),
+    setModel: async (model: string) => { await call("model", post({ model })); },
+    setThinking: async (level: string) => { await call("thinking", post({ level })); },
+    setFast: async (mode: "on" | "off" | "default") => { await call("fast", post({ mode })); },
   };
 }
 export const bashtClient = createBashtClient();

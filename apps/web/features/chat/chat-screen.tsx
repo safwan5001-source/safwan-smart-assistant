@@ -25,6 +25,9 @@ import ReminderDialog from "@/components/reminder-dialog";
 import BrowserCard from "./browser-card";
 import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-card";
 import VoicePanel from "@/features/calls/calls-screen";
+import ModelPanel from "./model-panel";
+import { useBashtModel } from "./use-basht-model";
+import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/basht-model";
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
 import { AssistantRequestError, assistantService } from "@/lib/assistant";
 import { ensureClaudeSession } from "@/lib/claude-session";
@@ -63,6 +66,7 @@ export default function ChatScreen() {
   const [view, setView] = useState<View>({ kind: "main" });
   const [sheet, setSheet] = useState(false);
   const [voice, setVoice] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const [offer, setOffer] = useState<ReminderOffer | null>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -315,12 +319,20 @@ export default function ChatScreen() {
     <article key={key} className={"bubble " + m.role}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
       {m.text}
+      {m.role === "assistant" && m.fallback?.to && (
+        <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
+      )}
       <div className="meta">
         {m.at > 0 && <time className="num" dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>}
+        {m.role === "assistant" && m.model && <small className="model-tag" title={m.provider ? `${m.provider}/${m.model}` : m.model}>{replyModelName(m.provider, m.model, model.models)}</small>}
         <button className="icon-btn sm" onClick={() => void copy(m.text)} aria-label="نسخ الرسالة"><Icon name="copy" size={16} /></button>
       </div>
     </article>
   );
+
+  // M: the app conversation's model, read from the engine (refreshed after each reply and each change; never polled)
+  const model = useBashtModel(bashtOn && basht.gate === "open", !!basht.live);
+  const modelLine = model.supported ? modelSummary(model.state, model.models) : "";
 
   const others = basht.sessions.filter((s) => s.key !== APP_SESSION_KEY);
   const list = (
@@ -364,7 +376,7 @@ export default function ChatScreen() {
   const live = view.kind === "main" ? basht.live : null;
   const claudeLive = streaming && mainThread && streaming.threadId === mainThread.id ? streaming : null;
   const title = view.kind === "main" ? "باشت" : view.kind === "engine" ? others.find((s) => s.key === view.key)?.label ?? "محادثة" : archived?.title ?? "الأرشيف";
-  const sub = live ? (live.text ? "يكتب الرد…" : "يفكّر…") : view.kind === "main" ? AGENT_STATE_TEXT[agent].label : view.kind === "engine" ? "للقراءة فقط" : "أرشيف محلي · للقراءة";
+  const sub = live ? (live.text ? "يكتب الرد…" : "يفكّر…") : view.kind === "main" ? AGENT_STATE_TEXT[agent].label + (modelLine && agent !== "offline" ? " · " + modelLine : "") : view.kind === "engine" ? "للقراءة فقط" : "أرشيف محلي · للقراءة";
 
   return (
     <div className="page">
@@ -380,6 +392,7 @@ export default function ChatScreen() {
               <span className="grow"><span className="who-name">{title}</span><small role="status">{sub}</small></span>
             </div>
             {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={() => { refreshHealth(); basht.refresh(); }} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
+            {view.kind === "main" && model.supported && <button className="icon-btn" onClick={() => { setModelOpen(true); void model.reload(); }} aria-label="النموذج والقدرات" aria-haspopup="dialog"><Icon name="spark" size={20} /></button>}
             {view.kind === "main" && <button className="icon-btn" onClick={() => setVoice(true)} aria-label="الجلسة الصوتية"><Icon name="wave" size={21} /></button>}
           </div>
 
@@ -475,6 +488,11 @@ export default function ChatScreen() {
           <div className="row" style={{ padding: "10px 12px 0" }}><h2 style={{ flex: 1 }}>المحادثات</h2><button className="icon-btn" onClick={() => setSheet(false)} aria-label="إغلاق"><Icon name="close" size={20} /></button></div>
           <div style={{ overflowY: "auto", display: "grid", alignContent: "start", gap: 8 }}>{list}</div>
         </div>
+      </Modal>
+
+      <Modal open={modelOpen} onClose={() => setModelOpen(false)} label="النموذج والقدرات" variant="sheet">
+        <ModelPanel models={model.models} state={model.state} busy={model.busy} error={model.error}
+          onApply={(c) => { void model.apply(c).then((e) => { if (!e) toast("تم التطبيق على محادثة باشت"); }); }} onClose={() => setModelOpen(false)} />
       </Modal>
 
       <Modal open={voice} onClose={() => setVoice(false)} label="الجلسة الصوتية" variant="sheet">

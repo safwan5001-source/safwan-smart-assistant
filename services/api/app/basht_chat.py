@@ -35,6 +35,9 @@ SEND_PER_MINUTE = 20
 READ_TIMEOUT = 10.0
 MAX_BYTES = 2 * 1024 * 1024
 _KEY_RE = re.compile(r"^agent:[a-z0-9_-]{1,64}:[^\s]{1,200}$", re.I)
+MODEL_REFUSALS = {"unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected"}
+_MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$")
+_LEVEL_RE = re.compile(r"^[a-z][a-z0-9_-]{0,39}$")
 _RUN_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 class _NoRedirect(urllib_request.HTTPRedirectHandler):
@@ -92,6 +95,21 @@ def _call(method: str, path: str, body: dict | None = None, env=os.environ) -> d
             return json.loads(raw)
     except HTTPError as e:
         code = {400: "bad_request", 404: "not_found", 409: "busy", 429: "rate_limited"}.get(e.code, "basht_unavailable")
+        if e.code == 400:  # model control: the bridge's own refusal code, from a fixed list (never its text)
+            try:
+                specific = json.loads(e.read(4096)).get("error")
+            except Exception:  # noqa: BLE001 - any unreadable body is a plain bad_request
+                specific = None
+            if specific in MODEL_REFUSALS:
+                code = specific
+        if e.code == 503:
+            try:
+                if json.loads(e.read(4096)).get("error") == "not_available":
+                    raise EngineError(400, "model_control_unavailable") from None
+            except EngineError:
+                raise
+            except Exception:  # noqa: BLE001
+                pass
         raise EngineError(e.code if e.code in (400, 404, 409, 429) else 502, code) from None
     except (URLError, TimeoutError, OSError, ValueError):
         raise EngineError(502, "basht_unavailable") from None
@@ -106,6 +124,55 @@ def _guard(fn):
 
 def _text(v: Any, cap: int = 64_000) -> str:
     return v[:cap] if isinstance(v, str) else ""
+
+
+def _int(v: Any) -> int | None:
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10**12 else None
+
+
+def _num(v: Any) -> int | float | None:
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) < 10**15 else None
+
+
+def _short(v: Any, cap: int = 200) -> str | None:
+    if not isinstance(v, str):
+        return None
+    t = "".join(ch for ch in v if ch >= " " and ch != "\x7f").strip()
+    return t[:cap] or None
+
+
+def _levels(v: Any) -> list[str]:
+    return [x for x in (v if isinstance(v, list) else []) if isinstance(x, str) and _LEVEL_RE.fullmatch(x)][:20]
+
+
+def _fallback(v: Any) -> dict | None:
+    if not isinstance(v, dict) or not (_short(v.get("from")) or _short(v.get("to"))):
+        return None
+    return {"from": _short(v.get("from")), "to": _short(v.get("to")), "reason": _short(v.get("reason"), 60), "at": _int(v.get("at"))}
+
+
+def _reply_meta(m: dict) -> dict:
+    """Which model actually wrote this reply (and a fallback record when OpenClaw switched models for it)."""
+    out: dict[str, Any] = {"provider": _short(m.get("provider"), 100), "model": _short(m.get("model"))}
+    fb = _fallback(m.get("fallback"))
+    if fb:
+        out["fallback"] = fb
+    return out
+
+
+def _model_row(r: Any) -> dict | None:
+    if not isinstance(r, dict) or not isinstance(r.get("id"), str) or not _MODEL_RE.fullmatch(r["id"]):
+        return None
+    return {
+        "id": r["id"], "name": _short(r.get("name")) or r["id"], "provider": _short(r.get("provider"), 100),
+        "provider_name": _short(r.get("providerName"), 100), "available": r.get("available") is True,
+        "unavailable_reason": _short(r.get("unavailableReason")), "unavailable_until": _int(r.get("unavailableUntil")),
+        "context_window": _int(r.get("contextWindow")), "reasoning": r.get("reasoning") is True,
+        "thinking_levels": _levels(r.get("thinkingLevels")), "thinking_default": _short(r.get("thinkingDefault"), 40),
+        "fast_mode": r.get("supportsFastMode") is True, "tools": r.get("supportsTools") if isinstance(r.get("supportsTools"), bool) else None,
+        "input": [x for x in (r.get("input") if isinstance(r.get("input"), list) else []) if x in ("text", "image", "audio", "video", "document")],
+        "recommended": r.get("recommended") is True, "selectable": r.get("selectable") is True,
+    }
 
 
 def _allow_send(now: float) -> bool:
@@ -124,7 +191,8 @@ def reset_limits() -> None:
 
 def _run_view(j: dict) -> dict:
     status = j.get("status") if j.get("status") in ("running", "done", "error", "stopped") else "error"
-    return {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error"}
+    return {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error",
+            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs"))}
 
 
 @router.get("/sessions")
@@ -151,7 +219,8 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
     q = f"/history?key={quote(body.key, safe='')}&limit={body.limit}" + (f"&offset={body.offset}" if body.offset is not None else "")
     j = _guard(lambda: _call("GET", q))
     msgs = j.get("messages") if isinstance(j.get("messages"), list) else []
-    out = [{"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0}
+    out = [{"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0,
+            **(_reply_meta(m) if m.get("role") == "assistant" else {})}
            for m in msgs if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
     nxt = j.get("nextOffset")
     return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True}
@@ -195,3 +264,94 @@ def stop(run_id: str, _: ServiceCall = Depends(require_service_call)):
     _guard(lambda: _call("POST", f"/runs/{run_id}/stop", {}))
     audit_log.record("basht.stop", run_id=run_id)
     return {"ok": True}
+
+
+# ── Model control (M): the app session's model, thinking level and fast mode, exactly as the engine offers them ──
+# An engine without these routes (older bridge: 404) or without its gateway seam (503 not_available) reads as a domain answer,
+# 400 model_control_unavailable, so the app hides the controls instead of reporting an outage.
+def _model_guard(fn):
+    try:
+        return fn()
+    except EngineError as e:
+        code = "model_control_unavailable" if e.code in ("not_found", "model_control_unavailable") else e.code
+        raise HTTPException(status_code=400 if code == "model_control_unavailable" else e.status, detail={"code": code}) from None
+
+
+@router.get("/models")
+def models(_: ServiceCall = Depends(require_service_call)):
+    j = _model_guard(lambda: _call("GET", "/models"))
+    rows = [m for m in (_model_row(r) for r in (j.get("models") if isinstance(j.get("models"), list) else [])) if m]
+    return {"models": rows[:200], "fetched_at": _int(j.get("fetchedAt"))}
+
+
+@router.get("/model")
+def model(_: ServiceCall = Depends(require_service_call)):
+    j = _model_guard(lambda: _call("GET", "/model"))
+    m = j.get("model") if isinstance(j.get("model"), dict) else {}
+    t = j.get("thinking") if isinstance(j.get("thinking"), dict) else {}
+    f = j.get("fast") if isinstance(j.get("fast"), dict) else {}
+    u = j.get("usage") if isinstance(j.get("usage"), dict) else {}
+    r = j.get("lastReply") if isinstance(j.get("lastReply"), dict) else None
+    run_ = j.get("lastRun") if isinstance(j.get("lastRun"), dict) else None
+    mid = m.get("id") if isinstance(m.get("id"), str) and _MODEL_RE.fullmatch(m["id"]) else None
+    return {
+        "model": {"id": mid, "provider": _short(m.get("provider"), 100), "source": "override" if m.get("source") == "override" else "default"},
+        "thinking": {"level": _short(t.get("level"), 40), "default": _short(t.get("default"), 40), "effective": _short(t.get("effective"), 40),
+                     "levels": _levels(t.get("levels"))},
+        "fast": {"supported": f.get("supported") if isinstance(f.get("supported"), bool) else None,
+                 "enabled": f.get("enabled") if isinstance(f.get("enabled"), bool) else None},
+        "usage": {"input_tokens": _num(u.get("inputTokens")), "output_tokens": _num(u.get("outputTokens")),
+                  "context_tokens": _num(u.get("contextTokens")), "context_window": _num(u.get("contextWindow"))},
+        "last_reply": {**_reply_meta(r), "at": _int(r.get("at"))} if r else None,
+        "fallback": _fallback(j.get("fallback")),
+        "last_run": {"status": _short(run_.get("status"), 20), "first_token_ms": _int(run_.get("firstTokenMs")),
+                     "total_ms": _int(run_.get("totalMs"))} if run_ else None,
+    }
+
+
+class ModelBody(BaseModel):
+    model: str = Field(min_length=1, max_length=200)
+
+
+class ThinkingBody(BaseModel):
+    level: str = Field(min_length=1, max_length=40)
+
+
+class FastBody(BaseModel):
+    mode: str = Field(pattern=r"^(on|off|default)$")
+
+
+def _set(kind: str, path: str, body: dict, value: str) -> dict:
+    try:
+        j = _call("POST", path, body)
+    except EngineError as e:
+        code = "model_control_unavailable" if e.code in ("not_found", "model_control_unavailable") else e.code
+        audit_log.record("basht.model", setting=kind, value=value, status=code)
+        raise HTTPException(status_code=400 if code in MODEL_REFUSALS or code == "model_control_unavailable" else e.status, detail={"code": code}) from None
+    audit_log.record("basht.model", setting=kind, value=value, status="ok")
+    return j
+
+
+@router.post("/model")
+def set_model(body: ModelBody, _: ServiceCall = Depends(require_service_call)):
+    want = body.model.strip()
+    if want != "default" and not _MODEL_RE.fullmatch(want):
+        raise HTTPException(status_code=400, detail={"code": "bad_request"})
+    j = _set("model", "/model", {"model": want}, want)
+    m = j.get("model") if isinstance(j.get("model"), dict) else {}
+    return {"model": m.get("id") if isinstance(m.get("id"), str) and _MODEL_RE.fullmatch(m["id"]) else None}
+
+
+@router.post("/thinking")
+def set_thinking(body: ThinkingBody, _: ServiceCall = Depends(require_service_call)):
+    level = body.level.strip()
+    if not _LEVEL_RE.fullmatch(level):
+        raise HTTPException(status_code=400, detail={"code": "bad_request"})
+    _set("thinking", "/thinking", {"level": level}, level)
+    return {"level": None if level == "default" else level}
+
+
+@router.post("/fast")
+def set_fast(body: FastBody, _: ServiceCall = Depends(require_service_call)):
+    _set("fast", "/fast", {"mode": body.mode}, body.mode)
+    return {"mode": body.mode}

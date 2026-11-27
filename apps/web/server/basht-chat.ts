@@ -61,6 +61,11 @@ async function readJson(req: Request): Promise<Record<string, unknown> | undefin
 }
 const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
+/** Model-control refusals the browser may see as they are (a fixed list; never upstream text). */
+const MODEL_CODES = new Set(["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected", "model_control_unavailable"]);
+const MODEL_REF = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
+const LEVEL = /^[a-z][a-z0-9_-]{0,39}$/;
+
 /** What the browser may learn from the API's status codes. */
 const API_ERRORS: Record<number, [number, string]> = { 400: [400, "bad_request"], 404: [404, "not_found"], 409: [409, "busy"], 422: [400, "bad_request"], 429: [429, "rate_limited"], 503: [503, "unavailable"] };
 
@@ -98,7 +103,11 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     // 512 KiB is callBackend's hard ceiling; history pages are kept well under it (the engine also caps one page at 80 KiB)
     const r = await deps.callBackend({ path: apiPath, method, body, env: deps.env, timeoutMs: 15_000, maxBytes: 512 * 1024 });
     if (r.kind !== "ok") return err("unavailable", 503);
-    if (r.status !== 200) { const m = API_ERRORS[r.status]; return m ? err(m[1], m[0]) : err("unavailable", 502); }
+    if (r.status !== 200) {
+      const code = (r.json as { detail?: { code?: unknown } } | null)?.detail?.code;
+      if (r.status === 400 && typeof code === "string" && MODEL_CODES.has(code)) return err(code, 400);
+      const m = API_ERRORS[r.status]; return m ? err(m[1], m[0]) : err("unavailable", 502);
+    }
     const j = (r.json ?? {}) as Record<string, unknown>;
     return json(pick ? pick(j) : j);
   };
@@ -118,9 +127,29 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if (typeof message !== "string" || !message.trim() || message.length > MAX_MESSAGE) return err("bad_request", 400);
     return relay("/internal/v1/basht/send", "POST", { message }, (j) => ({ runId: j.run_id }));
   }
+  // Model control (M): read what the engine offers; change it for the app conversation only
+  if (req.method === "GET" && route === "models") return relay("/internal/v1/basht/models", "GET");
+  if (req.method === "GET" && route === "model") return relay("/internal/v1/basht/model", "GET");
+  if (req.method === "POST" && (route === "model" || route === "thinking" || route === "fast")) {
+    const data = await readJson(req);
+    if (route === "model") {
+      const model = typeof data?.model === "string" ? data.model.trim() : "";
+      if (model !== "default" && !MODEL_REF.test(model)) return err("bad_request", 400);
+      return relay("/internal/v1/basht/model", "POST", { model });
+    }
+    if (route === "thinking") {
+      const level = typeof data?.level === "string" ? data.level.trim() : "";
+      if (!LEVEL.test(level)) return err("bad_request", 400);
+      return relay("/internal/v1/basht/thinking", "POST", { level });
+    }
+    const mode = data?.mode;
+    if (mode !== "on" && mode !== "off" && mode !== "default") return err("bad_request", 400);
+    return relay("/internal/v1/basht/fast", "POST", { mode });
+  }
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
-    if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true }));
+    if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,
+      firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null }));
     if (req.method === "POST" && run[2]) return relay(`/internal/v1/basht/runs/${run[1]}/stop`, "POST", {});
   }
   return err("not_found", 404);
