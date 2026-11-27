@@ -35,10 +35,14 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
                 <strong className="model-name">{modelName(current, models) || "—"}</strong>
                 <small className="muted" dir="ltr" style={{ textAlign: "end" }}>{current}</small>
               </span>
-              <Badge tone={state.model.source === "override" ? "accent" : undefined}>{state.model.source === "override" ? "مثبّت لهذه المحادثة" : "افتراضي باشت"}</Badge>
+              <Badge tone={state.model.source === "override" ? "accent" : state.model.source === "fallback" ? "warn" : undefined}>
+                {state.model.source === "override" ? "مثبّت لهذه المحادثة" : state.model.source === "fallback" ? "احتياطي تلقائي" : "افتراضي باشت"}</Badge>
             </div>
             {last && lastName && (
               <small className="muted">آخر رد نفّذه: <bdi>{lastName}</bdi>{state.last_run?.total_ms != null && <> · زمن أول حرف {seconds(state.last_run.first_token_ms)} · الإجمالي {seconds(state.last_run.total_ms)}</>}</small>
+            )}
+            {state.model.source === "fallback" && (
+              <small className="muted">انتقل باشت تلقائيًا إلى هذا النموذج بعد تعذّر النموذج الأساسي، ويعود إليه عندما يتاح.</small>
             )}
             {fb?.to && (
               <Notice tone="warn" role="status">انتقل باشت إلى نموذج احتياطي في آخر رد: <bdi>{replyModelName(null, fb.from, models)}</bdi> ← <bdi>{replyModelName(null, fb.to, models)}</bdi>{fb.reason ? ` (${reasonLabel(fb.reason)})` : ""}.</Notice>
@@ -58,7 +62,7 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
                 {levels.map((l) => (
                   <button key={l} aria-pressed={state.thinking.level === l} disabled={busy} onClick={() => onApply({ kind: "thinking", value: l })}>{levelLabel(l)}</button>
                 ))}
-                <button aria-pressed={state.thinking.level == null} disabled={busy} onClick={() => onApply({ kind: "thinking", value: "default" })}>
+                <button aria-pressed={state.thinking.level == null || !levels.includes(state.thinking.level)} disabled={busy} onClick={() => onApply({ kind: "thinking", value: "default" })}>
                   افتراضي{state.thinking.default ? ` (${levelLabel(state.thinking.default)})` : ""}
                 </button>
               </div>
@@ -66,28 +70,28 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
             </section>
           )}
 
-          {state.fast.supported && (
+          {(state.fast.supported || state.fast.enabled) && (
             <section className="stack" style={{ gap: 6 }} aria-labelledby="fast-h">
               <strong id="fast-h">السرعة</strong>
               <div className="seg" role="group" aria-labelledby="fast-h">
                 <button aria-pressed={state.fast.enabled === false} disabled={busy} onClick={() => onApply({ kind: "fast", value: "off" })}>عادي</button>
-                <button aria-pressed={state.fast.enabled === true} disabled={busy} onClick={() => onApply({ kind: "fast", value: "on" })}><Icon name="bolt" size={16} />سريع</button>
+                {state.fast.supported && <button aria-pressed={state.fast.enabled === true} disabled={busy} onClick={() => onApply({ kind: "fast", value: "on" })}><Icon name="bolt" size={16} />سريع</button>}
               </div>
-              <small className="muted">الوضع السريع يستخدم مسار المزوّد الأسرع لهذا النموذج.</small>
+              <small className="muted">{state.fast.supported ? "الوضع السريع يستخدم مسار المزوّد الأسرع لهذا النموذج." : "هذا النموذج لا يدعم الوضع السريع؛ اختر «عادي» لإلغاء إعداد سابق."}</small>
             </section>
           )}
 
           <section className="stack" style={{ gap: 8 }} aria-labelledby="models-h">
             <strong id="models-h">النماذج المتاحة لباشت</strong>
             <div role="radiogroup" aria-labelledby="models-h" className="stack" style={{ gap: 8 }}>
-              <button role="radio" aria-checked={state.model.source === "default"} className="model-row" disabled={busy} onClick={() => onApply({ kind: "model", value: "default" })}>
+              <button role="radio" aria-checked={state.model.source !== "override"} className="model-row" disabled={busy} onClick={() => onApply({ kind: "model", value: "default" })}>
                 <span className="stack" style={{ gap: 2 }}><strong>افتراضي باشت</strong><small className="muted">النموذج الأساسي في إعدادات باشت، مع النماذج الاحتياطية.</small></span>
               </button>
               {models === null ? <small className="muted">جارٍ تحميل القائمة…</small> : byProvider(models).map((g) => (
                 <div key={g.provider} className="stack" style={{ gap: 6 }}>
                   <small className="muted model-group">{g.provider}</small>
                   {g.rows.map((m) => {
-                    const on = state.model.source === "override" && m.id === current;
+                    const on = state.model.source === "override" && m.id === current; // an automatic fallback is not the owner's choice
                     return (
                       <button key={m.id} role="radio" aria-checked={on} className="model-row" disabled={busy || !m.selectable} onClick={() => onApply({ kind: "model", value: m.id })}>
                         <span className="stack" style={{ gap: 4, minWidth: 0 }}>

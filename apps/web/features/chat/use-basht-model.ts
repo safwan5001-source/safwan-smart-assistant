@@ -16,23 +16,28 @@ export function useBashtModel(open: boolean, replying: boolean) {
   const [error, setError] = useState("");
   const gen = useRef(0);
 
-  const load = useCallback(async (withCatalog: boolean, settled?: (s: BashtModelState) => boolean) => {
+  /** Reads the engine. With `settled`, re-reads (≤ ~2 s) until the requested change shows. Returns true only when the state was
+   * read AND (if asked) shows the change; `keepError` leaves an error on screen (a refusal must stay visible after the refresh). */
+  const load = useCallback(async (withCatalog: boolean, settled?: (s: BashtModelState) => boolean, keepError = false): Promise<boolean> => {
     const my = ++gen.current;
     try {
       const [first, m] = await Promise.all([bashtClient.modelState(), withCatalog ? bashtClient.models() : Promise.resolve(null)]);
       let s = first;
-      // the engine applies a session change a moment after acknowledging it: re-read (≤ ~2 s) until it shows, never assume it
+      // the engine applies a session change a moment after acknowledging it: re-read until it shows, never assume it
       for (let i = 0; settled && !settled(s) && i < 4; i++) {
         await new Promise((r) => setTimeout(r, 500));
-        if (my !== gen.current) return;
+        if (my !== gen.current) return false;
         s = await bashtClient.modelState();
       }
-      if (my !== gen.current) return;
-      setState(s); if (m) setModels(m); setSupported(true); setError("");
+      if (my !== gen.current) return false;
+      setState(s); if (m) setModels(m); setSupported(true);
+      if (!keepError) setError("");
+      return settled ? settled(s) : true;
     } catch (e) {
-      if (my !== gen.current) return;
-      if (e instanceof BashtError && e.code === "model_control_unavailable") { setSupported(false); return; }
-      setError(e instanceof BashtError ? e.message : "تعذّر قراءة إعدادات النموذج.");
+      if (my !== gen.current) return false;
+      if (e instanceof BashtError && e.code === "model_control_unavailable") { setSupported(false); return false; }
+      if (!keepError) setError(e instanceof BashtError ? e.message : "تعذّر قراءة إعدادات النموذج.");
+      return false;
     }
   }, []);
 
@@ -44,22 +49,28 @@ export function useBashtModel(open: boolean, replying: boolean) {
     wasReplying.current = replying;
   }, [open, replying, load]);
 
-  /** Applies one change to the app conversation, then re-reads the engine's truth. Returns "" or an Arabic error. */
+  /** Applies one change to the app conversation, then re-reads the engine's truth. Returns "" only once the engine SHOWS the
+   * change; otherwise an Arabic message (refused, or not confirmed yet) — never a success it cannot see. */
   const apply = useCallback(async (c: ModelChange): Promise<string> => {
     setBusy(true); setError("");
     try {
-      if (c.kind === "model") await bashtClient.setModel(c.value);
-      else if (c.kind === "thinking") await bashtClient.setThinking(c.value);
-      else await bashtClient.setFast(c.value);
-      await load(c.kind === "model", (s) =>
-        c.kind === "model" ? (c.value === "default" ? s.model.source === "default" : s.model.id === c.value)
+      try {
+        if (c.kind === "model") await bashtClient.setModel(c.value);
+        else if (c.kind === "thinking") await bashtClient.setThinking(c.value);
+        else await bashtClient.setFast(c.value);
+      } catch (e) {
+        const msg = e instanceof BashtError ? e.message : "تعذّر تطبيق التغيير.";
+        setError(msg);
+        await load(false, undefined, true); // show the engine's real state, keep the reason on screen
+        return msg;
+      }
+      const confirmed = await load(c.kind === "model", (s) =>
+        c.kind === "model" ? (c.value === "default" ? s.model.source !== "override" : s.model.id === c.value && s.model.source === "override")
         : c.kind === "thinking" ? s.thinking.level === (c.value === "default" ? null : c.value)
         : c.value === "default" || s.fast.enabled === (c.value === "on"));
-      return "";
-    } catch (e) {
-      const msg = e instanceof BashtError ? e.message : "تعذّر تطبيق التغيير.";
+      if (confirmed) return "";
+      const msg = "أرسل التغيير، لكن المحرك لم يؤكده بعد. ما تراه هو حالته الفعلية الآن.";
       setError(msg);
-      await load(false);
       return msg;
     } finally { setBusy(false); }
   }, [load]);

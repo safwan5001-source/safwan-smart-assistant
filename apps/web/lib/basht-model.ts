@@ -14,6 +14,8 @@ const REASONS: Record<string, string> = {
   server_error: "خطأ في خادم المزوّد", rate_limit: "تجاوز حدّ الاستخدام", rate_limited: "تجاوز حدّ الاستخدام", timeout: "انتهت المهلة",
   overloaded: "المزوّد مزدحم", auth: "مشكلة في مفتاح المزوّد", billing: "مشكلة في رصيد المزوّد", context_length: "تجاوز طول السياق",
   unavailable: "غير متاح", model_not_found: "النموذج غير موجود لدى المزوّد",
+  "missing-auth": "لا يوجد مفتاح للمزوّد", "auth-failed": "فشل التحقق من مفتاح المزوّد", cooldown: "متوقف مؤقتًا بعد أخطاء متكررة",
+  "unsupported-runtime": "غير مدعوم في بيئة التشغيل",
 };
 export const reasonLabel = (r: string | null | undefined) => (r ? REASONS[r] ?? r : "");
 
@@ -50,7 +52,7 @@ export function tokens(n: number | null | undefined): string {
 /** Capability badges of a catalog row, only from flags the engine sent. */
 export function capabilities(m: BashtModel): string[] {
   const out: string[] = [];
-  if (m.reasoning || m.thinking_levels.length > 1) out.push("تفكير");
+  if (m.reasoning) out.push("تفكير"); // the catalog's own flag: levels alone do not mean the provider reasons
   if (m.fast_mode) out.push("سريع");
   if (m.input.includes("image")) out.push("صور");
   if (m.input.includes("document")) out.push("مستندات");
@@ -73,8 +75,10 @@ export function byProvider(models: BashtModel[]): { provider: string; rows: Bash
 export function summary(state: BashtModelState | null, models: BashtModel[] | null): string {
   if (!state?.model.id) return "";
   const parts = [modelName(state.model.id, models)];
-  if (state.thinking.effective && state.thinking.levels.length > 1) parts.push(levelLabel(state.thinking.effective));
-  if (state.fast.enabled) parts.push("سريع");
+  const eff = state.thinking.effective;
+  if (eff && state.thinking.levels.length > 1 && state.thinking.levels.includes(eff)) parts.push(levelLabel(eff)); // only a level this model has
+  if (state.fast.enabled && state.fast.supported) parts.push("سريع"); // only where the model really runs fast
+  if (state.model.source === "fallback") parts.push("احتياطي");
   return parts.join(" · ");
 }
 

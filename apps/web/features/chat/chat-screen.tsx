@@ -324,7 +324,7 @@ export default function ChatScreen() {
       )}
       <div className="meta">
         {m.at > 0 && <time className="num" dateTime={new Date(m.at).toISOString()}>{formatTime(m.at)}</time>}
-        {m.role === "assistant" && m.model && <small className="model-tag" title={m.provider ? `${m.provider}/${m.model}` : m.model}>{replyModelName(m.provider, m.model, model.models)}</small>}
+        {m.role === "assistant" && m.model && m.provider !== "openclaw" && <small className="model-tag" title={m.provider ? `${m.provider}/${m.model}` : m.model}>{replyModelName(m.provider, m.model, model.models)}</small>}
         <button className="icon-btn sm" onClick={() => void copy(m.text)} aria-label="نسخ الرسالة"><Icon name="copy" size={16} /></button>
       </div>
     </article>

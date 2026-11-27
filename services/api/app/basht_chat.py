@@ -152,8 +152,9 @@ def _fallback(v: Any) -> dict | None:
 
 
 def _is_switch_notice(m: dict) -> bool:
-    """OpenClaw's own model-switch notice (provider "openclaw", model "delivery-mirror"), not a reply of BASHT."""
-    return m.get("provider") == "openclaw" and m.get("model") == "delivery-mirror"
+    """OpenClaw's model-switch notice: a transcript-only "delivery-mirror" message that the bridge marked with a fallback.
+    Other delivery-mirror messages (scheduled deliveries, sub-agent results, plugin notices…) are real content and stay."""
+    return m.get("provider") == "openclaw" and m.get("model") == "delivery-mirror" and isinstance(m.get("fallback"), dict)
 
 
 def _reply_meta(m: dict) -> dict:
@@ -234,6 +235,8 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
             # its record goes onto the reply that follows, and the notice itself is not shown as a message.
             pending_fallback = _fallback(m.get("fallback")) or pending_fallback
             continue
+        if m.get("role") == "user":
+            pending_fallback = None  # a switch belongs to the reply of ITS turn, never to a later one
         row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0}
         if m.get("role") == "assistant":
             row.update(_reply_meta(m))
@@ -314,7 +317,7 @@ def model(_: ServiceCall = Depends(require_service_call)):
     run_ = j.get("lastRun") if isinstance(j.get("lastRun"), dict) else None
     mid = m.get("id") if isinstance(m.get("id"), str) and _MODEL_RE.fullmatch(m["id"]) else None
     return {
-        "model": {"id": mid, "provider": _short(m.get("provider"), 100), "source": "override" if m.get("source") == "override" else "default"},
+        "model": {"id": mid, "provider": _short(m.get("provider"), 100), "source": m.get("source") if m.get("source") in ("override", "fallback") else "default"},
         "thinking": {"level": _short(t.get("level"), 40), "default": _short(t.get("default"), 40), "effective": _short(t.get("effective"), 40),
                      "levels": _levels(t.get("levels"))},
         "fast": {"supported": f.get("supported") if isinstance(f.get("supported"), bool) else None,

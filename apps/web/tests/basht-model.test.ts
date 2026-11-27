@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BashtModel, BashtModelState } from "@/lib/basht-client";
-import { byProvider, capabilities, fellBack, levelLabel, modelName, replyModelName, seconds, summary, tokens } from "@/lib/basht-model";
+import { byProvider, capabilities, fellBack, levelLabel, modelName, reasonLabel, replyModelName, seconds, summary, tokens } from "@/lib/basht-model";
 
 const row = (over: Partial<BashtModel>): BashtModel => ({ id: "mock/echo", name: "Echo", provider: "mock", provider_name: null, available: true, unavailable_reason: null,
   unavailable_until: null, context_window: null, reasoning: false, thinking_levels: [], thinking_default: null, fast_mode: false, tools: null, input: ["text"],
@@ -26,6 +26,7 @@ describe("model display helpers (M)", () => {
     expect(capabilities(models[0])).toEqual(["تفكير", "صور", "أدوات", "سياق 200K"]);
     expect(capabilities(models[1])).toEqual([]);
     expect(capabilities(models[2])).toEqual(["سريع"]);
+    expect(capabilities(row({ thinking_levels: ["off", "ultra"], reasoning: false }))).toEqual([]); // levels alone ≠ reasoning (lab finding)
   });
   it("groups by provider with recommended first", () => {
     const g = byProvider([row({ id: "mock/a", name: "A" }), ...models]);
@@ -41,7 +42,14 @@ describe("model display helpers (M)", () => {
     expect(summary(state(), models)).toBe("Claude Sonnet 4.5 · متوسط");
     expect(summary(state({ fast: { supported: true, enabled: true }, thinking: { level: null, default: null, effective: null, levels: [] } }), models)).toBe("Claude Sonnet 4.5 · سريع");
     expect(summary(null, models)).toBe("");
+    // lab findings: a level the model does not offer, or fast on a model without it, is never shown as if it applied
+    expect(summary(state({ thinking: { level: "low", default: null, effective: "low", levels: ["off", "ultra"] } }), models)).toBe("Claude Sonnet 4.5");
+    expect(summary(state({ fast: { supported: false, enabled: true } }), models)).toBe("Claude Sonnet 4.5 · متوسط");
+    expect(summary(state({ model: { id: "anthropic/claude-sonnet-4-5", provider: "anthropic", source: "fallback" } }), models)).toBe("Claude Sonnet 4.5 · متوسط · احتياطي");
     expect(fellBack(state())).toBe(false);
     expect(fellBack(state({ fallback: { from: "mock/echo", to: "mock/echo2", reason: "server_error" } }))).toBe(true);
+  });
+  it("catalog unavailable reasons have Arabic labels", () => {
+    for (const r of ["missing-auth", "auth-failed", "cooldown", "unsupported-runtime"]) expect(reasonLabel(r), r).not.toBe(r);
   });
 });

@@ -295,3 +295,25 @@ def test_openclaws_switch_notice_is_folded_into_the_reply_it_preceded(client, en
     assert [m["text"] for m in msgs] == ["اختبار", "الرد", "رد لاحق"]  # the English notice is never shown as a BASHT reply
     assert msgs[1]["model"] == "echo2" and msgs[1]["fallback"] == {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error", "at": None}
     assert "fallback" not in msgs[2]  # only the reply that the switch happened for
+
+
+def test_only_the_switch_notice_is_folded_other_openclaw_deliveries_stay(client, engine):
+    _, replies = engine
+    replies["/history"] = {"ok": True, "messages": [
+        {"role": "assistant", "text": "تذكير: اجتماع الساعة 4", "at": 1, "provider": "openclaw", "model": "delivery-mirror"},
+        {"role": "user", "text": "س", "at": 2},
+        {"role": "assistant", "text": "Model switched …", "at": 3, "provider": "openclaw", "model": "delivery-mirror",
+         "fallback": {"from": "mock/echo", "to": "mock/echo2", "reason": "server_error"}},
+        {"role": "user", "text": "سؤال لاحق", "at": 4},  # the switched turn produced no text reply
+        {"role": "assistant", "text": "رد من الأساسي", "at": 5, "provider": "mock", "model": "echo"}]}
+    msgs = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:main"}).json()["messages"]
+    assert [m["text"] for m in msgs] == ["تذكير: اجتماع الساعة 4", "س", "سؤال لاحق", "رد من الأساسي"]  # a cron delivery is kept
+    assert "fallback" not in msgs[-1]  # a switch never lands on a later turn's reply
+
+
+def test_an_automatic_fallback_pin_is_reported_as_such(client, engine):
+    _, replies = engine
+    replies["/model"] = {**MODEL_STATE, "model": {**MODEL_STATE["model"], "source": "fallback"}}
+    assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "fallback"
+    replies["/model"] = {**MODEL_STATE, "model": {**MODEL_STATE["model"], "source": "<x>"}}
+    assert call(client, "GET", "/internal/v1/basht/model").json()["model"]["source"] == "default"

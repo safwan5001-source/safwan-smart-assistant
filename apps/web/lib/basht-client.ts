@@ -16,7 +16,8 @@ export type BashtModel = {
 };
 /** The app conversation's current settings, as the engine reports them. */
 export type BashtModelState = {
-  model: { id: string | null; provider: string | null; source: "override" | "default" };
+  /** override: the owner pinned it · fallback: OpenClaw switched temporarily after a failure · default: BASHT's default */
+  model: { id: string | null; provider: string | null; source: "override" | "fallback" | "default" };
   thinking: { level: string | null; default: string | null; effective: string | null; levels: string[] };
   fast: { supported: boolean | null; enabled: boolean | null };
   usage: { input_tokens: number | null; output_tokens: number | null; context_tokens: number | null; context_window: number | null };
