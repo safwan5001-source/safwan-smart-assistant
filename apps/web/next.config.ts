@@ -9,7 +9,12 @@ const nextConfig: NextConfig = {
   // With the HQ off, /hq must not serve the page (its notFound() is streamed with status 200): send the visitor home.
   // A redirect, never a proxy to another server (pinned by services/api/tests/test_deploy_topology.py).
   async redirects() {
-    return HQ_ENABLED ? [] : [{ source: "/hq/:path*", destination: "/", permanent: false }];
+    // One conversation (U1): BASHT text, archive and voice all live in /chat. The old addresses keep working.
+    const unified = [
+      { source: "/chat/basht", destination: "/chat", permanent: false },
+      { source: "/calls", destination: "/chat?voice=1", permanent: false },
+    ];
+    return HQ_ENABLED ? unified : [...unified, { source: "/hq/:path*", destination: "/", permanent: false }];
   },
   async headers() {
     return [

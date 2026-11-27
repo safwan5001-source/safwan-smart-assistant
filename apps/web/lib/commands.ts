@@ -79,7 +79,7 @@ const taskCommands = {
 };
 
 // ── chat ────────────────────────────────────────────────────────────────
-type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role; browser?: BrowserRef };
+type Send = { threadId: string | null; text: string; attachments?: Attachment[]; role?: Role; browser?: BrowserRef; main?: boolean };
 const titleFrom = (text: string, att?: Attachment[]) => (text.trim() || att?.[0]?.name || "مرفقات").slice(0, 48);
 const mkMessage = (text: string, attachments?: Attachment[], role?: Role, browser?: BrowserRef): Message => {
   const m: Message = { id: uid(), text: text.trim().slice(0, LIMITS.messageText), created: Date.now() };
@@ -103,8 +103,11 @@ const chatCommands = {
     const m = mkMessage(p.text, p.attachments, p.role, p.browser);
     if (!m.text && !m.attachments?.length) invalid("الرسالة فارغة.");
     if (!p.threadId) {
+      // the BASHT conversation has exactly one local thread: reuse it instead of creating a second one
+      const main = p.main ? threadsStore.getSnapshot().find((t) => t.main) : undefined;
+      if (main) { patchThread(main.id, (t) => ({ ...t, messages: [...t.messages, m], updated: Date.now() })); return main.id; }
       assertRoomForThread();
-      const t: Thread = { id: uid(), title: titleFrom(m.text, m.attachments), created: Date.now(), messages: [m] };
+      const t: Thread = { id: uid(), title: p.main ? "باشت" : titleFrom(m.text, m.attachments), created: Date.now(), messages: [m], ...(p.main ? { main: true as const } : {}) };
       threadsStore.set((old) => [t, ...old]);
       return t.id;
     }
