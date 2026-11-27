@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import Icon from "./icon";
 import { AgentOrb, BrandLockup, BrandMark, Ornament } from "./ui";
@@ -12,6 +12,8 @@ import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-acti
 import { useAssistant } from "./assistant-context";
 import { OwnerGateProvider } from "./owner-gate";
 import { LOGIN_PATH } from "@/lib/login-path";
+import LongPressLink from "./long-press-link";
+import { OPEN_VOICE_EVENT, primeVoiceFromGesture, TAB_VOICE_HINT, VOICE_URL } from "@/lib/voice-launch";
 
 export const OPEN_SEARCH_EVENT = "safwan:open-search";
 
@@ -24,7 +26,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
 function Shell({ children, pathname }: { children: ReactNode; pathname: string }) {
   const [searchOpen, setSearchOpen] = useState(false);
+  const router = useRouter();
   const { status, refresh } = useAssistant();
+  /** Long-press on the BASHT tab (runs inside the pointerup / keydown gesture): unlock audio + mic there, then open the voice. */
+  const launchVoice = () => {
+    primeVoiceFromGesture();
+    if (pathname === "/chat") window.dispatchEvent(new CustomEvent(OPEN_VOICE_EVENT, { detail: { autostart: true } }));
+    else router.push(VOICE_URL);
+  };
   const state = agentState(status, useAgentActivity());
   const st = AGENT_STATE_TEXT[state];
 
@@ -91,9 +100,10 @@ function Shell({ children, pathname }: { children: ReactNode; pathname: string }
           const active = n.href === "/more" ? MORE_PATHS.some((h) => isActive(pathname, h)) : isActive(pathname, n.href);
           if (n.href === "/chat") {
             return (
-              <Link key={n.href} href={n.href} className="tab-agent" aria-current={active ? "page" : undefined} aria-label={"تحدّث مع باشت — " + st.label}>
+              <LongPressLink key={n.href} href={n.href} className="tab-agent" aria-current={active ? "page" : undefined} aria-label={"تحدّث مع باشت — " + st.label}
+                hint={TAB_VOICE_HINT} onLongPress={launchVoice}>
                 <AgentOrb state={state} size="md" /><span>باشت</span>
-              </Link>
+              </LongPressLink>
             );
           }
           return <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined}><Icon name={n.icon} size={23} /><span>{n.label}</span></Link>;

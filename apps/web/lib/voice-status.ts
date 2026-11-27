@@ -16,6 +16,7 @@ export function createVoiceStatusStore(deps: { fetch: () => Promise<VoiceStatus>
   const minMs = deps.minIntervalMs ?? VOICE_STATUS_MIN_MS;
   let state: VoiceStatusState = { status: UNKNOWN_VOICE_STATUS, at: 0 };
   let inflight: Promise<VoiceStatus> | null = null;
+  let fetched = false;
   const subs = new Set<() => void>();
   return {
     get: () => state,
@@ -23,17 +24,17 @@ export function createVoiceStatusStore(deps: { fetch: () => Promise<VoiceStatus>
     /** Fetches unless a fetch is in flight or the last one is younger than 60 s (`force` skips the age check). Never throws. */
     refresh({ force = false }: { force?: boolean } = {}): Promise<VoiceStatus> {
       if (inflight) return inflight;
-      if (!force && state.at && now() - state.at < minMs) return Promise.resolve(state.status);
+      if (!force && fetched && now() - state.at < minMs) return Promise.resolve(state.status);
       inflight = (async () => {
         let s: VoiceStatus;
         try { s = await deps.fetch(); } catch { s = { ...UNKNOWN_VOICE_STATUS }; }
-        state = { status: s, at: now() };
+        state = { status: s, at: now() }; fetched = true;
         subs.forEach((f) => f());
         return s;
       })().finally(() => { inflight = null; });
       return inflight;
     },
-    reset() { state = { status: UNKNOWN_VOICE_STATUS, at: 0 }; inflight = null; subs.forEach((f) => f()); },
+    reset() { state = { status: UNKNOWN_VOICE_STATUS, at: 0 }; inflight = null; fetched = false; subs.forEach((f) => f()); },
   };
 }
 export type VoiceStatusStore = ReturnType<typeof createVoiceStatusStore>;

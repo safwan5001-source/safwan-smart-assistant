@@ -33,7 +33,7 @@ export async function resumeAudioContext(): Promise<boolean> {
   if (!c) return false;
   if (c.state === "running") return true;
   try { await c.resume(); } catch { /* refused */ }
-  return c.state === "running";
+  return (c.state as string) === "running";
 }
 export async function suspendAudioContext(): Promise<void> {
   const c = audioContext();

@@ -1,114 +1,244 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import Icon from "@/components/icon";
-import { Badge, Notice, PageHeader, VoiceOrb } from "@/components/ui";
+import { Badge, Notice, VoiceOrb } from "@/components/ui";
 import { VOICE_TEXT, voiceState, type VoiceState } from "@/lib/voice-state";
 import { useDictation } from "@/lib/speech";
 import { useStore } from "@/lib/hooks";
 import { earcon, voiceFxStore } from "@/lib/earcons";
+import { enterVoiceSession, leaveVoiceSession } from "@/lib/audio";
 import { bashtClient, BashtError } from "@/lib/basht-client";
-import { clock, createLiveSession, MAX_NOTE_MS, primeAudioInput, useVoiceAvailability, usePlayer, useVoiceRecorder, voiceAvailability, voicePlayer, type LivePhase } from "@/lib/basht-voice";
+import {
+  clock, createLiveSession, MAX_NOTE_MS, prepareCapture, primeAudioInput, releaseAudioInput, settleAfterCapture, useInputLevel,
+  usePlayerProgress, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voicePlayer, type LivePhase, type LiveStep,
+} from "@/lib/basht-voice";
+import { isDurableVoiceFailure, speakGate, useVoiceStatus } from "@/lib/voice-status";
+import { takeVoiceAutostart } from "@/lib/voice-launch";
 
 /** What the live session needs from the conversation: send one owner turn (as a voice note) and get BASHT's reply text back. */
 export type LiveVoice = { ready: boolean; ask: (text: string) => Promise<string> };
 
+/** The honest footer of every voice screen: this is a turn-by-turn loop, not a real-time call. */
+export const TURN_NOTE = "محادثة صوتية بالتناوب — ليست مكالمة لحظية";
+
 /**
- * The voice session, opened as a panel INSIDE the conversation (/chat?voice=1).
- * - With BASHT's engine voice: a hands-free turn loop in the SAME conversation (app:owner) — listen → transcribe → send → BASHT
- *   replies → spoken in BASHT's own voice → listen again. Every turn lands in the timeline behind this panel.
- * - Without it (no engine voice, no recording in this browser): browser dictation, whose text goes into the composer for review.
+ * The voice experience, opened INSIDE the conversation (/chat?voice=1, the wave button, a long-press on the BASHT tab). Full screen
+ * on phones (centred dialog on desktop); the dialog itself lives in the conversation screen.
+ * - With BASHT's engine voice: a SEQUENTIAL turn loop in the SAME conversation (app:owner) — listen → transcribe → send → BASHT
+ *   replies → spoken in BASHT's own voice → listen again. Every turn lands in the timeline behind this screen.
+ * - Without it (no engine voice, no recording in this browser): browser dictation (clearly labelled: not BASHT's voice), whose
+ *   text goes into the composer for review.
  */
-export default function VoicePanel({ onUse, live }: { onUse: (text: string) => void; live?: LiveVoice }) {
+export default function VoicePanel({ onUse, live, autostart = false, onClose }: { onUse: (text: string) => void; live?: LiveVoice; autostart?: boolean; onClose?: () => void }) {
   const avail = useVoiceAvailability();
   const rec = useVoiceRecorder();
-  const engineVoice = !!live?.ready && rec.supported && avail.transcribe !== "no" && avail.speak !== "no";
-  return engineVoice ? <LiveSession live={live!} rec={rec} /> : <DictationPanel onUse={onUse} reason={live?.ready && (avail.transcribe === "no" || avail.speak === "no") ? "engine" : null} />;
+  const status = useVoiceStatus(false); // fetched by the conversation; read here
+  const gate = speakGate(avail, status);
+  const engineVoice = !!live?.ready && rec.supported && avail.transcribe !== "no" && gate.show;
+  const close = onClose ?? (() => {});
+  // opened by a press while the conversation is still connecting: wait a moment for BASHT (instead of flashing the dictation
+  // fallback), then fall back honestly
+  const [connecting, setConnecting] = useState(autostart);
+  useEffect(() => { if (!connecting) return; const t = setTimeout(() => setConnecting(false), 8000); return () => clearTimeout(t); }, [connecting]);
+  // leaving the voice screen (any variant) gives the page its normal audio session back and drops the probe's context
+  useEffect(() => () => { leaveVoiceSession(); releaseAudioInput(); }, []);
+  if (engineVoice) return <LiveSession live={live!} rec={rec} autostart={autostart} onClose={close} note={gate.note} />;
+  const reason = !live?.ready ? "" : !gate.show ? gate.note || "صوت باشت غير مفعّل في المحرك الآن."
+    : avail.transcribe === "no" ? "تفريغ الصوت غير مفعّل في محرك باشت الآن." : !rec.supported ? "هذا المتصفح لا يدعم تسجيل الصوت لباشت." : "";
+  if (connecting && !reason) return <Connecting onClose={close} />;
+  return <DictationPanel onUse={onUse} reason={reason} onClose={close} />;
 }
 
-type Phase = LivePhase;
-const LIVE_TEXT: Record<Phase, { title: string; sub: string; orb: VoiceState }> = {
-  idle: { title: "محادثة صوتية مع باشت", sub: "اضغط وتحدّث؛ يرد باشت بصوته، ثم يستمع إليك من جديد. كل دور يظهر في المحادثة.", orb: "ready" },
-  listening: { title: "يستمع…", sub: "تحدّث بالعربية. ينتهي دورك عندما تصمت قليلًا، أو اضغط الزر.", orb: "listening" },
-  thinking: { title: "يفكّر…", sub: "يُفرَّغ كلامك ويُرسل إلى باشت في محادثتكما، ثم ينتظر رده.", orb: "listening" },
-  speaking: { title: "يتحدث…", sub: "باشت يرد بصوته. اضغط الزر لإيقافه.", orb: "listening" },
-};
-
-function LiveSession({ live, rec }: { live: LiveVoice; rec: ReturnType<typeof useVoiceRecorder> }) {
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [heard, setHeard] = useState("");
-  const [error, setError] = useState("");
-  const player = usePlayer();
-  const fx = useStore(voiceFxStore);
-  // the latest props/state, read by the session at each step (the session object itself lives as long as the panel)
-  const latest = useRef({ live, rec, fx });
-  latest.current = { live, rec, fx };
-  const session = useRef<ReturnType<typeof createLiveSession> | null>(null);
-  session.current ??= createLiveSession({
-    record: () => latest.current.rec.record({ maxMs: MAX_NOTE_MS, silence: true }),
-    cancelRecord: () => latest.current.rec.cancel(),
-    transcribe: async (audio) => {
-      try { const t = await bashtClient.transcribe(audio); voiceAvailability.set("transcribe", "yes"); return t; }
-      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable") voiceAvailability.set("transcribe", "no"); throw e; }
-    },
-    ask: (text) => latest.current.live.ask(text),
-    play: (text) => voicePlayer().play("live", text),
-    stopPlay: () => voicePlayer().stop(),
-    playError: () => voicePlayer().getSnapshot().error,
-    recordError: () => latest.current.rec.error,
-    onPhase: setPhase, onHeard: setHeard, onError: setError,
-    cue: (kind) => { if (latest.current.fx) earcon(kind); },
-  });
-  useEffect(() => () => session.current?.end(), []); // closing the panel ends the session: no mic, no voice, nothing sent afterwards
-
-  const end = () => session.current?.end();
-  const start = () => {
-    voicePlayer().unlock(); primeAudioInput(); // inside the tap: iOS then allows the mic level probe and BASHT's voice later on
-    session.current?.start();
-  };
-  /** The main button: start · end my turn now · stop BASHT speaking (and listen again). */
-  const main = () => {
-    if (phase === "idle") return start();
-    if (phase === "listening") return rec.stop();
-    if (phase === "speaking") return voicePlayer().stop();
-  };
-  const t = LIVE_TEXT[phase];
-
+/** A short wait for the conversation (opened by a long-press from another screen). Nothing is recorded meanwhile. */
+function Connecting({ onClose }: { onClose: () => void }) {
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <PageHeader icon="wave" eyebrow="الصوت" title="الجلسة الصوتية" description="محادثة صوتية حية مع باشت في محادثتكما نفسها: بصوت باشت المعتمد في المحرك، ويظهر كل دور في المحادثة." />
-      <section className="voice" data-state={phase === "idle" ? "ready" : "listening"} data-phase={phase} aria-labelledby="voice-h">
-        <div className="voice-orb">
-          <span className="voice-halo" aria-hidden="true" /><span className="voice-halo" aria-hidden="true" />
-          <VoiceOrb state={t.orb} />
+    <div className="vs" data-phase="starting">
+      <VoiceTop title="محادثة صوتية مع باشت" onClose={onClose} closeLabel="إغلاق" />
+      <div className="vs-stage">
+        <div className="vs-face"><span className="vs-ring" aria-hidden="true" /><span className="vs-ring r2" aria-hidden="true" /><VoiceOrb state="ready" /></div>
+        <div className="vs-text">
+          <h2 id="voice-h" className="vs-label" role="status" aria-live="polite">يتصل بباشت…</h2>
+          <p className="vs-sub">تُفتح محادثتكما ثم يبدأ الاستماع. لا يُسجَّل شيء قبل ذلك.</p>
         </div>
-        <div className="voice-bars" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
-        <div className="stack" style={{ gap: 4, justifyItems: "center" }}>
-          <h2 id="voice-h" className="voice-label" role="status">{t.title}</h2>
-          <p className="voice-sub">{phase === "listening" && rec.recording ? `${t.sub} · ${clock(rec.elapsed)}` : t.sub}</p>
-        </div>
-        <div className="voice-states" aria-label="حالات الجلسة">
-          <span aria-current={phase === "listening" ? "true" : undefined}>يستمع</span>
-          <span aria-current={phase === "thinking" ? "true" : undefined}>يفكّر</span>
-          <span aria-current={phase === "speaking" ? "true" : undefined}>يتحدث</span>
-        </div>
-        <div className="voice-actions">
-          <button className="voice-side" onClick={() => end()} disabled={phase === "idle"} aria-label="إنهاء المحادثة الصوتية"><Icon name="close" size={20} /></button>
-          <button className="voice-main" onClick={main} disabled={phase === "thinking"} aria-pressed={phase !== "idle"}
-            aria-label={phase === "idle" ? "ابدأ المحادثة الصوتية" : phase === "listening" ? "أنهِ دورك الآن" : phase === "speaking" ? "أوقف رد باشت" : "باشت يفكّر"}>
-            <Icon name={phase === "idle" ? "mic" : phase === "speaking" ? "stop" : phase === "listening" ? "send" : "hourglass"} size={30} style={phase === "listening" ? { transform: "scaleX(-1)" } : undefined} />
-          </button>
-          <button className="voice-side" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} aria-label={fx ? "إيقاف المؤثرات الصوتية" : "تشغيل المؤثرات الصوتية"} title="مؤثرات صوتية عند البدء والإيقاف"><Icon name="volume" size={20} /></button>
-        </div>
-      </section>
-      {heard && phase !== "idle" && <section className="card card-pad stack" aria-label="آخر ما سمعه باشت"><small className="muted">سمعتُ منك:</small><div className="transcript" style={{ minHeight: 0 }}>{heard}</div></section>}
-      {(error || rec.error || (player.error && phase === "idle")) && <Notice tone="danger" role="alert">{error || rec.error || player.error}</Notice>}
-      <small className="muted">التفريغ والنطق يجريان في محرك باشت بإعداداته (نفس صوت باشت ونطقه). لا يُحفظ الصوت؛ النص يبقى في المحادثة. المكالمات الهاتفية والصوت الفوري (WebRTC) خارج هذه المرحلة.</small>
+      </div>
+      <footer className="vs-foot"><strong>{TURN_NOTE}</strong></footer>
     </div>
   );
 }
 
-/** Browser dictation (the fallback): the transcript goes into the composer for review. */
-function DictationPanel({ onUse, reason }: { onUse: (text: string) => void; reason: "engine" | null }) {
+type Turn = { you: string; basht?: string };
+const LIVE_TEXT: Record<Exclude<LivePhase, "thinking">, { title: string; sub: string }> & { thinking: Record<Exclude<LiveStep, "">, { title: string; sub: string }> } = {
+  idle: { title: "محادثة صوتية بالتناوب", sub: "اضغط «ابدأ المحادثة» وتحدّث؛ يرد باشت بصوته ثم يستمع إليك من جديد. كل دور يظهر في المحادثة." },
+  starting: { title: "يفتح الميكروفون…", sub: "اسمح باستخدام الميكروفون إن طُلب منك. لم يبدأ التسجيل بعد." },
+  listening: { title: "يستمع…", sub: "تحدّث بالعربية. ينتهي دورك حين تصمت قليلًا، أو اضغط «أنهِ دورك»." },
+  muted: { title: "الميكروفون مكتوم", sub: "لا يُسجَّل شيء. اضغط «ألغِ الكتم» حين تريد التحدث." },
+  speaking: { title: "يتحدث…", sub: "باشت يرد بصوته. اضغط «أوقفه وتحدّث» لمقاطعته." },
+  blocked: { title: "الصوت متوقف", sub: "منع المتصفح التشغيل أو قاطعته مكالمة. اضغط «شغّل الصوت» للمتابعة بنفس الرد." },
+  thinking: {
+    transcribing: { title: "يفكّر…", sub: "يُفرَّغ كلامك في محرك باشت…" },
+    waiting: { title: "يفكّر…", sub: "أُرسل كلامك إلى باشت في محادثتكما؛ ينتظر رده…" },
+    voice: { title: "يجهّز الصوت…", sub: "رد باشت جاهز ويظهر في المحادثة؛ يُجهَّز بصوته الآن." },
+  },
+};
+const textOf = (p: LivePhase, s: LiveStep) => (p === "thinking" ? LIVE_TEXT.thinking[s || "waiting"] : LIVE_TEXT[p]);
+/** The voice face shows the microphone only (never an agent state). */
+const orbOf = (p: LivePhase, failed: boolean): VoiceState => (failed ? "error" : p === "listening" ? "listening" : "ready");
+
+function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice; rec: ReturnType<typeof useVoiceRecorder>; autostart: boolean; onClose: () => void; note: string }) {
+  const [phase, setPhase] = useState<LivePhase>("idle");
+  const [step, setStep] = useState<LiveStep>("");
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [error, setError] = useState("");
+  const [micMuted, setMicMuted] = useState(false);
+  const [spkMuted, setSpkMuted] = useState(false);
+  const [showTurns, setShowTurns] = useState(false);
+  const fx = useStore(voiceFxStore);
+  // the latest props/state, read by the session at each step (the session object itself lives as long as the screen)
+  const latest = useRef({ live, rec, fx });
+  latest.current = { live, rec, fx };
+  const session = useRef<ReturnType<typeof createLiveSession> | null>(null);
+  session.current ??= createLiveSession({
+    record: (onStarted) => latest.current.rec.record({ maxMs: MAX_NOTE_MS, silence: true, onStart: onStarted }),
+    cancelRecord: () => latest.current.rec.cancel(),
+    transcribe: async (audio) => {
+      try { const t = await bashtClient.transcribe(audio); voiceAvailability.set("transcribe", "yes"); return t; }
+      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable" && isDurableVoiceFailure(e.reason)) voiceAvailability.set("transcribe", "no", e.reason); throw e; }
+    },
+    ask: (text) => latest.current.live.ask(text),
+    play: (text, onPlayer) => voicePlayer().play("live", text, { onPhase: onPlayer }),
+    stopPlay: () => voicePlayer().stop(),
+    canResume: () => voicePlayer().getSnapshot().canResume,
+    resume: (onPlayer) => { enterVoiceSession("playback"); return voicePlayer().resume({ onPhase: onPlayer }); },
+    playError: () => voicePlayer().getSnapshot().error,
+    recordError: () => latest.current.rec.errorNow(),
+    beforeCapture: prepareCapture,
+    afterCapture: () => settleAfterCapture(),
+    onPhase: (p, s) => { setPhase(p); setStep(s); },
+    onHeard: (t) => { if (t) setTurns((ts) => [...ts, { you: t }].slice(-20)); },
+    onReply: (t) => setTurns((ts) => (ts.length ? [...ts.slice(0, -1), { ...ts[ts.length - 1], basht: t }] : ts)),
+    onError: setError,
+    onEnd: () => { leaveVoiceSession(); releaseAudioInput(); },
+    cue: (kind) => { if (latest.current.fx) earcon(kind); },
+  });
+  // closing the screen ends the session: no mic, no voice, nothing sent afterwards
+  useEffect(() => () => { session.current?.end(); leaveVoiceSession(); releaseAudioInput(); }, []);
+  // opened by a press (long-press / wave button) that already unlocked audio and the probe: start listening right away. A reload
+  // or a stale link never records on its own — the big «ابدأ المحادثة» button is shown instead.
+  useEffect(() => { if (autostart && takeVoiceAutostart()) session.current?.start(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const s = session.current;
+  /** Inside the tap: the record-capable session, the playback unlock and the level probe (iOS allows them only here). */
+  const start = () => {
+    enterVoiceSession("play-and-record"); voicePlayer().unlock(); primeAudioInput();
+    setError(""); setMicMuted(false); s.setMicMuted(false); s.setSpeakerMuted(spkMuted);
+    s.start();
+  };
+  const end = () => { s.end(); onClose(); };
+  const toggleMic = () => { const m = !micMuted; setMicMuted(m); if (!m) enterVoiceSession("play-and-record"); s.setMicMuted(m); };
+  const toggleSpk = () => { const m = !spkMuted; setSpkMuted(m); s.setSpeakerMuted(m); };
+  const failed = phase === "idle" && !!error;
+  const main: { label: string; icon: string; run?: () => void; aria: string } =
+    phase === "idle" ? { label: failed ? "ابدأ من جديد" : "ابدأ المحادثة", icon: "mic", run: start, aria: "ابدأ المحادثة الصوتية (يبدأ التسجيل)" }
+      : phase === "starting" ? { label: "إلغاء", icon: "close", run: () => s.end(), aria: "إلغاء فتح الميكروفون" }
+        : phase === "listening" ? { label: "أنهِ دورك", icon: "send", run: () => rec.stop(), aria: "أنهِ دورك الآن وأرسل كلامك" }
+          : phase === "muted" ? { label: "ألغِ الكتم", icon: "mic", run: toggleMic, aria: "ألغِ كتم الميكروفون وتحدّث" }
+            : phase === "speaking" ? { label: "أوقفه وتحدّث", icon: "stop", run: () => s.interrupt(), aria: "أوقف رد باشت وتحدّث" }
+              : phase === "blocked" ? { label: "شغّل الصوت", icon: "play", run: () => s.resumePlayback(), aria: "شغّل صوت باشت" }
+                : step === "voice" ? { label: "تخطَّ الصوت", icon: "stop", run: () => s.interrupt(), aria: "تخطَّ صوت هذا الرد وتحدّث" }
+                  : { label: "يفكّر…", icon: "hourglass", aria: "باشت يفكّر" };
+  const t = failed ? { title: "توقّفت المحادثة", sub: error } : textOf(phase, step);
+  const active = phase !== "idle";
+
+  return (
+    <div className="vs" data-phase={failed ? "error" : phase} data-step={step || undefined}>
+      <VoiceTop title="محادثة صوتية مع باشت" onClose={end} closeLabel={active ? "إنهاء المحادثة الصوتية وإغلاقها" : "إغلاق"} />
+      <div className="vs-stage">
+        <VoiceFace phase={phase} orb={orbOf(phase, failed)} />
+        <div className="vs-text">
+          <h2 id="voice-h" className="vs-label" role="status" aria-live="polite">{t.title}</h2>
+          <p className="vs-sub">{t.sub}</p>
+          {phase === "listening" && rec.recording && (
+            <span className="rec-chip" role="note"><i className="rec-dot" aria-hidden="true" />يسجّل الآن <bdi className="num">{clock(rec.elapsed)}</bdi></span>
+          )}
+          {micMuted && phase !== "idle" && phase !== "muted" && <span className="vs-flag"><Icon name="mic-off" size={14} />الميكروفون مكتوم بعد هذا الدور</span>}
+          {spkMuted && <span className="vs-flag"><Icon name="volume-off" size={14} />صوت باشت مكتوم: ردوده تظهر كتابةً فقط</span>}
+        </div>
+      </div>
+      {note && <p className="vs-note-line" role="note">{note}</p>}
+      <div className="vs-controls">
+        <button type="button" className="vs-side" onClick={toggleMic} disabled={!active} aria-pressed={micMuted}
+          aria-label={micMuted ? "ألغِ كتم الميكروفون" : "اكتم الميكروفون"}><Icon name={micMuted ? "mic-off" : "mic"} size={22} /><span>{micMuted ? "مكتوم" : "الميكروفون"}</span></button>
+        <span className="vs-main-wrap">
+          <button type="button" className="vs-main" data-kind={main.icon} onClick={main.run} disabled={!main.run} aria-label={main.aria} autoFocus>
+            <Icon name={main.icon} size={32} style={main.icon === "send" ? { transform: "scaleX(-1)" } : undefined} />
+          </button>
+          <span className="vs-main-label" aria-hidden="true">{main.label}</span>
+        </span>
+        <button type="button" className="vs-side" onClick={toggleSpk} aria-pressed={spkMuted}
+          aria-label={spkMuted ? "شغّل صوت باشت" : "اكتم صوت باشت (تبقى الردود كتابةً)"}><Icon name={spkMuted ? "volume-off" : "volume"} size={22} /><span>{spkMuted ? "مكتوم" : "الصوت"}</span></button>
+      </div>
+      <div className="vs-row">
+        <button type="button" className="btn vs-end" onClick={end}><Icon name="close" size={18} />{active ? "إنهاء المحادثة" : "إغلاق"}</button>
+        <button type="button" className="btn btn-ghost vs-tr" onClick={() => setShowTurns((v) => !v)} aria-expanded={showTurns} aria-controls="vs-turns" disabled={!turns.length}>
+          <Icon name="doc" size={18} />النص{turns.length ? <bdi className="num"> ({turns.length})</bdi> : null}
+        </button>
+        <button type="button" className="btn btn-ghost vs-fx" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} title="مؤثرات صوتية عند بدء الاستماع وانتهائه">
+          <Icon name="wave" size={18} />{fx ? "المؤثرات: تعمل" : "المؤثرات: مطفأة"}
+        </button>
+      </div>
+      {showTurns && (
+        <ol id="vs-turns" className="vs-turns" aria-label="نص المحادثة الصوتية">
+          {turns.map((x, i) => (
+            <li key={i}>
+              <p><strong>أنت:</strong> {x.you}</p>
+              {x.basht && <p><strong>باشت:</strong> {x.basht}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+      {(rec.error && !failed) && <Notice tone="danger" role="alert">{rec.error}</Notice>}
+      <footer className="vs-foot">
+        <strong>{TURN_NOTE}</strong>
+        <small>دورك ثم دور باشت: التفريغ والنطق في محرك باشت بإعداداته (صوت باشت ونطقه). لا يُحفظ الصوت؛ النص يبقى في المحادثة.</small>
+      </footer>
+    </div>
+  );
+}
+
+/** The centred BASHT face (the official mark — never redrawn) with a restrained wave driven by the real state. */
+function VoiceFace({ phase, orb }: { phase: LivePhase | "dictation"; orb: VoiceState }) {
+  const level = useInputLevel();
+  const v = phase === "listening" || phase === "dictation" ? Math.min(1, level * 7) : 0;
+  return (
+    <div className="vs-face" style={{ "--lvl": v.toFixed(3) } as CSSProperties}>
+      <span className="vs-ring" aria-hidden="true" /><span className="vs-ring r2" aria-hidden="true" />
+      <VoiceOrb state={orb} />
+      <VoiceWave phase={phase} level={v} />
+    </div>
+  );
+}
+const SHAPE = [0.35, 0.6, 0.85, 1, 0.75, 1, 0.85, 0.6, 0.35];
+function VoiceWave({ phase, level }: { phase: LivePhase | "dictation"; level: number }) {
+  const progress = usePlayerProgress();
+  return (
+    <div className="vs-wave" aria-hidden="true" data-phase={phase}>
+      <span className="vs-bars">{SHAPE.map((s, i) => <i key={i} style={{ "--s": s, "--h": (4 + level * s * 30).toFixed(1) + "px" } as CSSProperties} />)}</span>
+      {phase === "speaking" && <span className="vs-progress"><span style={{ inlineSize: `${Math.round(progress * 100)}%` }} /></span>}
+    </div>
+  );
+}
+
+function VoiceTop({ title, onClose, closeLabel, badge }: { title: string; onClose: () => void; closeLabel: string; badge?: string }) {
+  return (
+    <div className="vs-top">
+      <span className="grow vs-title"><strong>{title}</strong>{badge && <Badge tone="warn">{badge}</Badge>}</span>
+      <button type="button" className="icon-btn vs-close" onClick={onClose} aria-label={closeLabel}><Icon name="close" size={22} /></button>
+    </div>
+  );
+}
+
+/** Browser dictation (the fallback): NOT BASHT's voice. The transcript goes into the composer for review. */
+function DictationPanel({ onUse, reason, onClose }: { onUse: (text: string) => void; reason: string; onClose: () => void }) {
   const d = useDictation();
   const [text, setText] = useState("");
   const fx = useStore(voiceFxStore);
@@ -124,46 +254,41 @@ function DictationPanel({ onUse, reason }: { onUse: (text: string) => void; reas
   };
 
   return (
-    <div className="stack" style={{ gap: 16 }}>
-      <PageHeader icon="wave" eyebrow="الصوت" title="الجلسة الصوتية" description="تحدّث مع باشت بصوتك. المتاح هنا: إملاء عربي يحوّل كلامك إلى نص ترسله للمحادثة." />
-      {reason === "engine" && <Notice tone="info" role="status">صوت باشت (التفريغ أو النطق) غير مفعّل في المحرك الآن، فالمحادثة الصوتية الحية غير متاحة. استخدم الإملاء أدناه.</Notice>}
-
-      <section className="voice" data-state={state} aria-labelledby="voice-h">
-        <div className="voice-orb">
-          <span className="voice-halo" aria-hidden="true" /><span className="voice-halo" aria-hidden="true" />
+    <div className="vs" data-phase={d.listening ? "listening" : "idle"} data-mode="dictation">
+      <VoiceTop title="إملاء المتصفح" badge="ليس صوت باشت" onClose={onClose} closeLabel="إغلاق الإملاء" />
+      {reason && <Notice tone="info" role="status"><strong>صوت باشت غير متاح:</strong> {reason} المتاح هنا إملاء المتصفح: يحوّل كلامك إلى نص تراجعه وترسله، ولا يرد باشت بصوته.</Notice>}
+      <div className="vs-stage">
+        <div className="vs-face">
+          <span className="vs-ring" aria-hidden="true" /><span className="vs-ring r2" aria-hidden="true" />
           <VoiceOrb state={state} />
         </div>
-        <div className="voice-bars" aria-hidden="true">{Array.from({ length: 9 }, (_, i) => <i key={i} />)}</div>
-        <div className="stack" style={{ gap: 4, justifyItems: "center" }}>
-          <h2 id="voice-h" className="voice-label" role="status">{VOICE_TEXT[state].title}</h2>
-          <p className="voice-sub">{VOICE_TEXT[state].sub}</p>
+        <div className="vs-text">
+          <h2 id="voice-h" className="vs-label" role="status" aria-live="polite">{VOICE_TEXT[state].title}</h2>
+          <p className="vs-sub">{VOICE_TEXT[state].sub}</p>
         </div>
-        <div className="voice-states" aria-label="حالات الجلسة">
-          <span aria-current={state === "ready" ? "true" : undefined}>الميكروفون جاهز</span>
-          <span aria-current={state === "listening" ? "true" : undefined}>تسجيل الكلام</span>
-        </div>
-        <div className="voice-actions">
-          <button className="voice-side" onClick={() => { d.abort(); setText(""); d.clearError(); }} disabled={!text && !d.listening} aria-label="مسح النص وإلغاء"><Icon name="trash" size={20} /></button>
-          <button className="voice-main" onClick={toggle} disabled={!d.supported} aria-pressed={d.listening} aria-label={d.listening ? "إيقاف الاستماع" : "بدء الاستماع"}>
-            <Icon name={d.listening ? "stop" : "mic"} size={30} />
+      </div>
+      <div className="vs-controls">
+        <button type="button" className="vs-side" onClick={() => { d.abort(); setText(""); d.clearError(); }} disabled={!text && !d.listening} aria-label="مسح النص وإلغاء"><Icon name="trash" size={22} /><span>مسح</span></button>
+        <span className="vs-main-wrap">
+          <button type="button" className="vs-main" onClick={toggle} disabled={!d.supported} aria-pressed={d.listening} aria-label={d.listening ? "إيقاف إملاء المتصفح" : "بدء إملاء المتصفح"} autoFocus>
+            <Icon name={d.listening ? "stop" : "mic"} size={32} />
           </button>
-          <button className="voice-side" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} aria-label={fx ? "إيقاف المؤثرات الصوتية" : "تشغيل المؤثرات الصوتية"} title="مؤثرات صوتية عند البدء والإيقاف"><Icon name="volume" size={20} /></button>
-        </div>
-      </section>
-
-      <section className="card card-pad stack" aria-labelledby="tr-h">
-        <div className="section-head"><h2 id="tr-h"><Icon name="doc" size={18} />النص</h2><Badge tone={d.supported ? "ok" : "warn"}>{d.supported ? "الإملاء مدعوم" : "غير مدعوم"}</Badge></div>
+          <span className="vs-main-label" aria-hidden="true">{d.listening ? "إيقاف" : "ابدأ الإملاء"}</span>
+        </span>
+        <button type="button" className="vs-side" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} aria-label={fx ? "إيقاف المؤثرات الصوتية" : "تشغيل المؤثرات الصوتية"}><Icon name="wave" size={22} /><span>المؤثرات</span></button>
+      </div>
+      <section className="vs-dictation" aria-labelledby="tr-h">
+        <div className="section-head"><h3 id="tr-h"><Icon name="doc" size={18} />النص</h3><Badge tone={d.supported ? "ok" : "warn"}>{d.supported ? "الإملاء مدعوم" : "غير مدعوم"}</Badge></div>
         <div className="transcript" aria-live="polite" aria-label="نص الكلام">{text || <span className="muted">سيظهر نص كلامك هنا.</span>}</div>
         {d.error && <Notice tone="danger" role="alert">{d.error}</Notice>}
-        <div className="row-wrap">
-          <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={() => { const t = text.trim(); if (!t) return; d.abort(); onUse(t); }}>
-            <Icon name="send" size={18} style={{ transform: "scaleX(-1)" }} />راجع وأرسل لباشت
-          </button>
-        </div>
-        <small className="muted">تفريغ صوتي فقط: يُفتح النص في المحادثة لتراجعه قبل الإرسال. قد يعالج المتصفح (أو مزوّده) الصوت عبر خدمة خارجية.</small>
+        <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={() => { const v = text.trim(); if (!v) return; d.abort(); onUse(v); }}>
+          <Icon name="send" size={18} style={{ transform: "scaleX(-1)" }} />راجع وأرسل لباشت
+        </button>
       </section>
-
-      <div className="card card-pad row"><span className="file-ico"><Icon name="calls" size={22} /></span><span style={{ flex: 1 }}><strong>مكالمات صادرة وواردة</strong><small className="muted" style={{ display: "block" }}>تتطلب مزود اتصالات يدعم أرقام السعودية؛ لم يُختر بعد.</small></span><Badge>قريبًا</Badge></div>
+      <footer className="vs-foot">
+        <strong>إملاء المتصفح — ليس صوت باشت</strong>
+        <small>تفريغ صوتي فقط في المتصفح: يُفتح النص في المحادثة لتراجعه قبل الإرسال، وقد يعالج المتصفح (أو مزوّده) الصوت عبر خدمة خارجية. المكالمات الهاتفية خارج هذه المرحلة.</small>
+      </footer>
     </div>
   );
 }
