@@ -71,7 +71,8 @@ describe("browser bundle hygiene", () => {
     // The notification API is the only route with writes (bearer-token devices, see docs/NOTIFICATIONS.md); everything else is GET only.
     // The chat browser API (owner cookie + signed BFF hop, see docs/CHAT-BROWSER.md) is the second: GET/POST/DELETE, never PUT.
     // The BASHT engine door (its own owner cookie + signed BFF hop, docs/hq/BASHT-CORE-INTEGRATION.md C2/C4) follows the same rule.
-    const allowed = (f: string): string[] => (/[\\/]api[\\/]notify[\\/]/.test(f) ? ["DELETE", "GET", "POST", "PUT"] : /[\\/]api[\\/](browser|assistant|basht)[\\/]/.test(f) ? ["DELETE", "GET", "POST"] : ["GET"]);
+    // The owner sign-in door (A1, one session for the whole app: code or Face ID) is GET/POST only.
+    const allowed = (f: string): string[] => (/[\\/]api[\\/]notify[\\/]/.test(f) ? ["DELETE", "GET", "POST", "PUT"] : /[\\/]api[\\/](browser|assistant|basht)[\\/]/.test(f) ? ["DELETE", "GET", "POST"] : /[\\/]api[\\/]auth[\\/]/.test(f) ? ["GET", "POST"] : ["GET"]);
     const routes = walk(join(root, "app", "api")).filter((f) => /route\.ts$/.test(f));
     expect(routes.length).toBeGreaterThan(0);
     for (const f of routes) {

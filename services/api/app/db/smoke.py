@@ -35,13 +35,14 @@ from .scope import owner_transaction
 # The single source of truth for "what the runtime role may do". Tests import these, so a new table or grant cannot be added
 # without updating (and therefore reviewing) this list.
 EXPECTED_TABLE_PRIVILEGES: dict[str, set[str]] = {
-    "accounts": {"SELECT"},                          # created only by a reviewed bootstrap path, never by request code
+    "accounts": {"SELECT"},                          # created only via auth_ensure_owner() after the owner code is verified (0005)
     "sessions": {"SELECT", "INSERT"},                # + column-level UPDATE(revoked_at, last_seen_at)
     "sync_records": {"SELECT", "INSERT", "UPDATE"},  # no DELETE: removal is a tombstone
     "audit_log": {"SELECT", "INSERT"},               # append-only
     "ai_settings": {"SELECT", "INSERT", "UPDATE"},   # CHAT-AI-1 (0004): per-account default model
     "ai_usage": {"SELECT", "INSERT", "UPDATE"},      # CHAT-AI-1: hard spend ledger (reserve / settle); never deleted
     "ai_rate": {"SELECT", "INSERT", "UPDATE"},       # CHAT-AI-1: per-minute request counter
+    "passkeys": {"SELECT", "INSERT", "DELETE"},      # A1 (0005): counters move only through auth_passkey_used()
     "service_nonces": set(),                         # reachable only through a SECURITY DEFINER function
     "schema_migrations": set(),                      # the migration runner's bookkeeping is invisible to the application
 }
@@ -50,10 +51,10 @@ EXPECTED_UPDATABLE_SESSION_COLUMNS = {"revoked_at", "last_seen_at"}
 # SECURITY DEFINER session lookup, which runs as the owner and would be filtered to nothing under FORCE.
 EXPECTED_RLS_FLAGS: dict[str, tuple[bool, bool]] = {
     "accounts": (True, False), "sessions": (True, False), "sync_records": (True, True), "audit_log": (True, True),
-    "ai_settings": (True, True), "ai_usage": (True, True), "ai_rate": (True, True),
+    "ai_settings": (True, True), "ai_usage": (True, True), "ai_rate": (True, True), "passkeys": (True, False),
     "service_nonces": (False, False), "schema_migrations": (False, False),
 }
-TENANT_TABLES = ("accounts", "sessions", "sync_records", "audit_log", "ai_settings", "ai_usage", "ai_rate")
+TENANT_TABLES = ("accounts", "sessions", "sync_records", "audit_log", "ai_settings", "ai_usage", "ai_rate", "passkeys")
 ALL_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
 
 

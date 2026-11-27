@@ -13,6 +13,8 @@ import { hkdfSync } from "node:crypto";
 import { callBackend as realCallBackend } from "./backend";
 import { createLimiter } from "./notify/api";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
+import { doorAccess, ownerAuthOn } from "./owner-session";
+import { handleAuth } from "./owner-auth";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 
 export const BASHT_COOKIE = "safwan_basht";
@@ -66,10 +68,15 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   const route = path.join("/");
   const gate = readBashtGate(deps.env);
   const now = deps.now();
-  if (req.method === "GET" && route === "status") return json({ enabled: !!gate, authenticated: !!gate && verifyCookieValue(gate, readCookie(req, BASHT_COOKIE), now) });
-  if (!gate) return err("disabled", 503);
+  // A1: the unified owner session opens this door too; the legacy BASHT code keeps working during the transition
+  const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req, BASHT_COOKIE), now) });
+  if (req.method === "GET" && route === "status") return json({ enabled: access.enabled, authenticated: access.authenticated });
+  if (!access.enabled) return err("disabled", 503);
 
   if (route === "session") {
+    // A1: with the unified login on, this unlock signs in to the WHOLE app (one owner session, one code)
+    if (ownerAuthOn(deps.env) && req.method === "POST") return handleAuth(req, ["login", "code"], deps);
+    if (!gate) return err("disabled", 503); // the legacy code unlock exists only while that code is configured
     if (!sameOrigin(req)) return err("forbidden", 403);
     const secure = deps.env.NODE_ENV === "production";
     if (req.method === "DELETE") return json({ authenticated: false }, 200, { "Set-Cookie": cookie("", secure, 0) });
@@ -82,7 +89,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     return json({ authenticated: true }, 200, { "Set-Cookie": cookie(issueCookieValue(gate, now), secure) });
   }
 
-  if (!verifyCookieValue(gate, readCookie(req, BASHT_COOKIE), now)) return err("unauthorized", 401);
+  if (!access.authenticated) return err("unauthorized", 401);
   const write = req.method !== "GET";
   if (write && !sameOrigin(req)) return err("forbidden", 403);
   if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);

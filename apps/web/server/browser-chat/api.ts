@@ -12,6 +12,8 @@ import { callBackend as realCallBackend, type BackendResult } from "../backend";
 import { createLimiter } from "../notify/api";
 import { isAllowedBrowserUrl, isTaskId, parseActionRequest, parseTaskView } from "@/lib/browser-task";
 import { isolateScopes, readScopes, sessionResultOk, sessionStartUrl, sessionTargetOk, type Scope } from "./scopes";
+import { doorAccess, ownerAuthOn } from "../owner-session";
+import { handleAuth } from "../owner-auth";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./gate";
 
 const BASE = "/internal/v1/browser/tasks";
@@ -120,14 +122,18 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     const configured = readScopes(deps.env);
     const iso = isolateScopes(configured, [appHost, apiHost]);
     const scopes = iso.scopes;
+    // A1: the unified owner session opens this door too; the legacy browser code keeps working during the transition
+    const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req), now) });
     if (route === "GET /status") {
-      const authenticated = !!gate && verifyCookieValue(gate, readCookie(req), now);
+      const authenticated = access.authenticated;
       // the lab address is shown only to the signed-in owner
-      return json({ enabled: !!gate, authenticated, interactive: { enabled: !!gate && scopes.length > 0, ...(iso.refused ? { reason: "same_site" } : {}), ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
+      return json({ enabled: access.enabled, authenticated, interactive: { enabled: access.enabled && scopes.length > 0, ...(iso.refused ? { reason: "same_site" } : {}), ...(authenticated && scopes.length ? { startUrl: sessionStartUrl(scopes) } : {}) } });
     }
-    if (!gate) return err("disabled", 503);                               // feature off: nothing below is reachable
+    if (!access.enabled) return err("disabled", 503);                    // feature off: nothing below is reachable
 
     if (route === "POST /session") {
+      if (ownerAuthOn(deps.env)) return handleAuth(req, ["login", "code"], { env: deps.env, callBackend: deps.callBackend, now: deps.now }); // A1
+      if (!gate) return err("disabled", 503);                             // legacy code unlock only while that code exists
       if (!sameOrigin(req)) return err("forbidden", 403);
       const ip = clientIp(req);
       const body = (await readJson(req)) as { code?: unknown } | undefined;
@@ -147,7 +153,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     }
 
     // everything below needs a valid owner cookie
-    if (!verifyCookieValue(gate, readCookie(req), now)) return err("unauthorized", 401);
+    if (!access.authenticated) return err("unauthorized", 401);
     const id = path[1];
 
     if (route === "POST /tasks") {

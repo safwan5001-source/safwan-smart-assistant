@@ -54,6 +54,18 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/basht/send"),
     ("GET", "/internal/v1/basht/runs/{run_id}"),
     ("POST", "/internal/v1/basht/runs/{run_id}/stop"),
+    # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
+    ("POST", "/internal/v1/auth/config"),
+    ("POST", "/internal/v1/auth/login/code"),
+    ("POST", "/internal/v1/auth/session"),
+    ("POST", "/internal/v1/auth/logout"),
+    ("POST", "/internal/v1/auth/logout-all"),
+    ("POST", "/internal/v1/auth/passkeys/list"),
+    ("POST", "/internal/v1/auth/passkeys/delete"),
+    ("POST", "/internal/v1/auth/passkeys/register/options"),
+    ("POST", "/internal/v1/auth/passkeys/register/verify"),
+    ("POST", "/internal/v1/auth/passkeys/login/options"),
+    ("POST", "/internal/v1/auth/passkeys/login/verify"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
 
