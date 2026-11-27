@@ -45,6 +45,7 @@ import type { Attachment, Message, Thread } from "@/lib/domain";
 import type { BashtMessage } from "@/lib/basht-client";
 import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
 import type { BrowserRef } from "@/lib/domain";
+import { newFocusScroll, nextScroll } from "@/lib/chat-scroll";
 
 /** Tap-to-fill starters: they only put text in the composer; nothing is sent until the user presses send. */
 const STARTERS: { label: string; text: string }[] = [
@@ -141,11 +142,13 @@ export default function ChatScreen() {
     return [...local, ...remote].sort((a, b) => a.at - b.at);
   }, [view.kind, mainThread, bashtOn, basht.messages]);
 
+  const focusScroll = useRef(newFocusScroll());
   useEffect(() => {
-    // B1: a search hit / the first earlier row keeps the reading position; otherwise follow the newest message
-    const focused = basht.focusId ? document.getElementById("m-" + basht.focusId) : null;
-    if (focused) focused.scrollIntoView({ block: "center" });
-    else log.current?.scrollTo({ top: log.current.scrollHeight });
+    // B1: a search hit / the first earlier row is scrolled to once and then keeps the reading position (a streaming reply
+    // never pulls the owner back to it, lib/chat-scroll); without a focus, follow the newest message
+    const next = nextScroll(focusScroll.current, basht.focusId ?? null, (id) => !!document.getElementById("m-" + id), !basht.focusId);
+    if (next?.to === "focus") document.getElementById("m-" + next.id)?.scrollIntoView({ block: "center" });
+    else if (next?.to === "bottom") log.current?.scrollTo({ top: log.current.scrollHeight });
   }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view, basht.focusId]);
   // B1: a picked search hit opens once its conversation is on screen
   useEffect(() => {
