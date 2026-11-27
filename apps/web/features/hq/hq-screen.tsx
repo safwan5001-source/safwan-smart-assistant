@@ -13,7 +13,7 @@ import { FRAMES, VIEWS, type ViewId } from "@/lib/hq/layout";
 import { SCENARIOS, SCENARIO_BY_ID } from "@/lib/hq/demo-data";
 import { HqSim, STAGE_AR, STATUS_AR, type Snapshot, type Status } from "@/lib/hq/sim";
 import { normalizeAr } from "@/lib/search";
-import { CORE_LINK_AR, HQ_SOURCE } from "@/lib/hq/source";
+import { CORE_LINK_AR, coreLive, type CoreView } from "@/lib/hq/source";
 import { createHqStore, useHq, type HqStore, type Panel } from "./hq-state";
 import HqPlan from "./hq-plan";
 
@@ -37,7 +37,7 @@ function SimTag() {
   return <span className="hq-sim-tag" title="بيانات تجريبية داخل المحاكاة فقط">محاكاة</span>;
 }
 
-export default function HqScreen() {
+export default function HqScreen({ core = "unconfigured" }: { core?: CoreView }) {
   const [sim] = useState(() => new HqSim(7));
   const [store] = useState(() => createHqStore());
   const ui = useHq(store, (s) => s);
@@ -132,7 +132,7 @@ export default function HqScreen() {
       </div>
 
       <p className="hq-disclaimer" role="note">
-        الشخصيات هنا تعريفات بصرية وليست وكلاء فعليين. المقر لا يتصل بباشت ولا بأي نظام، ولا يقرأ مهامك أو ملفاتك ولا يغيّرها. كل الحالات والأرقام والموافقات تجريبية.
+        {coreLive(core) ? "باشت متصل فعليًا بمحركه (قراءة الحالة فقط). " : ""}الشخصيات هنا تعريفات بصرية وليست وكلاء فعليين. المقر لا يقرأ مهامك أو ملفاتك ولا يغيّرها، وحالات الفريق وأرقامه وموافقاته تجريبية.
       </p>
 
       <section className="hq-kpis" aria-label="مؤشرات المحاكاة">
@@ -159,7 +159,7 @@ export default function HqScreen() {
       </section>
 
       <p className="sr-only" role="status" aria-live="polite">{ui.selected ? `تم اختيار ${AGENTS[ui.selected].nameAr} — ${AGENTS[ui.selected].role}` : ""}</p>
-      {ui.selected && <AgentCard id={ui.selected} status={snap.statuses[ui.selected]} onClose={() => select(null)}
+      {ui.selected && <AgentCard id={ui.selected} status={snap.statuses[ui.selected]} core={core} onClose={() => select(null)}
         onVisit={() => { store.set({ viewNonce: ui.viewNonce + 1 }); rootRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }} />}
 
       <section className="card hq-panels">
@@ -263,7 +263,7 @@ function People({ store, snap, onSelect }: { store: HqStore; snap: Snapshot; onS
   );
 }
 
-function AgentCard({ id, status, onClose, onVisit }: { id: AgentId; status: Status; onClose: () => void; onVisit: () => void }) {
+function AgentCard({ id, status, core, onClose, onVisit }: { id: AgentId; status: Status; core: CoreView; onClose: () => void; onVisit: () => void }) {
   const a = AGENTS[id];
   const f = FRAMES[id];
   const head = useRef<HTMLHeadingElement>(null);
@@ -285,7 +285,7 @@ function AgentCard({ id, status, onClose, onVisit }: { id: AgentId; status: Stat
         <button className="btn btn-sm" onClick={onVisit}><Icon name="target" size={16} />زيارة المكتب</button>
       </div>
       {id === "BASHT"
-        ? <small className="muted">الربط بباشت الفعلي: {HQ_SOURCE === "simulation" ? CORE_LINK_AR.simulation : "—"}</small>
+        ? <small className="muted" data-core={core}>الربط بباشت الفعلي: {CORE_LINK_AR[core]}</small>
         : <small className="muted">شخصية افتراضية للعرض؛ ليست وكيلًا فعليًا في باشت.</small>}
     </section>
   );

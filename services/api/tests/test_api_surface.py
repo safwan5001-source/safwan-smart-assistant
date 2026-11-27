@@ -37,7 +37,10 @@ def test_audit_trail_after_execution(client):
 
 def test_integrations_all_planned_and_no_secrets(client):
     body = client.get("/integrations").json()["integrations"]
-    assert body and all(i["status"] == "planned" for i in body)
+    # every connector is planned, except the BASHT engine status (C1), which is honestly "not configured" without its URL
+    assert body and all(i["status"] == "planned" for i in body if i["id"] != "basht_core")
+    assert next(i for i in body if i["id"] == "basht_core")["status"] == "not_configured"
+    assert "BASHT_CORE_URL" not in str(body)  # names of server variables never leave the API
     assert client.get("/integrations/github").json()["id"] == "github"
     assert client.get("/integrations/none").status_code == 404
     assert client.get("/capabilities").json()["integrations"]["connected"] == 0

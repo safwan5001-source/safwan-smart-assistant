@@ -5,6 +5,7 @@ import os
 from typing import Any
 
 from .assistant import provider_status
+from .basht_core import core_state
 from .config import SERVICE_VERSION, Settings
 from .integrations import CATALOG, resolve_status
 
@@ -23,5 +24,7 @@ def health_payload(settings: Settings) -> dict[str, Any]:
             "assistant": bool(provider_status(settings)["configured"]),
             "connected_integrations": integration_summary()["connected"],
             "task_execution": False,
+            # BASHT Core Integration C1: coarse engine state (unconfigured / connected / starting / offline), cached 60 s
+            "basht": core_state(os.environ),
         },
     }

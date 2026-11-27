@@ -1,17 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { CORE_LINK_AR, HQ_SOURCE, coreLink } from "@/lib/hq/source";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { CORE_LINK_AR, CORE_STATES, coreLive, parseCoreState } from "@/lib/hq/source";
 
-describe("HQ data source (seam for the future BASHT Core Integration)", () => {
-  it("is the simulation today — no connection to the engine exists yet", () => {
-    expect(HQ_SOURCE).toBe("simulation");
-    expect(CORE_LINK_AR.simulation).toContain("غير مربوط");
+describe("HQ data source (BASHT Core Integration, step C1: engine status only)", () => {
+  it("accepts only the API's known engine states and fails closed on anything else", () => {
+    for (const s of CORE_STATES) expect(parseCoreState(s)).toBe(s);
+    expect(parseCoreState(undefined)).toBe("unconfigured");
+    expect(parseCoreState("ready")).toBe("offline");
+    expect(parseCoreState(1)).toBe("offline");
   });
-  it("maps the engine's existing /healthz payload and fails closed on anything unexpected", () => {
-    expect(coreLink({ ok: true, gateway: "ready" })).toBe("connected");
-    expect(coreLink({ ok: true, gateway: "starting" })).toBe("starting");
-    expect(coreLink({ ok: true, gateway: "unconfigured" })).toBe("offline");
-    expect(coreLink({ ok: false, gateway: "ready" })).toBe("offline");
-    expect(coreLink(null)).toBe("offline");
-    expect(coreLink({ ok: true, gateway: "something-new" })).toBe("offline");
+  it("presents BASHT as live only when the engine is connected, and says so honestly otherwise", () => {
+    expect(coreLive("connected")).toBe(true);
+    for (const s of ["unconfigured", "starting", "offline", "checking"] as const) expect(coreLive(s)).toBe(false);
+    expect(CORE_LINK_AR.unconfigured).toContain("غير مربوط");
+    expect(CORE_LINK_AR.offline).toContain("تعذّر");
+  });
+  it("the HQ receives the state as a prop from one wrapper outside the HQ (the HQ itself still never fetches)", () => {
+    const page = readFileSync(resolve(__dirname, "../app/hq/page.tsx"), "utf8");
+    expect(page).toMatch(/import HqLive from "@\/features\/basht-core\/hq-live"/);
+    const live = readFileSync(resolve(__dirname, "../features/basht-core/hq-live.tsx"), "utf8");
+    expect(live).toMatch(/useAssistant\(\)/);
+    expect(live).not.toMatch(/\bfetch\s*\(/);
   });
 });

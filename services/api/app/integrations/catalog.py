@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from ..basht_core import ENV_VAR as BASHT_CORE_URL, core_state
 from ..permissions import Risk
 from .base import AuthKind, IntegrationSpec, ScopeSpec
 
 R, W, S = Risk.read, Risk.write, Risk.sensitive
 
 CATALOG: tuple[IntegrationSpec, ...] = (
+    # BASHT Core Integration, step C1 (docs/hq/BASHT-CORE-INTEGRATION.md): status only, from the engine's public /healthz
+    IntegrationSpec("basht_core", "محرك باشت", "agent", "حالة باشت الفعلية من محرك OpenClaw (قراءة فقط).", AuthKind.none,
+                    (ScopeSpec("status.read", "قراءة الحالة", R),), env_vars=(BASHT_CORE_URL,), implemented=True,
+                    verifier=lambda env: core_state(env) == "connected"),
     IntegrationSpec("github", "GitHub", "development", "المستودعات وطلبات الدمج والتحقق من البناء.", AuthKind.oauth2,
                     (ScopeSpec("pr.read", "قراءة طلبات الدمج", R), ScopeSpec("pr.merge", "دمج طلب", S))),
     IntegrationSpec("vercel", "Vercel", "hosting", "متابعة النشر والبيئات.", AuthKind.api_key,

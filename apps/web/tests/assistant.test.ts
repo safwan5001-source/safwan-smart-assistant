@@ -8,7 +8,13 @@ const json = (body: unknown, init: ResponseInit = {}) =>
 describe("assistant service", () => {
   it("reports online with the assistant OFF when /health says so", async () => {
     const svc = createAssistantService(async () => json({ status: "ok", version: "0.2.0", features: { assistant: false } }));
-    expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0" });
+    expect(await svc.status()).toEqual({ server: "online", assistant: false, version: "0.2.0", basht: "unconfigured" });
+  });
+  it("carries BASHT's engine state from /health, failing closed on unknown values", async () => {
+    const st = async (basht: unknown) => createAssistantService(async () => json({ status: "ok", features: { assistant: false, basht } })).status();
+    expect(await st("connected")).toMatchObject({ basht: "connected" });
+    expect(await st("starting")).toMatchObject({ basht: "starting" });
+    expect(await st("weird")).toMatchObject({ basht: "offline" });
   });
   it("probes the BFF health route, not a public backend path", async () => {
     const f = vi.fn(async () => json({ status: "ok", features: { assistant: false } }));
