@@ -73,9 +73,10 @@ describe("B2 files out: /api/basht/media", () => {
     expect(r.status).toBe(200);
     expect(r.headers.get("content-type")).toBe("image/png");
     expect(r.headers.get("x-content-type-options")).toBe("nosniff");
+    // Review (Codex, integration PR): a cached private image could be served from the HTTP cache after sign-out
+    expect(r.headers.get("cache-control")).toBe("no-store");
     expect(r.headers.get("content-security-policy")).toContain("sandbox");
     expect(r.headers.get("content-disposition")).toBe("attachment; filename*=UTF-8''chart.png");
-    expect(r.headers.get("cache-control")).toMatch(/^private/);
     const [url, init] = fetchImpl.mock.calls[0];
     expect(String(url)).toBe("https://api.internal.example/internal/v1/basht/media");
     expect(init.redirect).toBe("manual");
