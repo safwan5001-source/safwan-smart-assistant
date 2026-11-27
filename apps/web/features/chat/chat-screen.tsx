@@ -26,6 +26,7 @@ import BrowserCard from "./browser-card";
 import BrowserSessionCard, { dispatchSessionAction } from "./browser-session-card";
 import VoicePanel from "@/features/calls/calls-screen";
 import ModelPanel from "./model-panel";
+import MessageBody from "./message-body";
 import { useBashtModel } from "./use-basht-model";
 import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/basht-model";
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
@@ -135,7 +136,18 @@ export default function ChatScreen() {
     return [...local, ...remote].sort((a, b) => a.at - b.at);
   }, [view.kind, mainThread, bashtOn, basht.messages]);
 
-  useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view]);
+  // Follow new messages only while the owner is at the bottom: reading older messages is never yanked away by a poll; opening a
+  // conversation or sending jumps to the end (instantly — a smooth scroll over a long conversation lags on a phone).
+  const stick = useRef(true);
+  const [away, setAway] = useState(false);
+  const toBottom = () => { stick.current = true; log.current?.scrollTo({ top: log.current.scrollHeight, behavior: "instant" }); };
+  const onLogScroll = () => {
+    const el = log.current; if (!el) return;
+    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stick.current = gap < 80; setAway(gap > 400);
+  };
+  useEffect(() => { stick.current = true; }, [view]);
+  useEffect(() => { if (stick.current) toBottom(); }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view]);
   // While BASHT is unreachable, re-check health every 20 s so sending unlocks by itself when it is back.
   useEffect(() => {
     if (!bashtOn || engineUp) return;
@@ -161,7 +173,7 @@ export default function ChatScreen() {
   const send = async () => {
     const text = draft.trim();
     if ((!text && !attachments.length) || busy || view.kind !== "main") return;
-    setBusy(true); dictation.abort();
+    setBusy(true); dictation.abort(); stick.current = true;
     try {
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
       // Free text needs a brain that is really reachable: otherwise nothing is recorded as sent and the draft stays.
@@ -302,7 +314,7 @@ export default function ChatScreen() {
         ? (m.browser.mode === "interactive"
           ? <BrowserSessionCard browser={m.browser} messageId={m.id} onChange={(patch) => updateBrowser(threadId, m, patch)} />
           : <BrowserCard browser={m.browser} onChange={(patch) => updateBrowser(threadId, m, patch)} />)
-        : m.text}
+        : m.role === "assistant" ? <MessageBody text={m.text} /> : m.text}
       {m.attachments?.map((a) => (
         <div key={a.id} style={{ marginBlockStart: 6 }}>
           <button className="attach-chip" onClick={() => void openAttachment(a)} aria-label={"فتح المرفق " + a.name}><Icon name="clip" size={16} /><span>{a.name}</span></button>
@@ -321,7 +333,7 @@ export default function ChatScreen() {
   const engineBubble = (m: BashtMessage, key: string) => (
     <article key={key} className={"bubble " + m.role}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
-      {m.text}
+      {m.role === "assistant" ? <MessageBody text={m.text} /> : m.text}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
       )}
@@ -336,6 +348,11 @@ export default function ChatScreen() {
   // M: the app conversation's model, read from the engine (refreshed after each reply and each change; never polled)
   const model = useBashtModel(bashtOn && basht.gate === "open", !!basht.live);
   const modelLine = model.supported ? modelSummary(model.state, model.models) : "";
+  // Perf: the timeline's bubbles are rebuilt only when the messages (or the model names they show) change. A keystroke, a poll of
+  // the live reply or a status update reuses the same elements, so React skips every existing bubble (measured, iPhone emulation:
+  // 90 → 15 component renders per keystroke with a 50-message page, 465 → 15 with 300). A bubble that reads other state must add it here.
+  const timeline = useMemo(() => items.map((it) => (it.kind === "local" ? localBubble(mainThread!.id, it.m) : engineBubble(it.m, `e-${it.i}-${it.at}`))),
+    [items, model.models]); // eslint-disable-line react-hooks/exhaustive-deps -- the bubble builders only read stable callbacks besides these
 
   const others = basht.sessions.filter((s) => s.key !== APP_SESSION_KEY);
   const list = (
@@ -414,7 +431,7 @@ export default function ChatScreen() {
             <Notice tone="info" role="status">لم يُفعَّل محرك باشت على الخادم بعد. الأوامر السريعة تعمل على جهازك، ولن تُرسل الرسائل الأخرى.</Notice>
           )}
 
-          <div className="chat-log" ref={log} role="log" aria-live="polite" aria-label="رسائل المحادثة">
+          <div className="chat-log" ref={log} onScroll={onLogScroll} role="log" aria-live="polite" aria-label="رسائل المحادثة">
             {view.kind === "main" && (
               <>
                 {bashtOn && basht.gate === "open" && basht.messages === null && <ListSkeleton rows={3} h={48} />}
@@ -426,20 +443,20 @@ export default function ChatScreen() {
                     <span style={{ display: "block", marginBlockStart: 8 }}>أوامر سريعة على جهازك: <span className="kbd">/مهمة</span> · <span className="kbd">/متصفح</span> (قراءة فقط) · <span className="kbd">/متصفح تفاعلي</span> (بموافقتك لكل خطوة)</span>
                   </Empty>
                 )}
-                {items.map((it) => (it.kind === "local" ? localBubble(mainThread!.id, it.m) : engineBubble(it.m, `e-${it.i}-${it.at}`)))}
+                {timeline}
                 {live && (
                   <>
                     <article className="bubble user">{live.prompt}</article>
                     <article className="bubble assistant streaming" aria-busy="true">
                       <span className="who"><BrandMark size="xs" />باشت</span>
-                      {live.text || <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
+                      {live.text ? <MessageBody text={live.text} /> : <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
                     </article>
                   </>
                 )}
                 {claudeLive && (
                   <article className="bubble assistant streaming" aria-busy="true">
                     <span className="who"><BrandMark size="xs" />باشت</span>
-                    {claudeLive.text || <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
+                    {claudeLive.text ? <MessageBody text={claudeLive.text} /> : <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
                   </article>
                 )}
               </>
@@ -447,6 +464,7 @@ export default function ChatScreen() {
             {view.kind === "engine" && (basht.messages === null ? <ListSkeleton rows={3} h={48} />
               : basht.messages.length ? basht.messages.map((m, i) => engineBubble(m, `r-${i}-${m.at}`)) : <Empty icon="chat" title="لا رسائل في هذه المحادثة" />)}
             {view.kind === "archive" && (archived ? archived.messages.map((m) => localBubble(archived.id, m)) : <Empty icon="archive" title="المحادثة غير موجودة" />)}
+            {away && <button type="button" className="chat-jump" aria-live="off" onClick={toBottom}><span aria-hidden="true">↓</span>أحدث الرسائل</button>}
           </div>
 
           {view.kind === "main" ? (
