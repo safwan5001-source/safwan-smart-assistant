@@ -237,9 +237,10 @@ def events(body: EventsBody, _: ServiceCall = Depends(require_service_call)):
     try:
         j = _live("GET", f"/events?after={body.after}" + (f"&wait={body.wait}" if body.wait else ""), timeout=EVENTS_TIMEOUT)
     except LiveError as e:
-        # an engine that is not configured here, an older bridge without the link, or the link switched off: nothing to report
-        # (200, so the notify loop never mistakes "not set up" for "BASHT is offline")
-        if e.code in ("link_down", "basht_unconfigured"):
+        # an engine that is not configured here, an older bridge without the link or without this route at all (404, e.g.
+        # after an engine-only rollback), or the link switched off: nothing to report (200, so the notify loop never mistakes
+        # "not set up" for "BASHT is offline")
+        if e.code in ("link_down", "basht_unconfigured", "not_found"):
             return {"available": False, "configured": e.code != "basht_unconfigured", "events": [], "epoch": None, "latest": None,
                     "truncated": False, "link": _link({"state": "off"})}
         raise HTTPException(status_code=e.status, detail={"code": e.code}) from None

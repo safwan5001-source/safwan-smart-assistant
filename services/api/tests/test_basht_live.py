@@ -197,6 +197,10 @@ def test_events_feed_is_re_checked_field_by_field(client, engine):
     assert call(client, "POST", "/internal/v1/basht/events", {"after": 0}).status_code == 502
     replies["/events"] = _http_error(503, {"error": "not_available"})
     assert call(client, "POST", "/internal/v1/basht/events", {"after": 0}).json()["available"] is False
+    # Review (Codex, integration PR): an older bridge without /events (404) is "no feed", never an outage (no false offline push)
+    replies["/events"] = _http_error(404, {"ok": False, "error": "not_found"})
+    r = call(client, "POST", "/internal/v1/basht/events", {"after": 0})
+    assert r.status_code == 200 and r.json()["available"] is False and r.json()["configured"] is True
 
 
 def test_events_answer_says_how_far_it_reached_so_the_caller_can_page(client, engine):
