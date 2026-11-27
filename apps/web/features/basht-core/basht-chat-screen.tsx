@@ -80,6 +80,8 @@ export default function BashtChatScreen() {
       } catch (e) {
         if (!mine()) return;
         if (e instanceof BashtError && e.code === "not_found") { activeRun = null; await finish(); return; }
+        // session expired / code rotated: back to the unlock form; activeRun is kept, so the reply resumes after unlocking
+        if (e instanceof BashtError && e.code === "unauthorized") { setLive(null); setGate("locked"); return; }
         setNotice(errText(e));
       }
       await new Promise((r) => setTimeout(r, POLL_MS));
@@ -172,7 +174,7 @@ export default function BashtChatScreen() {
           {sessions.length > 1 && (
             <div className="seg" role="group" aria-label="المحادثات" style={{ marginBlockEnd: 8 }}>
               {sessions.map((s) => (
-                <button key={s.key} aria-pressed={s.key === key} onClick={() => { setMessages(null); setKey(s.key); }}>
+                <button key={s.key} aria-pressed={s.key === key} onClick={() => { if (s.key === key) return; setMessages(null); setKey(s.key); }}>
                   {s.label}{!s.writable && <span className="sr-only"> (قراءة فقط)</span>}
                 </button>
               ))}
