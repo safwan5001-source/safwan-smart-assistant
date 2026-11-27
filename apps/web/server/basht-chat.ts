@@ -16,6 +16,7 @@ import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
+import { clientIp } from "./client-ip";
 
 export const BASHT_COOKIE = "safwan_basht";
 export const BASHT_COOKIE_PATH = "/api/basht";
@@ -59,7 +60,6 @@ async function readJson(req: Request): Promise<Record<string, unknown> | undefin
   }
   try { const v = JSON.parse(Buffer.concat(chunks).toString("utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : undefined; } catch { return undefined; }
 }
-const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
 /** Model-control refusals the browser may see as they are (a fixed list; never upstream text). */
 const MODEL_CODES = new Set(["unknown_model", "model_unavailable", "model_not_selectable", "unsupported_level", "fast_mode_unsupported", "rejected", "model_control_unavailable"]);

@@ -13,6 +13,7 @@ import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./assistant-chat-gate";
+import { clientIp } from "./client-ip";
 
 export type Deps = { env: Env; callBackend: typeof realCallBackend; streamBackend: typeof realStreamBackend; now: () => number };
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, streamBackend: realStreamBackend, now: Date.now });
@@ -43,7 +44,6 @@ async function readJson(req: Request): Promise<Record<string, unknown> | undefin
 }
 
 const ownerAccount = (env: Env): string | null => { const a = (env.AI_OWNER_ACCOUNT_ID ?? "").trim().toLowerCase(); return UUID.test(a) && a !== "00000000-0000-0000-0000-000000000000" ? a : null; };
-const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
 /** Fixed mapping of the API's failure codes to what the browser may learn. */
 const CHAT_ERRORS: Record<string, [number, string]> = {

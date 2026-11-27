@@ -114,10 +114,39 @@ def test_code_login_creates_the_single_owner_once_and_a_resolvable_session(clien
     assert "session" not in json.dumps(env.execute("SELECT token_hash FROM sessions LIMIT 1").fetchone()[0].hex())
 
 
-def test_wrong_codes_are_refused_and_throttled(client):
+def test_wrong_codes_are_refused_and_throttled_per_client(client):
     for _ in range(ow.FAILS_MAX):
-        assert call(client, "/login/code", {"code": "x" * 40}).json()["detail"]["code"] == "unauthorized"
-    assert call(client, "/login/code", {"code": CODE}).json()["detail"]["code"] == "rate_limited"  # even the right code waits out the window
+        assert call(client, "/login/code", {"code": "x" * 40, "client": "203.0.113.9"}).json()["detail"]["code"] == "unauthorized"
+    assert call(client, "/login/code", {"code": "y" * 40, "client": "203.0.113.9"}).json()["detail"]["code"] == "rate_limited"
+    assert call(client, "/login/code", {"code": "y" * 40, "client": "198.51.100.1"}).json()["detail"]["code"] == "unauthorized"  # another client
+
+
+def test_the_right_code_is_never_locked_out_by_other_clients_failures(client):
+    """Review M1: anonymous wrong codes (from any number of clients, or with no client key) never refuse the owner's right code."""
+    for i in range(ow.FAILS_ALARM + 5):
+        call(client, "/login/code", {"code": "x" * 40, "client": f"203.0.113.{i % 3}"})
+        call(client, "/login/code", {"code": "x" * 40})
+    assert call(client, "/login/code", {"code": CODE, "client": "198.51.100.7"}).status_code == 200
+    assert call(client, "/login/code", {"code": CODE, "client": "203.0.113.1"}).status_code == 200  # even the throttled client itself
+    assert call(client, "/login/code", {"code": CODE}).status_code == 200
+
+
+def test_the_failure_table_is_bounded(client, monkeypatch):
+    monkeypatch.setattr(ow, "MAX_CLIENTS", 3)
+    for i in range(10):
+        call(client, "/login/code", {"code": "x" * 40, "client": f"c{i}"})
+    assert list(ow._fails) == ["c7", "c8", "c9"]
+
+
+def test_rotating_the_owner_code_ends_every_session(client, monkeypatch):
+    """Review M3: sessions are bound to the code (the stored hash is keyed by its fingerprint)."""
+    a, b = login(client), login(client, remember=True)
+    assert call(client, "/session", {"session": a}).status_code == 200
+    monkeypatch.setenv("OWNER_ACCESS_CODE", CODE[::-1] + "-rotated")
+    for s in (a, b):
+        assert call(client, "/session", {"session": s}).json()["detail"]["code"] == "unauthorized"
+    r = call(client, "/login/code", {"code": CODE[::-1] + "-rotated"})
+    assert call(client, "/session", {"session": r.json()["session"]}).status_code == 200
 
 
 def test_a_disabled_owner_is_never_resurrected(client, env):
@@ -145,7 +174,7 @@ def test_unsigned_calls_never_reach_auth(client):
 
 # ── passkeys (Face ID) ────────────────────────────────────────────────────
 def register(client, sid: str, key: SoftKey, name: str = "iPhone") -> dict:
-    o = call(client, "/passkeys/register/options", {"session": sid}).json()
+    o = call(client, "/passkeys/register/options", {"session": sid, "code": CODE}).json()
     assert o["options"]["authenticatorSelection"]["userVerification"] == "required"
     assert o["options"]["authenticatorSelection"]["residentKey"] == "required"
     return call(client, "/passkeys/register/verify", {"session": sid, "challenge": o["challenge"], "credential": key.create(o["options"]), "name": name})
@@ -169,15 +198,15 @@ def test_passkeys_off_until_the_permanent_domain_is_set(client, monkeypatch):
     monkeypatch.delenv("BASHT_PUBLIC_ORIGIN")
     sid = login(client)
     assert call(client, "/config").json() == {"owner_auth": True, "passkeys": False}
-    assert call(client, "/passkeys/register/options", {"session": sid}).status_code == 503
+    assert call(client, "/passkeys/register/options", {"session": sid, "code": CODE}).status_code == 503
     monkeypatch.setenv("BASHT_PUBLIC_ORIGIN", "http://evil.example")  # https only (localhost http is a non-production test path)
     assert call(client, "/config").json()["passkeys"] is False
 
 
 def test_registration_needs_a_session_and_user_verification(client):
-    assert call(client, "/passkeys/register/options", {"session": "x" * 43}).json()["detail"]["code"] == "unauthorized"
+    assert call(client, "/passkeys/register/options", {"session": "x" * 43, "code": CODE}).json()["detail"]["code"] == "unauthorized"
     sid = login(client)
-    o = call(client, "/passkeys/register/options", {"session": sid}).json()
+    o = call(client, "/passkeys/register/options", {"session": sid, "code": CODE}).json()
     bad = SoftKey().create(o["options"], uv=False)  # no Face ID / passcode check on the device
     assert call(client, "/passkeys/register/verify", {"session": sid, "challenge": o["challenge"], "credential": bad}).status_code == 400
 
@@ -189,7 +218,7 @@ def test_challenges_are_single_use_purpose_bound_and_origin_checked(client):
     cred = key.get(o["options"])
     assert call(client, "/passkeys/login/verify", {"challenge": o["challenge"], "credential": cred}).status_code == 200
     assert call(client, "/passkeys/login/verify", {"challenge": o["challenge"], "credential": cred}).status_code == 400  # replay
-    reg = call(client, "/passkeys/register/options", {"session": sid}).json()  # a registration challenge cannot log in
+    reg = call(client, "/passkeys/register/options", {"session": sid, "code": CODE}).json()  # a registration challenge cannot log in
     assert call(client, "/passkeys/login/verify", {"challenge": reg["challenge"], "credential": key.get(reg["options"])}).status_code == 400
     o2 = call(client, "/passkeys/login/options").json()
     phish = key.get(o2["options"], origin="https://basht-login.example")  # a look-alike site
@@ -207,6 +236,25 @@ def test_unknown_or_cloned_keys_are_refused(client):
     assert call(client, "/passkeys/login/verify", {"challenge": o["challenge"], "credential": key.get(o["options"], count=5)}).status_code == 200
     o = call(client, "/passkeys/login/options").json()  # a counter going backwards = a cloned authenticator
     assert call(client, "/passkeys/login/verify", {"challenge": o["challenge"], "credential": key.get(o["options"], count=3)}).json()["detail"]["code"] == "unauthorized"
+
+
+def test_adding_a_passkey_needs_the_owner_code_again(client):
+    """Review M3 (step-up): a session alone (e.g. a stolen cookie) cannot enrol a lasting passkey."""
+    sid = login(client)
+    assert call(client, "/passkeys/register/options", {"session": sid}).status_code == 422  # no code at all
+    for _ in range(ow.FAILS_MAX):
+        assert call(client, "/passkeys/register/options", {"session": sid, "code": "x" * 40, "client": "c1"}).json()["detail"]["code"] == "reauth_failed"
+    assert call(client, "/passkeys/register/options", {"session": sid, "code": "x" * 40, "client": "c1"}).json()["detail"]["code"] == "rate_limited"
+    assert "options" in call(client, "/passkeys/register/options", {"session": sid, "code": CODE, "client": "c1"}).json()
+
+
+def test_remove_all_passkeys(client):
+    sid = login(client)
+    for _ in range(2):
+        assert register(client, sid, SoftKey()).status_code == 200
+    assert call(client, "/passkeys/delete-all", {"session": "x" * 43}).json()["detail"]["code"] == "unauthorized"
+    assert call(client, "/passkeys/delete-all", {"session": sid}).json() == {"ok": True, "removed": 2}
+    assert call(client, "/passkeys/list", {"session": sid}).json()["passkeys"] == []
 
 
 def test_a_deleted_passkey_no_longer_opens_a_session(client):

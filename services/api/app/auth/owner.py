@@ -8,6 +8,9 @@
 - Passkeys need the app's permanent public origin, BASHT_PUBLIC_ORIGIN (https://…): a passkey is bound to that domain, so they stay
   off until the owner fixes the domain. Registration requires a signed-in owner; login creates the SAME kind of session.
 - WebAuthn challenges are sealed here (HMAC, 5 min) and single-use through the existing replay store, so there is no new state table.
+- Security review fixes: the right code is ALWAYS accepted (compared first; failures are counted per client, so nobody can lock the
+  owner out — M1); adding a passkey needs the owner code again (step-up — M3); a session is bound to the current owner code: its
+  stored hash is keyed by a fingerprint of OWNER_ACCESS_CODE, so rotating the code ends every session at once (M3).
 """
 from __future__ import annotations
 
@@ -67,11 +70,17 @@ router = APIRouter(prefix="/internal/v1/auth", include_in_schema=False)
 CODE_VAR, ORIGIN_VAR = "OWNER_ACCESS_CODE", "BASHT_PUBLIC_ORIGIN"
 MIN_CODE, MIN_DISTINCT = 32, 14
 CHALLENGE_TTL = 300
-FAILS_MAX, FAILS_WINDOW = 10, 900.0  # owner-code failures per 15 min, across the instance (the BFF also limits per client)
+# Wrong owner codes per CLIENT (the key the BFF sends: the edge-set client IP) per 15 min. The BFF also limits 5/min per client and
+# refuses a throttled client before asking us. A client can only ever throttle itself: the right code is compared first and always
+# accepted (review M1: a global refusal let anyone lock the owner out). The code is >= 32 chars, so guessing is not the threat.
+FAILS_MAX, FAILS_WINDOW = 10, 900.0
+FAILS_ALARM = 100      # failures across the instance per 15 min: logged as an alarm, never a refusal
+MAX_CLIENTS = 5000     # bound on the per-client table (oldest entries go first)
 RP_NAME = "باشت"
 
 _fail_lock = threading.Lock()
-_fails: list[float] = []
+_fails: dict[str, list[float]] = {}
+_all_fails: list[float] = []
 
 
 # ── configuration ─────────────────────────────────────────────────────────
@@ -161,7 +170,7 @@ def refuse(code: str) -> HTTPException:
 
 
 def _session_account(conn: psycopg.Connection, session: str) -> UUID:
-    account = resolve_session(conn, session)
+    account = resolve_session(conn, session, pepper=session_pepper())
     if account is None:
         raise refuse("unauthorized")
     return account
@@ -171,20 +180,46 @@ def _issued(secret: str, expires_at, account: UUID) -> dict[str, Any]:
     return {"session": secret, "expires_at": expires_at.isoformat(), "account_id": str(account)}
 
 
-def _too_many(now: float) -> bool:
-    with _fail_lock:
-        _fails[:] = [t for t in _fails if now - t < FAILS_WINDOW]
-        return len(_fails) >= FAILS_MAX
+def _code_ok(code: str) -> bool:
+    want = owner_code() or ""
+    # compare digests: constant time and independent of the real code's length
+    return bool(want) and hmac.compare_digest(hashlib.sha256(code.encode()).digest(), hashlib.sha256(want.encode()).digest())
 
 
-def _failed(now: float) -> None:
+def _failed(client: str, now: float) -> bool:
+    """Record a wrong code; True when this client is now over its budget (the refusal then says rate_limited)."""
     with _fail_lock:
-        _fails.append(now)
+        _all_fails[:] = [t for t in _all_fails if now - t < FAILS_WINDOW]
+        _all_fails.append(now)
+        if len(_all_fails) == FAILS_ALARM:
+            log.warning("owner code: %d wrong codes across the instance in 15 min", FAILS_ALARM)
+        if not client:
+            return False
+        recent = [t for t in _fails.pop(client, []) if now - t < FAILS_WINDOW] + [now]
+        _fails[client] = recent  # re-inserted last: the dict's order is oldest-activity-first
+        while len(_fails) > MAX_CLIENTS:
+            del _fails[next(iter(_fails))]
+        return len(recent) > FAILS_MAX
+
+
+def _check_code(code: str, client: str | None, now: float, refusal: str = "unauthorized") -> None:
+    """The right code always passes; a wrong one is counted against its client only."""
+    if _code_ok(code):
+        return
+    over = _failed((client or "")[:64], now)
+    raise refuse("rate_limited" if over else refusal)
+
+
+def session_pepper() -> bytes:
+    """Key of the stored session hash: a fingerprint of the CURRENT owner code. Rotating OWNER_ACCESS_CODE changes it, so every
+    session issued under the old code stops resolving (review M3). Never stored; derived from the code on every call."""
+    return hmac.new((owner_code() or "").encode(), b"basht-owner-session-v1", hashlib.sha256).digest()
 
 
 def reset_limits() -> None:
     with _fail_lock:
         _fails.clear()
+        _all_fails.clear()
 
 
 # ── request bodies ────────────────────────────────────────────────────────
@@ -192,6 +227,7 @@ class CodeLogin(BaseModel):
     code: str = Field(min_length=1, max_length=256)
     remember: bool = False
     device: str | None = Field(default=None, max_length=120)
+    client: str | None = Field(default=None, max_length=64)  # the BFF's client key (edge IP): failures are counted per client
 
 
 class SessionBody(BaseModel):
@@ -204,6 +240,12 @@ class PasskeyDelete(SessionBody):
 
 class SessionRevoke(SessionBody):
     id: UUID
+
+
+class RegisterOptions(SessionBody):
+    """Step-up: adding a passkey needs the owner code again, not just a session (a stolen session must not plant a lasting key)."""
+    code: str = Field(min_length=1, max_length=256)
+    client: str | None = Field(default=None, max_length=64)
 
 
 class RegisterVerify(SessionBody):
@@ -228,20 +270,16 @@ def auth_config(settings: Settings = Depends(get_settings), _: ServiceCall = Dep
 @router.post("/login/code")
 def login_code(body: CodeLogin, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
-    now = time.monotonic()
-    if _too_many(now):
-        raise refuse("rate_limited")
-    want = owner_code() or ""
-    # compare digests: constant time and independent of the real code's length
-    if not hmac.compare_digest(hashlib.sha256(body.code.encode()).digest(), hashlib.sha256(want.encode()).digest()):
-        _failed(now)
+    try:
+        _check_code(body.code, body.client, time.monotonic())
+    except HTTPException:
         audit_log.record("auth.login", method="code", status="denied")
-        raise refuse("unauthorized")
+        raise
     with _db(settings) as conn:
         owner = conn.execute("SELECT auth_ensure_owner()").fetchone()[0]
         if owner is None:
             raise refuse("owner_disabled")
-        secret, expires = create_session(conn, owner, remember=body.remember, device=body.device)
+        secret, expires = create_session(conn, owner, remember=body.remember, device=body.device, pepper=session_pepper())
     audit_log.record("auth.login", method="code", status="ok", remember=body.remember)
     return _issued(secret, expires, owner)
 
@@ -251,7 +289,7 @@ def session(body: SessionBody, settings: Settings = Depends(get_settings), _: Se
     _require_on(settings)
     with _db(settings) as conn:
         account = _session_account(conn, body.session)
-        touch_session(conn, account, body.session)
+        touch_session(conn, account, body.session, pepper=session_pepper())
         return {"account_id": str(account)}
 
 
@@ -259,9 +297,9 @@ def session(body: SessionBody, settings: Settings = Depends(get_settings), _: Se
 def logout(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
     with _db(settings) as conn:
-        account = resolve_session(conn, body.session)
+        account = resolve_session(conn, body.session, pepper=session_pepper())
         if account is not None:
-            revoke_session(conn, account, body.session)
+            revoke_session(conn, account, body.session, pepper=session_pepper())
     audit_log.record("auth.logout", scope="device")
     return {"ok": True}
 
@@ -279,14 +317,14 @@ def logout_all(body: SessionBody, settings: Settings = Depends(get_settings), _:
 def sessions_list(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
     with _db(settings) as conn:
-        return {"sessions": list_sessions(conn, _session_account(conn, body.session), body.session)}
+        return {"sessions": list_sessions(conn, _session_account(conn, body.session), body.session, pepper=session_pepper())}
 
 
 @router.post("/sessions/revoke")
 def sessions_revoke(body: SessionRevoke, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
     with _db(settings) as conn:
-        current = revoke_session_by_id(conn, _session_account(conn, body.session), body.id, body.session)
+        current = revoke_session_by_id(conn, _session_account(conn, body.session), body.id, body.session, pepper=session_pepper())
         if current is None:
             raise refuse("not_found")
     audit_log.record("auth.logout", scope="session")
@@ -316,11 +354,28 @@ def passkeys_delete(body: PasskeyDelete, settings: Settings = Depends(get_settin
     return {"ok": True}
 
 
+@router.post("/passkeys/delete-all")
+def passkeys_delete_all(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
+    """Remove every passkey of the account (review M3: "sign out everywhere" ends sessions but keeps passkeys; this removes them)."""
+    _require_on(settings)
+    with _db(settings) as conn:
+        account = _session_account(conn, body.session)
+        with owner_transaction(conn, verified_account_id(account)):
+            n = conn.execute("DELETE FROM passkeys").rowcount
+    audit_log.record("auth.passkey", action="delete_all", removed=n)
+    return {"ok": True, "removed": n}
+
+
 @router.post("/passkeys/register/options")
-def register_options(body: SessionBody, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
+def register_options(body: RegisterOptions, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _, rp_id = _rp(settings)
     with _db(settings) as conn:
         account = _session_account(conn, body.session)
+        try:
+            _check_code(body.code, body.client, time.monotonic(), refusal="reauth_failed")  # step-up (M3)
+        except HTTPException:
+            audit_log.record("auth.passkey", action="register", status="reauth_denied")
+            raise
         with owner_transaction(conn, verified_account_id(account)):
             existing = [bytes(r[0]) for r in conn.execute("SELECT credential_id FROM passkeys").fetchall()]
     opts = generate_registration_options(
@@ -389,7 +444,7 @@ def login_verify(body: LoginVerify, settings: Settings = Depends(get_settings), 
             audit_log.record("auth.login", method="passkey", status="rejected")
             raise denied from None
         conn.execute("SELECT auth_passkey_used(%s, %s)", (credential_id, v.new_sign_count))
-        secret, expires = create_session(conn, account, remember=body.remember, device=body.device)
+        secret, expires = create_session(conn, account, remember=body.remember, device=body.device, pepper=session_pepper())
     audit_log.record("auth.login", method="passkey", status="ok", remember=body.remember)
     return _issued(secret, expires, account)
 

@@ -8,7 +8,7 @@ export type OwnerSession = { id: string; device: string | null; remember: boolea
 export type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null };
 
 const TEXT: Record<string, string> = {
-  unauthorized: "رمز المالك غير صحيح.", rate_limited: "محاولات كثيرة؛ انتظر قليلًا ثم أعد المحاولة.", disabled: "الدخول الموحّد غير مفعّل على الخادم.",
+  unauthorized: "رمز المالك غير صحيح.", wrong_code: "رمز المالك غير صحيح.", rate_limited: "محاولات كثيرة؛ انتظر قليلًا ثم أعد المحاولة.", disabled: "الدخول الموحّد غير مفعّل على الخادم.",
   forbidden: "غير مصرّح بهذا الطلب.", exists: "هذا الجهاز مسجَّل بالفعل.", bad_request: "تعذّر إكمال الطلب.", not_found: "غير موجود.",
   unavailable: "تعذّر الوصول إلى الخادم الآن.", network: "انقطع الاتصال بالخادم.", cancelled: "أُلغي التحقق على الجهاز.",
   unsupported: "هذا المتصفح لا يدعم Face ID / مفاتيح المرور.",
@@ -63,9 +63,10 @@ export function createAuthClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
       if (!cred) throw new AuthError("cancelled");
       await call("passkeys/login/verify", post({ credential: credentialJson(cred as PublicKeyCredential), remember }));
     },
-    async registerPasskey(name: string): Promise<void> {
+    /** `code`: the owner code again (step-up) — a session alone cannot add a lasting sign-in method. */
+    async registerPasskey(name: string, code: string): Promise<void> {
       if (!passkeysSupported()) throw new AuthError("unsupported");
-      const { options } = await call<{ options: J }>("passkeys/register/options", post());
+      const { options } = await call<{ options: J }>("passkeys/register/options", post({ code }));
       let cred: Credential | null;
       try { cred = await navigator.credentials.create({ publicKey: creationOptions(options) }); } catch { throw new AuthError("cancelled"); }
       if (!cred) throw new AuthError("cancelled");
@@ -76,6 +77,7 @@ export function createAuthClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     endSession: async (id: string) => (await call<{ signedOut?: boolean }>("sessions/revoke", post({ id }))).signedOut === true,
     passkeys: async () => (await call<{ passkeys: Passkey[] }>("passkeys")).passkeys,
     removePasskey: async (id: string) => { await call("passkeys/delete", post({ id })); },
+    removeAllPasskeys: async () => { await call("passkeys/delete-all", post()); },
     logout: async (everywhere = false) => { await call(everywhere ? "logout-all" : "logout", post()); },
   };
 }

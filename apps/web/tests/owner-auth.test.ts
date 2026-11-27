@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleAuth, resetAuthLimits, type Deps } from "@/server/owner-auth";
-import { doorAccess, resetOwnerSessionCache, SESSION_COOKIE } from "@/server/owner-session";
+import { doorAccess, resetOwnerSessionCache, SESSION_COOKIE, sessionCookieValue } from "@/server/owner-session";
 import { handleBashtChat, resetBashtLimits } from "@/server/basht-chat";
 
 const HOST = "app.example.test";
@@ -11,7 +11,8 @@ const KEY_ID = "9f0e8d7c-6b5a-4938-8271-605f4e3d2c1b";
 const base = { BACKEND_URL: "https://api.internal.example", SERVICE_AUTH_SECRET: "s".repeat(48), NODE_ENV: "production" };
 const env = { ...base, OWNER_AUTH: "on" };
 const same = { origin: `https://${HOST}`, host: HOST, "sec-fetch-site": "same-origin" };
-const withSession = (s = SECRET, extra = "") => ({ ...same, cookie: `${SESSION_COOKIE}=${s}${extra}` });
+const tagged = (s: string) => sessionCookieValue(s, env)!;
+const withSession = (s = SECRET, extra = "") => ({ ...same, cookie: `${SESSION_COOKIE}=${tagged(s)}${extra}` });
 // imitates callBackend's transport classification (server/backend.ts): 401/403 = signature refused, 429/5xx = cannot serve
 const ok = (status: number, body: unknown) =>
   status === 401 || status === 403 ? { kind: "rejected" as const, status } : status === 429 || status >= 500 ? { kind: "unavailable" as const, status } : { kind: "ok" as const, status, json: body };
@@ -71,12 +72,12 @@ describe("unified owner sign-in: owner code", () => {
     const r = await call("POST", "login/code", same, { code: api.code, remember: false });
     expect(r.status).toBe(200);
     const sc = r.headers.get("set-cookie")!;
-    expect(sc).toMatch(new RegExp(`^${SESSION_COOKIE}=${SECRET};`)); expect(sc).toContain("Path=/;"); expect(sc).toContain("HttpOnly"); expect(sc).toContain("SameSite=Strict"); expect(sc).toContain("Secure");
+    expect(sc).toMatch(new RegExp(`^${SESSION_COOKIE}=${tagged(SECRET)};`)); expect(sc).toContain("Path=/;"); expect(sc).toContain("HttpOnly"); expect(sc).toContain("SameSite=Strict"); expect(sc).toContain("Secure");
     expect(sc).not.toContain("Max-Age");
     expect(await r.text()).not.toContain(SECRET); // the secret only ever travels in the cookie
     const remembered = (await call("POST", "login/code", same, { code: api.code, remember: true })).headers.get("set-cookie")!;
     expect(remembered).toContain(`Max-Age=${30 * 24 * 3600}`);
-    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false, device: "جهاز" });
+    expect(calls.find((c) => c.path.endsWith("login/code"))!.body).toEqual({ code: api.code, remember: false, device: "جهاز", client: "unknown" });
   });
   it("wrong code → 401, then throttled per client before reaching the API again", async () => {
     for (let i = 0; i < 5; i++) expect((await call("POST", "login/code", same, { code: "nope" })).status).toBe(401);
@@ -151,7 +152,7 @@ describe("unified owner sign-in: Face ID (passkeys)", () => {
     const v = await call("POST", "passkeys/login/verify", { ...same, cookie: "safwan_wa=sealed.challenge.v1" }, { credential: { id: "x" }, remember: true });
     expect(v.status).toBe(200);
     const cookies = v.headers.getSetCookie();
-    expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE}=${SECRET};`) && c.includes("Max-Age=2592000"))).toBe(true);
+    expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE}=${tagged(SECRET)};`) && c.includes("Max-Age=2592000"))).toBe(true);
     expect(cookies.some((c) => c.startsWith("safwan_wa=;") && c.includes("Max-Age=0"))).toBe(true);
   });
   it("a failed verify still clears the challenge (single use)", async () => {
@@ -160,14 +161,14 @@ describe("unified owner sign-in: Face ID (passkeys)", () => {
     expect(v.headers.get("set-cookie")).toMatch(/^safwan_wa=; .*Max-Age=0/);
   });
   it("register needs a signed-in owner; disabled while the API has no public origin", async () => {
-    expect((await call("POST", "passkeys/register/options", same, {})).status).toBe(401);
-    expect((await call("POST", "passkeys/register/options", withSession(), {})).status).toBe(200);
+    expect((await call("POST", "passkeys/register/options", same, { code: api.code })).status).toBe(401);
+    expect((await call("POST", "passkeys/register/options", withSession(), { code: api.code })).status).toBe(200);
     const r = await call("POST", "passkeys/register/verify", withSession(SECRET, "; safwan_wa=sealed.challenge.v1"), { credential: { id: "x" }, name: "  آيفون صفوان  " });
     expect(r.status).toBe(200);
     expect(calls.find((c) => c.path.endsWith("register/verify"))!.body).toMatchObject({ session: SECRET, challenge: "sealed.challenge.v1", name: "آيفون صفوان" });
     resetOwnerSessionCache(); api.config = { owner_auth: true, passkeys: false };
     expect((await call("POST", "passkeys/login/options", same, {})).status).toBe(503);
-    expect((await call("POST", "passkeys/register/options", withSession(), {})).status).toBe(503);
+    expect((await call("POST", "passkeys/register/options", withSession(), { code: api.code })).status).toBe(503);
   });
 });
 
@@ -195,7 +196,7 @@ describe("one session opens every door", () => {
   it("the legacy unlock form signs in to the unified session when it is on (one code for the app)", async () => {
     const r = await basht("POST", "session", same, { code: api.code });
     expect(r.status).toBe(200);
-    expect(r.headers.get("set-cookie")).toMatch(new RegExp(`^${SESSION_COOKIE}=${SECRET};`));
+    expect(r.headers.get("set-cookie")).toMatch(new RegExp(`^${SESSION_COOKIE}=${tagged(SECRET)};`));
     expect(onlyAuthPaths()).toContain("login/code");
   });
 });
