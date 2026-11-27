@@ -4,7 +4,7 @@ import "server-only";
  *
  *   GET  status                       → { owner_auth, passkeys, authenticated }
  *   POST login/code {code, remember}  → owner code → session cookie
- *   POST logout · POST logout-all     → this device · every device
+ *   POST logout · POST logout-all     → this device · every device (DELETE also accepted: the doors' legacy "lock")
  *   GET  passkeys · POST passkeys/delete {id}
  *   POST passkeys/register/options|verify   (signed-in owner adds Face ID on this device)
  *   POST passkeys/login/options|verify      (Face ID → the same owner session)
@@ -14,6 +14,8 @@ import "server-only";
  */
 import { callBackend as realCallBackend } from "./backend";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
+import { COOKIE_NAME as AI_COOKIE, COOKIE_PATH as AI_PATH } from "./assistant-chat-gate";
+import { COOKIE_NAME as BC_COOKIE, COOKIE_PATH as BC_PATH } from "./browser-chat/gate";
 import { clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerSessionAccount, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
 
 export type Deps = OwnerDeps;
@@ -34,6 +36,9 @@ const json = (body: unknown, status = 200, cookies: string[] = []) => {
 const err = (code: string, status: number, cookies: string[] = []) => json({ error: code }, status, cookies);
 const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 const secure = (deps: Deps) => deps.env.NODE_ENV === "production";
+// the per-door cookies of the transition: expired on sign-out too (they no longer open anything while unified sign-in is on)
+const LEGACY_COOKIES: [string, string][] = [[AI_COOKIE, AI_PATH], [BC_COOKIE, BC_PATH], ["safwan_basht", "/api/basht"]];
+const expireLegacy = (deps: Deps) => LEGACY_COOKIES.map(([n, p]) => `${n}=; Path=${p}; Max-Age=0; HttpOnly; SameSite=Strict${secure(deps) ? "; Secure" : ""}`);
 const challengeCookie = (v: string, deps: Deps, maxAge = 300) => `${CHALLENGE_COOKIE}=${v}; Path=${CHALLENGE_PATH}; Max-Age=${maxAge}; HttpOnly; SameSite=Strict${secure(deps) ? "; Secure" : ""}`;
 
 function readCookie(req: Request, name: string): string | undefined {
@@ -102,10 +107,15 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     if (!r.ok) { if (r.res.status === 401) fails.fail(ip, now); return r.res; }
     return signedIn(r.data, remember);
   }
-  if (req.method === "POST" && (route === "logout" || route === "logout-all")) {
-    if (session) { await api(route, { session }); }
+  if ((req.method === "POST" || req.method === "DELETE") && (route === "logout" || route === "logout-all")) {
+    if (session) {
+      const r = await api(route, { session });
+      // a session the API no longer knows is already signed out; any other failure is reported and the cookie is KEPT,
+      // so the owner can retry — never "signed out everywhere" while other devices are still in
+      if (!r.ok && r.res.status !== 401) return r.res;
+    }
     forgetSession(route === "logout" ? session : undefined); // logout-all: drop every cached session on this instance too
-    return json({ authenticated: false }, 200, [clearSessionCookieHeader(secure(deps))]);
+    return json({ authenticated: false }, 200, [clearSessionCookieHeader(secure(deps)), ...expireLegacy(deps)]);
   }
 
   // Face ID sign-in: no session yet

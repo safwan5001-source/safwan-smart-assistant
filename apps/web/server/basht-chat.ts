@@ -81,6 +81,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   if (route === "session") {
     // A1: with the unified login on, this unlock signs in to the WHOLE app (one owner session, one code)
     if (ownerAuthOn(deps.env) && req.method === "POST") return handleAuth(req, ["login", "code"], deps);
+    if (ownerAuthOn(deps.env) && req.method === "DELETE") return handleAuth(req, ["logout"], deps); // "lock" = sign out of the app on this device
     if (!gate) return err("disabled", 503); // the legacy code unlock exists only while that code is configured
     if (!sameOrigin(req)) return err("forbidden", 403);
     const secure = deps.env.NODE_ENV === "production";
