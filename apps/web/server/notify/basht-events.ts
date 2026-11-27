@@ -144,11 +144,13 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
   return rep;
 }
 
-type Backend = (o: { path: string; method: "POST"; body: unknown; timeoutMs: number }) => Promise<{ kind: string; status?: number; json?: unknown }>;
+type Backend = (o: { path: string; method: "POST"; body: unknown; timeoutMs: number; maxBytes?: number }) => Promise<{ kind: string; status?: number; json?: unknown }>;
+/** Feed pages are bounded by the API (200 records, 256 KiB of events); read them with the backend's 512 KiB ceiling, never the 64 KiB default. */
+export const FEED_MAX_BYTES = 512 * 1024;
 /** The feed through the API (HMAC), as the notify loop uses it. "unconfigured" never counts as offline. */
 export function apiFeed(callBackend: Backend): Feed {
   return async (after) => {
-    const r = await callBackend({ path: "/internal/v1/basht/events", method: "POST", body: { after }, timeoutMs: 15_000 });
+    const r = await callBackend({ path: "/internal/v1/basht/events", method: "POST", body: { after }, timeoutMs: 15_000, maxBytes: FEED_MAX_BYTES });
     // no API / a signature the API refuses: a set-up problem, never reported to the owner as "BASHT is offline"
     if (r.kind === "unconfigured" || r.kind === "rejected") return { kind: "unconfigured" };
     if (r.kind !== "ok" || r.status !== 200) return { kind: "offline" }; // API or engine unreachable / 5xx / engine 502

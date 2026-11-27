@@ -216,6 +216,19 @@ def test_events_answer_says_how_far_it_reached_so_the_caller_can_page(client, en
     assert j["next_after"] == 300 and j["more"] is False
 
 
+def test_events_answer_is_bounded_in_bytes_and_pages_the_rest(client, engine):
+    """Codex (PR #62): 200 long approval events must not exceed the web's response cap; the rest comes on the next page."""
+    _, replies = engine
+    long = dict(APPROVAL, summary="أ" * 300, title="ب" * 120, warning="ت" * 200)
+    many = [{"id": i, "at": 1, "type": "approval.requested", "approval": dict(long, id=f"{AID[:-4]}{i:04d}")} for i in range(1, 201)]
+    replies["/events"] = {"ok": True, "epoch": "24fd106d565a", "latest": 200, "events": many, "link": LINK}
+    r = call(client, "POST", "/internal/v1/basht/events", {"after": 0})
+    j = r.json()
+    assert len(r.content) < 512 * 1024
+    assert 0 < len(j["events"]) < 200 and j["more"] is True
+    assert j["next_after"] == j["events"][-1]["id"]  # the cursor stops at the last record actually returned
+
+
 def test_unconfigured_engine_is_503(client, engine, monkeypatch):
     monkeypatch.delenv("BASHT_APP_TOKEN")
     assert call(client, "GET", "/internal/v1/basht/approvals").status_code == 503

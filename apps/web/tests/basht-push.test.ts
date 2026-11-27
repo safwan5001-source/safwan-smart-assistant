@@ -146,7 +146,8 @@ describe("B4: polling the feed into deliveries", () => {
       .toMatchObject({ nextAfter: 4, more: true });
     let asked: unknown = null;
     await apiFeed(async (o) => { asked = o; return { kind: "unconfigured" }; })(42);
-    expect(asked).toEqual({ path: "/internal/v1/basht/events", method: "POST", body: { after: 42 }, timeoutMs: 15_000 });
+    // Codex (PR #62): a full feed page can exceed callBackend's 64 KiB default — read it with the 512 KiB ceiling
+    expect(asked).toEqual({ path: "/internal/v1/basht/events", method: "POST", body: { after: 42 }, timeoutMs: 15_000, maxBytes: 512 * 1024 });
   });
 
   it("goes out through the existing dispatcher: TTL, urgency, quiet hours, and nothing when push is not configured", async () => {
