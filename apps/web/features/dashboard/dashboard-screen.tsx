@@ -18,6 +18,8 @@ import { dueState, formatDay, formatTime, formatToday, localDateKey } from "@/li
 import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-activity";
 import { BRAND } from "@/lib/brand";
 import type { Task } from "@/lib/domain";
+import { HQ_ENABLED } from "@/lib/hq/flag";
+import HqEntryCard from "@/features/hq/hq-entry-card";
 
 const greeting = (h: number) => (h < 12 ? "صباح الخير" : "مساء الخير");
 const QUICK: { href?: string; search?: true; icon: IconName; label: string; tone?: "ai" | "gold" }[] = [
@@ -112,6 +114,8 @@ export default function DashboardScreen() {
             : <Link key={q.label} href={q.href!}>{body}</Link>;
         })}
       </nav>
+
+      {HQ_ENABLED && <HqEntryCard />}
 
       <section aria-labelledby="today-h" className="stack">
         <div className="section-head"><h2 id="today-h"><Icon name="calendar" size={18} />ملخص اليوم</h2></div>

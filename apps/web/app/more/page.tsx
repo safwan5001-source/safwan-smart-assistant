@@ -4,10 +4,13 @@ import Icon from "@/components/icon";
 import { BrandMark, Ornament, PageHeader } from "@/components/ui";
 import { NAV } from "@/lib/nav";
 import { BRAND } from "@/lib/brand";
+import { HQ_ENABLED } from "@/lib/hq/flag";
 import MoreSearchButton from "./search-button";
 
 export const metadata: Metadata = { title: "المزيد" };
 const GROUPS: { title: string; hrefs: string[] }[] = [
+  // with the HQ tab on, الملفات leaves the tab bar and lives here (same route, same on-device library)
+  ...(HQ_ENABLED ? [{ title: "المكتبة", hrefs: ["/files"] }] : []),
   { title: "المتابعة", hrefs: ["/reminders", "/notifications"] },
   { title: "باشت", hrefs: ["/calls", "/integrations"] },
   { title: "التطبيق", hrefs: ["/settings"] },

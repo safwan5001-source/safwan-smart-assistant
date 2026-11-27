@@ -6,13 +6,12 @@ import Icon from "./icon";
 import { AgentOrb, BrandLockup, BrandMark, Ornament } from "./ui";
 import SearchDialog from "./search-dialog";
 import NotificationBell from "./notification-bell";
-import { NAV, TABS, isActive, titleFor } from "@/lib/nav";
+import { MORE_PATHS, NAV, TABS, isActive, titleFor } from "@/lib/nav";
 import { BRAND } from "@/lib/brand";
 import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-activity";
 import { useAssistant } from "./assistant-context";
 
 export const OPEN_SEARCH_EVENT = "safwan:open-search";
-const MORE_PATHS = ["/more", "/integrations", "/calls", "/settings", "/reminders", "/notifications"];
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
