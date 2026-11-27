@@ -29,6 +29,6 @@ describe("an older page for an abandoned history view is dropped", () => {
     expect(hook).toMatch(/const backToLatest = useCallback\(\(\) => \{ setFocusId\(null\); refresh\(\); \}/);
     expect(body(hook, /const newConversation = useCallback/)).toMatch(/await bashtClient\.newConversation\(\);\s*viewGen\.current\+\+;/);
     expect(body(hook, /const jumpTo = useCallback/)).toMatch(/viewGen\.current\+\+;/);
-    expect(hook).toMatch(/viewGen\.current\+\+;\s*setMessages\(null\); setOlderRows\(\[\]\)/);
+    expect(hook).toMatch(/viewGen\.current\+\+;\s*windowedRef\.current = false;\s*setMessages\(null\); setOlderRows\(\[\]\)/);
   });
 });
