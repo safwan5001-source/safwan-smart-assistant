@@ -247,7 +247,8 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const page = await bashtClient.historyPage(k, cursor);
       // the view it belonged to was left meanwhile, or its cursor was replaced (a refresh, a newer page): dropped
       if (keyRef.current !== k || view !== viewGen.current || !sameOlder(cursor, olderRef.current)) return;
-      const firstShown = (olderRows[0] ?? messages?.[0])?.id ?? null;
+      // the first row drawn with an anchor (a «محادثة جديدة» divider has none: after a reset the newest page starts with one)
+      const firstShown = [...olderRows, ...(messages ?? [])].find((m) => m.id && m.kind !== "reset")?.id ?? null;
       setOlderRows((o) => mergeRows(page.messages, o));
       setOlder(olderOf(page));
       if (firstShown) setFocusId(firstShown);

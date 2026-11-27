@@ -15,13 +15,13 @@ describe("chat log scroll: a focus request is honoured once", () => {
     nextScroll(s, "a", all, false);
     expect(nextScroll(s, "a", all, true)).toEqual({ to: "bottom" });
   });
-  it("waits for a focused message that is not on screen yet, without jumping to the end meanwhile", () => {
+  // Lab (integration e2e): after «محادثة جديدة» the first row was the reset divider (no anchor); a focus that never appears must
+  // not hold the log: it is dropped and following works as without a focus.
+  it("drops a focus whose row is not on screen instead of holding the log", () => {
     const s = newFocusScroll();
-    let shown = false;
-    expect(nextScroll(s, "a", () => shown, true)).toBeNull();
-    shown = true;
-    expect(nextScroll(s, "a", () => shown, true)).toEqual({ to: "focus", id: "a" });
-    expect(nextScroll(s, "a", () => shown, false)).toBeNull();
+    expect(nextScroll(s, "a", () => false, true)).toEqual({ to: "bottom" });
+    expect(nextScroll(s, "a", () => true, false)).toBeNull(); // not re-tried later
+    expect(nextScroll(s, "a", () => true, true)).toEqual({ to: "bottom" });
   });
   it("a different focus request scrolls again", () => {
     const s = newFocusScroll();

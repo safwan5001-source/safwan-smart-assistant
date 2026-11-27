@@ -96,3 +96,12 @@ describe("a later search-hit pick supersedes an earlier window request", () => {
     expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current \|\| pick !== jumpGen\.current\) return;/);
   });
 });
+
+// Lab (integration e2e): after «محادثة جديدة» the newest page starts with the reset divider, which has no anchor; «عرض الرسائل
+// السابقة» focused it, the focus never resolved and the reading position was lost.
+describe("«عرض الرسائل السابقة» keeps the reading position on a row that has an anchor", () => {
+  it("picks the first row with an id that is not a reset divider", () => {
+    const fn = body(hook, /const loadEarlier = useCallback\(async \(\) => \{/);
+    expect(fn).toMatch(/const firstShown = \[\.\.\.olderRows, \.\.\.\(messages \?\? \[\]\)\]\.find\(\(m\) => m\.id && m\.kind !== "reset"\)\?\.id \?\? null;/);
+  });
+});
