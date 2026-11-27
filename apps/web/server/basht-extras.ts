@@ -112,7 +112,9 @@ async function fetchMedia(deps: ExtrasCtx["deps"], body: { key: string; msg: str
       "Content-Type": type, "Content-Length": String(total),
       // <img> ignores the disposition; a direct open downloads. The bytes can never run as a page of this origin.
       "Content-Disposition": `attachment; filename*=UTF-8''${disp.replace(/[^A-Za-z0-9%._~-]/g, "_").slice(0, 400)}`,
-      "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox", "Cache-Control": "private, max-age=600",
+      "X-Content-Type-Options": "nosniff", "Content-Security-Policy": "default-src 'none'; sandbox",
+      // never in the HTTP cache: a private file must not outlive the owner session (sign-out clears cookies and stores, not the cache)
+      "Cache-Control": "no-store",
       "Cross-Origin-Resource-Policy": "same-origin",
     } });
   } catch { return err("unavailable", 503); }
