@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import Icon from "@/components/icon";
 import { Badge, Notice, VoiceOrb } from "@/components/ui";
 import { VOICE_TEXT, voiceState, type VoiceState } from "@/lib/voice-state";
@@ -141,17 +141,18 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
     phase === "idle" ? { label: failed ? "ابدأ من جديد" : "ابدأ المحادثة", icon: "mic", run: start, aria: "ابدأ المحادثة الصوتية (يبدأ التسجيل)" }
       : phase === "starting" ? { label: "إلغاء", icon: "close", run: () => s.end(), aria: "إلغاء فتح الميكروفون" }
         : phase === "listening" ? { label: "أنهِ دورك", icon: "send", run: () => rec.stop(), aria: "أنهِ دورك الآن وأرسل كلامك" }
-          : phase === "muted" ? { label: "ألغِ الكتم", icon: "mic", run: toggleMic, aria: "ألغِ كتم الميكروفون وتحدّث" }
-            : phase === "speaking" ? { label: "أوقفه وتحدّث", icon: "stop", run: () => s.interrupt(), aria: "أوقف رد باشت وتحدّث" }
-              : phase === "blocked" ? { label: "شغّل الصوت", icon: "play", run: () => s.resumePlayback(), aria: "شغّل صوت باشت" }
-                : step === "voice" ? { label: "تخطَّ الصوت", icon: "stop", run: () => s.interrupt(), aria: "تخطَّ صوت هذا الرد وتحدّث" }
+          : phase === "muted" ? { label: "ألغِ الكتم", icon: "mic", run: toggleMic, aria: "ألغِ الكتم وتحدّث" }
+            : phase === "speaking" ? { label: "أوقفه وتحدّث", icon: "stop", run: () => s.interrupt(), aria: "أوقفه وتحدّث (يوقف رد باشت)" }
+              : phase === "blocked" ? { label: "شغّل الصوت", icon: "play", run: () => s.resumePlayback(), aria: "شغّل الصوت (رد باشت نفسه)" }
+                : step === "voice" ? { label: "تخطَّ الصوت", icon: "stop", run: () => s.interrupt(), aria: "تخطَّ الصوت وتحدّث" }
                   : { label: "يفكّر…", icon: "hourglass", aria: "باشت يفكّر" };
   const t = failed ? { title: "توقّفت المحادثة", sub: error } : textOf(phase, step);
   const active = phase !== "idle";
 
   return (
     <div className="vs" data-phase={failed ? "error" : phase} data-step={step || undefined}>
-      <VoiceTop title="محادثة صوتية مع باشت" onClose={end} closeLabel={active ? "إنهاء المحادثة الصوتية وإغلاقها" : "إغلاق"} />
+      <VoiceTop title="محادثة صوتية مع باشت" onClose={end} closeLabel={active ? "إنهاء المحادثة الصوتية وإغلاقها" : "إغلاق"}
+        extra={<button type="button" className="icon-btn vs-fx" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} aria-label={fx ? "إيقاف المؤثرات الصوتية" : "تشغيل المؤثرات الصوتية عند بدء الاستماع وانتهائه"} title="مؤثرات صوتية"><Icon name="wave" size={20} /></button>} />
       <div className="vs-stage">
         <VoiceFace phase={phase} orb={orbOf(phase, failed)} />
         <div className="vs-text">
@@ -182,9 +183,6 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
         <button type="button" className="btn btn-ghost vs-tr" onClick={() => setShowTurns((v) => !v)} aria-expanded={showTurns} aria-controls="vs-turns" disabled={!turns.length}>
           <Icon name="doc" size={18} />النص{turns.length ? <bdi className="num"> ({turns.length})</bdi> : null}
         </button>
-        <button type="button" className="btn btn-ghost vs-fx" onClick={() => voiceFxStore.set(!fx)} aria-pressed={fx} title="مؤثرات صوتية عند بدء الاستماع وانتهائه">
-          <Icon name="wave" size={18} />{fx ? "المؤثرات: تعمل" : "المؤثرات: مطفأة"}
-        </button>
       </div>
       {showTurns && (
         <ol id="vs-turns" className="vs-turns" aria-label="نص المحادثة الصوتية">
@@ -199,16 +197,16 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
       {(rec.error && !failed) && <Notice tone="danger" role="alert">{rec.error}</Notice>}
       <footer className="vs-foot">
         <strong>{TURN_NOTE}</strong>
-        <small>دورك ثم دور باشت: التفريغ والنطق في محرك باشت بإعداداته (صوت باشت ونطقه). لا يُحفظ الصوت؛ النص يبقى في المحادثة.</small>
+        <small>دورك ثم دور باشت، بصوت باشت المعتمد في محركه. لا يُحفظ الصوت؛ النص يبقى في المحادثة.</small>
       </footer>
     </div>
   );
 }
 
 /** The centred BASHT face (the official mark — never redrawn) with a restrained wave driven by the real state. */
-function VoiceFace({ phase, orb }: { phase: LivePhase | "dictation"; orb: VoiceState }) {
+function VoiceFace({ phase, orb }: { phase: LivePhase; orb: VoiceState }) {
   const level = useInputLevel();
-  const v = phase === "listening" || phase === "dictation" ? Math.min(1, level * 7) : 0;
+  const v = phase === "listening" ? Math.min(1, Math.sqrt(level) * 2.4) : 0; // perceptual: quiet speech still moves
   return (
     <div className="vs-face" style={{ "--lvl": v.toFixed(3) } as CSSProperties}>
       <span className="vs-ring" aria-hidden="true" /><span className="vs-ring r2" aria-hidden="true" />
@@ -218,7 +216,7 @@ function VoiceFace({ phase, orb }: { phase: LivePhase | "dictation"; orb: VoiceS
   );
 }
 const SHAPE = [0.35, 0.6, 0.85, 1, 0.75, 1, 0.85, 0.6, 0.35];
-function VoiceWave({ phase, level }: { phase: LivePhase | "dictation"; level: number }) {
+function VoiceWave({ phase, level }: { phase: LivePhase; level: number }) {
   const progress = usePlayerProgress();
   return (
     <div className="vs-wave" aria-hidden="true" data-phase={phase}>
@@ -228,10 +226,11 @@ function VoiceWave({ phase, level }: { phase: LivePhase | "dictation"; level: nu
   );
 }
 
-function VoiceTop({ title, onClose, closeLabel, badge }: { title: string; onClose: () => void; closeLabel: string; badge?: string }) {
+function VoiceTop({ title, onClose, closeLabel, badge, extra }: { title: string; onClose: () => void; closeLabel: string; badge?: string; extra?: ReactNode }) {
   return (
     <div className="vs-top">
       <span className="grow vs-title"><strong>{title}</strong>{badge && <Badge tone="warn">{badge}</Badge>}</span>
+      {extra}
       <button type="button" className="icon-btn vs-close" onClick={onClose} aria-label={closeLabel}><Icon name="close" size={22} /></button>
     </div>
   );

@@ -59,9 +59,13 @@ def sign_headers(method: str, target: str, body: bytes | None = None, *, env: Ma
 def engine_request(base: str, path: str, *, method: str, data: bytes | None, headers: dict[str, str],
                    env: Mapping[str, str] = os.environ) -> Request:
     """THE way to build a request to the engine's app bridge: URL, headers and (when configured) the signature in one place.
-    `path` is appended to `{base}/app/v1` exactly as given (query string included) and that exact string is what is signed."""
-    target = f"{API_PREFIX}{path}"
-    return Request(f"{base}{target}", data=data, method=method, headers={**headers, **sign_headers(method, target, data, env=env)})
+    `path` is appended to `{base}/app/v1` exactly as given (query string included); what is signed is the built request's own target."""
+    req = Request(f"{base}{API_PREFIX}{path}", data=data, method=method, headers=headers)
+    # sign the request-target actually put on the wire (path + query of the constructed URL), so it stays right even if
+    # BASHT_CORE_URL carries a path prefix; never re-derived from `path`
+    for k, v in sign_headers(method, req.selector, data, env=env).items():
+        req.add_header(k, v)
+    return req
 
 
 def ensure_signed(req: Request, env: Mapping[str, str] = os.environ) -> Request:

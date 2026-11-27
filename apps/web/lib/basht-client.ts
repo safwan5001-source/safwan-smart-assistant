@@ -50,6 +50,7 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
   // one code from two routes (voice note 413, media file 413): one text that fits both
   too_large: "الحجم أكبر من الحد المسموح (التسجيل الصوتي حتى 3 دقائق).", unsupported: "نوع الملف غير مدعوم للعرض.",
   not_found: "المحادثة غير متاحة.", bad_request: "طلب غير صالح.", unavailable: "تعذّر الوصول إلى محرك باشت الآن.", network: "انقطع الاتصال بالخادم.",
+  timeout: "تأخّر الرد طويلًا فأُوقف الطلب. أعد المحاولة.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
 
@@ -94,7 +95,20 @@ const errorOf = (body: unknown): BashtError => {
 };
 
 type Fetch = typeof fetch;
-export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
+/** The longest one /speak request may take before the client gives up (a hung request never leaves «يجهّز الصوت…» forever). */
+export const SPEAK_TIMEOUT_MS = 45_000;
+/** An AbortSignal that aborts with `outer` or after `ms`; `timedOut()` tells which. */
+export function linkedSignal(outer: AbortSignal | undefined, ms: number) {
+  const ctl = new AbortController();
+  let timed = false;
+  const onAbort = () => ctl.abort();
+  if (outer?.aborted) ctl.abort(); else outer?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => { timed = true; ctl.abort(); }, ms);
+  return { signal: ctl.signal, timedOut: () => timed, done: () => { clearTimeout(timer); outer?.removeEventListener("abort", onAbort); } };
+}
+
+export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a), opts: { speakTimeoutMs?: number } = {}) {
+  const speakMs = opts.speakTimeoutMs ?? SPEAK_TIMEOUT_MS;
   const call = async <T>(path: string, init?: RequestInit): Promise<T> => {
     let res: Response;
     try { res = await fetchImpl(`/api/basht/${path}`, { credentials: "same-origin", cache: "no-store", ...init }); } catch { throw new BashtError("network"); }
@@ -135,16 +149,20 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     setFast: async (mode: "on" | "off" | "default") => { await call("fast", post({ mode })); },
     /** One chunk (≤ 1500 chars) spoken in BASHT's own voice (the engine's config). Resolves with the audio. */
     async speak(text: string, signal?: AbortSignal): Promise<Blob> {
-      let res: Response;
-      try { res = await fetchImpl("/api/basht/speak", { credentials: "same-origin", cache: "no-store", ...post({ text }), signal }); }
-      catch (e) { if (signal?.aborted) throw e; throw new BashtError("network"); }
-      const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
-      if (res.ok && type.startsWith("audio/")) {
-        try { return await res.blob(); } catch (e) { if (signal?.aborted) throw e; throw new BashtError("network"); }
-      }
-      let body: unknown = null;
-      try { body = await res.json(); } catch { /* not JSON */ }
-      throw errorOf(body);
+      const link = linkedSignal(signal, speakMs);
+      const fail = (e: unknown) => { if (link.timedOut()) return new BashtError("timeout"); if (signal?.aborted) return e; return new BashtError("network"); };
+      try {
+        let res: Response;
+        try { res = await fetchImpl("/api/basht/speak", { credentials: "same-origin", cache: "no-store", ...post({ text }), signal: link.signal }); }
+        catch (e) { throw fail(e); }
+        const type = (res.headers.get("content-type") ?? "").split(";")[0].trim();
+        if (res.ok && type.startsWith("audio/")) {
+          try { return await res.blob(); } catch (e) { throw fail(e); }
+        }
+        let body: unknown = null;
+        try { body = await res.json(); } catch { /* not JSON */ }
+        throw errorOf(body);
+      } finally { link.done(); }
     },
     /** What the engine says about BASHT's voice. Never throws: any failure is `{ speak: "unknown", features: [] }`. */
     async voiceStatus(): Promise<VoiceStatus> {

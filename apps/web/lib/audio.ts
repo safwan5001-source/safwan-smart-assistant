@@ -24,11 +24,19 @@ const browserSession = (): SessionLike | null => {
   catch { return null; }
 };
 
+/**
+ * Who holds BASHT's voice session. Each `enterVoice()` without a token makes a NEW owner (the previous one is superseded);
+ * passing the owner's own token only changes the kind. `leaveVoice(token)` acts only for the current owner, so a «استمع» reply
+ * ending after the live session took over can never drop the live session's "play-and-record".
+ */
+export type VoiceToken = { readonly id: number; readonly ok: boolean };
+
 /** One owner of the page's audio-session type. `get` returns the platform object (null where the API does not exist). */
 export function createAudioSession(get: () => SessionLike | null = browserSession) {
   let tones = 0;
   let saved: string | null = null;
   let voice: VoiceSessionKind | null = null;
+  let owner = 0, seq = 0;
   const api = () => { try { return get(); } catch { return null; } };
   const setType = (t: string): boolean => {
     const s = api();
@@ -52,15 +60,29 @@ export function createAudioSession(get: () => SessionLike | null = browserSessio
     supported: () => api() !== null,
     current: (): string | null => { try { return api()?.type ?? null; } catch { return null; } },
     voiceKind: () => voice,
+    /** true while some voice experience owns the session (alert tones stay quiet then) */
+    voiceActive: () => voice !== null,
+    isOwner: (t: VoiceToken | null | undefined) => !!t && t.id === owner && voice !== null,
     /** "ambient" for one tone; the returned function restores the previous type (idempotent). */
     beginTone,
     async withTone<T>(fn: () => Promise<T> | T): Promise<T> { const release = beginTone(); try { return await fn(); } finally { release(); } },
-    /** BASHT's voice: "playback" (speaker, loud) or "play-and-record" (microphone). Returns false where unsupported. */
-    enterVoice(kind: VoiceSessionKind = "playback"): boolean { voice = kind; return setType(kind); },
-    /** Ends the voice session: back to "auto" (or "ambient" if a tone is still playing). */
-    leaveVoice(): void {
-      if (!voice) return;
-      voice = null;
+    /**
+     * BASHT's voice: "playback" (speaker, loud) or "play-and-record" (microphone). Without `token`: a new owner. With the current
+     * owner's token: the kind changes. With a superseded/released token: nothing changes (`ok: false`).
+     */
+    enterVoice(kind: VoiceSessionKind = "playback", token?: VoiceToken | null): VoiceToken {
+      if (token) {
+        if (token.id !== owner || voice === null) return { id: token.id, ok: false };
+        voice = kind;
+        return { id: owner, ok: setType(kind) };
+      }
+      owner = ++seq; voice = kind;
+      return { id: owner, ok: setType(kind) };
+    },
+    /** Ends the voice session — only for its current owner: back to "auto" (or "ambient" if a tone is still playing). */
+    leaveVoice(token: VoiceToken | null | undefined): void {
+      if (!token || token.id !== owner || !voice) return;
+      voice = null; owner = 0;
       if (tones > 0) setType("ambient"); else setType("auto");
     },
   };
@@ -71,10 +93,18 @@ export const audioSession = (): AudioSession => (sharedSession ??= createAudioSe
 
 /** Runs `fn` (a short tone) with the session "ambient", then restores the previous type. Never throws because of the session. */
 export const withToneSession = <T,>(fn: () => Promise<T> | T): Promise<T> => audioSession().withTone(fn);
-/** Call inside the gesture that starts BASHT's voice (listen, live start, long-press), before unlocking playback. */
-export const enterVoiceSession = (kind: VoiceSessionKind = "playback"): boolean => { try { return audioSession().enterVoice(kind); } catch { return false; } };
-/** Call when the voice experience ends (session over, panel closed). */
-export const leaveVoiceSession = (): void => { try { audioSession().leaveVoice(); } catch { /* best effort */ } };
+const NO_TOKEN: VoiceToken = { id: -1, ok: false };
+/**
+ * Call inside the gesture that starts BASHT's voice (listen, live start, long-press), before unlocking playback. Returns the
+ * owner token; pass it back to change the kind (`enterVoiceSession(kind, token)`) and to `leaveVoiceSession(token)`.
+ */
+export const enterVoiceSession = (kind: VoiceSessionKind = "playback", token?: VoiceToken | null): VoiceToken => {
+  try { return audioSession().enterVoice(kind, token); } catch { return NO_TOKEN; }
+};
+/** Call when that voice experience ends. A superseded token does nothing. */
+export const leaveVoiceSession = (token: VoiceToken | null | undefined): void => { try { audioSession().leaveVoice(token); } catch { /* best effort */ } };
+/** Whether a voice experience owns the audio session right now. */
+export const voiceSessionActive = (): boolean => { try { return audioSession().voiceActive(); } catch { return false; } };
 
 // ── notification tones ────────────────────────────────────────────────────────────────────────────────────────────────
 export type PlayResult = "played" | "blocked" | "error" | "muted" | "unsupported";

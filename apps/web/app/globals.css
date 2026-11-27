@@ -991,18 +991,19 @@ dialog.voice-dialog { position: fixed; inset: 0; margin: 0; inline-size: 100%; b
 dialog.voice-dialog::backdrop { background: rgba(16, 11, 30, .6); }
 dialog[open].voice-dialog .vs { animation: vs-in var(--t-slow) var(--ease); }
 @keyframes vs-in { from { opacity: 0; transform: scale(.985); } }
-.vs { box-sizing: border-box; block-size: 100%; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 14px;
+.vs { box-sizing: border-box; block-size: 100%; overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 12px;
   padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
   background: radial-gradient(130% 62% at 50% 30%, var(--accent-soft), transparent 72%), var(--bg); color: var(--text); text-align: center; }
 .vs-top { display: flex; align-items: center; gap: 8px; text-align: start; }
 .vs-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
-.vs-close { inline-size: 48px; block-size: 48px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); }
-.vs-stage { flex: 1 0 auto; display: grid; align-content: center; justify-items: center; gap: 18px; min-block-size: 300px; }
-.vs-face { --lvl: 0; position: relative; display: grid; place-items: center; inline-size: 232px; block-size: 232px; }
-.vs-face .agent-orb { --s: 136px; }
+.vs-close, .vs-fx { inline-size: 46px; block-size: 46px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border); }
+.vs-fx[aria-pressed="true"] { color: var(--gold-ink); border-color: var(--gold); background: var(--gold-soft); }
+.vs-stage { flex: 1 0 auto; display: grid; align-content: center; justify-items: center; gap: clamp(8px, 2dvh, 18px); }
+.vs-face { --lvl: 0; --face: clamp(150px, 31dvh, 232px); position: relative; display: grid; place-items: center; inline-size: var(--face); block-size: var(--face); }
+.vs-face .agent-orb { --s: calc(var(--face) * .58); }
 .vs-face .agent-orb .brand-mark { width: 76%; height: 76%; }
-.vs-ring { position: absolute; inset: 22px; border-radius: 50%; border: 2px solid var(--accent-border); opacity: .9; transform: scale(calc(1 + var(--lvl) * .2)); transition: transform 110ms linear, border-color var(--t); }
-.vs-ring.r2 { inset: 4px; opacity: .45; border-style: dashed; transform: scale(calc(1 + var(--lvl) * .1)); }
+.vs-ring { position: absolute; inset: 9%; border-radius: 50%; border: 2px solid var(--accent-border); opacity: .9; transform: scale(calc(1 + var(--lvl) * .2)); transition: transform 110ms linear, border-color var(--t); }
+.vs-ring.r2 { inset: 1.5%; opacity: .45; border-style: dashed; transform: scale(calc(1 + var(--lvl) * .1)); }
 .vs[data-phase="listening"] .vs-ring { border-color: var(--ai); }
 .vs[data-phase="speaking"] .vs-ring { border-color: var(--gold); animation: vs-breathe 2.6s ease-in-out infinite; }
 .vs[data-phase="thinking"] .vs-ring.r2, .vs[data-phase="starting"] .vs-ring.r2 { border-color: var(--accent); animation: spin 6s linear infinite; }
@@ -1012,26 +1013,26 @@ dialog[open].voice-dialog .vs { animation: vs-in var(--t-slow) var(--ease); }
 .vs-wave { position: absolute; inset-block-end: -8px; inset-inline: 0; display: grid; justify-items: center; gap: 6px; }
 .vs-bars { display: inline-flex; align-items: center; gap: 4px; block-size: 36px; }
 .vs-bars i { inline-size: 4px; block-size: var(--h, 4px); border-radius: 4px; background: var(--border-strong); transition: block-size 90ms linear; }
-.vs-wave[data-phase="listening"] .vs-bars i, .vs-wave[data-phase="dictation"] .vs-bars i { background: var(--ai); }
+.vs-wave[data-phase="listening"] .vs-bars i { background: var(--ai); }
 .vs-wave[data-phase="speaking"] .vs-bars i { background: var(--gold); block-size: 18px; transform: scaleY(calc(.3 + var(--s) * .5)); animation: vs-talk 1.1s ease-in-out infinite alternate; }
 .vs-wave[data-phase="speaking"] .vs-bars i:nth-child(2n) { animation-delay: -.35s; } .vs-wave[data-phase="speaking"] .vs-bars i:nth-child(3n) { animation-delay: -.7s; }
 @keyframes vs-talk { to { transform: scaleY(calc(.45 + var(--s) * .55)); } }
 .vs-progress { display: block; inline-size: 120px; block-size: 3px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
 .vs-progress span { display: block; block-size: 100%; background: var(--gold); transition: inline-size .25s linear; }
 .vs-text { display: grid; justify-items: center; gap: 6px; max-inline-size: 38ch; }
-.vs-label { font-size: 26px; line-height: 1.35; font-weight: 700; }
-.vs-sub { font-size: 15px; color: var(--muted); min-block-size: 3.2em; }
+.vs-label { font-size: clamp(21px, 3.6dvh, 26px); line-height: 1.35; font-weight: 700; }
+.vs-sub { font-size: 15px; line-height: 1.6; color: var(--muted); }
 .vs[data-phase="error"] .vs-sub { color: var(--danger); }
 .rec-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; border-radius: 99px; background: var(--danger-soft); color: var(--danger); font-weight: 700; font-size: 13px; }
 .vs-flag { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
 .vs-note-line { font-size: 13px; color: var(--warn); }
 .vs-controls { display: flex; align-items: flex-start; justify-content: center; gap: clamp(18px, 7vw, 36px); }
 .vs-side { display: grid; justify-items: center; gap: 4px; min-inline-size: 64px; color: var(--text); font-size: 12px; font-weight: 600; }
-.vs-side svg { box-sizing: content-box; padding: 16px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-sm); }
+.vs-side svg { box-sizing: content-box; padding: 15px; border-radius: 50%; background: var(--surface); border: 1px solid var(--border-strong); box-shadow: var(--shadow-sm); }
 .vs-side[aria-pressed="true"] svg { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
 .vs-side:disabled { opacity: .45; }
 .vs-main-wrap { display: grid; justify-items: center; gap: 6px; }
-.vs-main { display: grid; place-items: center; inline-size: 88px; block-size: 88px; border-radius: 50%; background: var(--grad-brand); color: #fff; box-shadow: 0 18px 34px -14px rgba(76, 29, 149, .8), inset 0 1px 0 rgba(255, 255, 255, .25); transition: transform .12s, filter var(--t-fast); }
+.vs-main { display: grid; place-items: center; inline-size: 84px; block-size: 84px; border-radius: 50%; background: var(--grad-brand); color: #fff; box-shadow: 0 18px 34px -14px rgba(76, 29, 149, .8), inset 0 1px 0 rgba(255, 255, 255, .25); transition: transform .12s, filter var(--t-fast); }
 .vs-main:active:not(:disabled) { transform: scale(.94); }
 .vs-main[data-kind="stop"] { background: var(--brand-crimson); box-shadow: 0 18px 34px -14px rgba(217, 27, 56, .7); }
 .vs-main:disabled { opacity: .55; filter: saturate(.6); }
@@ -1039,7 +1040,7 @@ dialog[open].voice-dialog .vs { animation: vs-in var(--t-slow) var(--ease); }
 .vs-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .vs-end { min-block-size: 48px; min-inline-size: 168px; color: var(--danger); border-color: var(--danger); background: var(--danger-soft); }
 .vs-end:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger); filter: brightness(1.04); }
-.vs-tr, .vs-fx { min-block-size: 44px; font-size: 14px; color: var(--muted); }
+.vs-tr { min-block-size: 48px; font-size: 14px; color: var(--muted); }
 .vs-turns { display: grid; gap: 8px; max-block-size: 32dvh; overflow-y: auto; padding: 12px; border-radius: var(--radius-lg); background: var(--surface); border: 1px solid var(--border); text-align: start; font-size: 14.5px; }
 .vs-turns li { display: grid; gap: 2px; padding-block-end: 8px; border-block-end: 1px solid var(--border); }
 .vs-turns li:last-child { border: 0; padding: 0; }

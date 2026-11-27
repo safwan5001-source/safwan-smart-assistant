@@ -1,6 +1,7 @@
 """BASHT voice: failure reasons carried (allowlisted) from the engine to the BFF, and GET /internal/v1/basht/voice-status."""
 import io
 import json
+from pathlib import Path
 import time
 from urllib.error import HTTPError, URLError
 
@@ -214,3 +215,37 @@ def test_voice_status_is_cached_for_30_seconds_failures_only_briefly(client, eng
     assert call(client, "GET", "/internal/v1/basht/voice-status").json()["speak"] == "unknown" and len(calls) == 3
     t[0] += 5
     assert call(client, "GET", "/internal/v1/basht/voice-status").json()["speak"] == "ready" and len(calls) == 4
+
+
+# ── shared contract with the engine, and UTF-16 length ───────────────────────────────────────────────────────────────────────────
+CONTRACT = json.loads((Path(__file__).parent / "fixtures" / "voice-contract.json").read_text())
+
+
+def test_allowlists_equal_the_shared_voice_contract():
+    assert list(bc.VOICE_REASONS) == CONTRACT["reasons"]
+    assert list(bc.VOICE_FEATURES) == CONTRACT["features"]
+    assert list(bc.VOICE_SPEAK_STATES) == CONTRACT["speakStates"]
+
+
+def test_every_contract_reason_and_feature_passes_through_voice_status_and_unknown_tokens_do_not(client, engine):
+    _, replies = engine
+    replies["/status"] = {"voice": {"speak": "degraded", "reason": CONTRACT["reasons"][-1]}, "features": [*CONTRACT["features"], "x.y"]}
+    assert call(client, "GET", "/internal/v1/basht/voice-status").json() == {"speak": "degraded", "reason": "config_unreadable", "features": CONTRACT["features"]}
+    for reason in CONTRACT["reasons"]:
+        bc.reset_limits()
+        replies["/speak"] = _err(503, error="voice_unavailable", reason=reason)
+        assert call(client, "POST", "/internal/v1/basht/speak", {"text": "x"}).json()["detail"] == {"code": "voice_unavailable", "reason": reason}
+    replies["/speak"] = _err(503, error="voice_unavailable", reason="not_in_contract")
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "x"}).json()["detail"] == {"code": "voice_unavailable"}
+
+
+def test_speak_length_counts_utf16_code_units_like_the_engine(client, engine):
+    calls, replies = engine
+    replies["/speak"] = (SPEECH, "audio/mpeg")
+    assert bc.utf16_len("😀") == 2 and bc.utf16_len("مرحبا") == 5
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "😀" * 750}).status_code == 200      # 1500 units
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "😀" * 751}).status_code == 422      # 1502 units, only 751 code points
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "😀" * 700 + "a" * 101}).status_code == 422  # 1501 units
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "ب" * 1500}).status_code == 200
+    assert call(client, "POST", "/internal/v1/basht/speak", {"text": "ب" * 1501}).status_code == 422
+    assert len(calls) == 2

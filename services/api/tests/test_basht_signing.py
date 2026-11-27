@@ -147,3 +147,14 @@ def test_the_seam_signs_a_bridge_request_that_was_built_without_the_helper(monke
 def test_custom_env_is_honoured_by_call(monkeypatch, wire):
     bc._call("POST", "/send", {"message": "x"}, env={"BASHT_CORE_URL": URL, "BASHT_APP_TOKEN": TOKEN, bs.ENV_VAR: PREVIOUS})
     assert _hdrs(wire[0])["x-basht-signature"].startswith("v1=")
+
+
+def test_the_signed_target_is_the_one_on_the_wire_even_with_a_path_prefixed_base_url():
+    env = {bs.ENV_VAR: CURRENT}
+    req = bs.engine_request(URL + "/svc", "/history?key=agent%3Amain&limit=5", method="GET", data=None, headers={}, env=env)
+    h = _hdrs(req)
+    assert req.selector == "/svc/app/v1/history?key=agent%3Amain&limit=5"
+    expect = bs.sign_headers("GET", req.selector, None, env=env, now=lambda: int(h["x-basht-timestamp"]), nonce=h["x-basht-nonce"])
+    assert h["x-basht-signature"] == expect["X-Basht-Signature"]
+    plain = bs.engine_request(URL, "/send", method="POST", data=b"{}", headers={}, env=env)
+    assert plain.selector == "/app/v1/send"

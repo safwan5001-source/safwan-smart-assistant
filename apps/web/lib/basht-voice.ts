@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { bashtClient, BashtError, bashtErrorText, voiceReasonText, type VoiceReason } from "./basht-client";
-import { enterVoiceSession } from "./audio";
+import { enterVoiceSession, type VoiceToken } from "./audio";
 import { audioContext, closeAudioContext, primeAudioContext, resumeAudioContext, suspendAudioContext } from "./audio-context";
 import { speakableText } from "./speakable";
 import { isDurableVoiceFailure } from "./voice-status";
@@ -175,6 +175,7 @@ export const PLAYER_ERRORS: Record<string, string> = {
   stalled: "توقّف الصوت ولم يتقدّم. اضغط «أعد المحاولة».",
   decode: "تعذّر تشغيل ملف الصوت على هذا الجهاز.",
   network: "انقطع الاتصال أثناء تجهيز الصوت. اضغط «أعد المحاولة».",
+  timeout: "تأخّر تجهيز صوت باشت طويلًا فأُوقف الطلب. اضغط «أعد المحاولة».",
   playback: "توقّف تشغيل الصوت على هذا الجهاز.",
 };
 const IDLE: PlayerState = { id: null, phase: "idle", error: "", code: "", errorKind: "", errorReason: "", canResume: false };
@@ -370,6 +371,7 @@ function classify(e: unknown): { kind: PlayerErrorKind; code: string; reason?: V
   if (e instanceof BashtError) {
     if (e.code === "voice_unavailable") return { kind: "unavailable", code: "voice_unavailable", reason: e.reason };
     if (e.code === "network") return { kind: "network", code: "network" };
+    if (e.code === "timeout") return { kind: "network", code: "timeout" };
     if (e.code === "unauthorized") return { kind: "unauthorized", code: "unauthorized" };
     return { kind: "other", code: e.code };
   }
@@ -399,7 +401,10 @@ export function usePlayerProgress(): number {
 
 // ── recording ───────────────────────────────────────────────────────────────────────────────────────────────────────────
 export type RecordEnd = "stop" | "cancel" | "silence" | "no_speech" | "limit" | "error";
-export type RecordResult = { audio: Blob | null; ended: RecordEnd; ms: number };
+/** `handsFree`: the input level ended the turn by itself; false: the owner has to tap (no level probe). */
+export type RecordResult = { audio: Blob | null; ended: RecordEnd; ms: number; handsFree?: boolean };
+/** A turn the owner has to end with a tap (no level probe) is capped much lower than a voice note. */
+export const MANUAL_TURN_MS = 60_000;
 type Rec = { stop: () => void; cancel: () => void };
 
 /** The microphone's input level (0..~0.5 RMS) while a hands-free turn records — its own store, read by the level indicator only. */
@@ -418,20 +423,30 @@ export const primeAudioInput = () => { primeAudioContext(); };
 export const releaseAudioInput = () => { void closeAudioContext(); };
 
 /**
- * After a microphone turn, before BASHT speaks (iOS): park the probe graph, give the OS a moment to leave the record route
- * ("play-and-record" plays quietly through the earpiece), then ask for the "playback" session. A tested step of the live loop.
+ * After a microphone turn, before BASHT speaks (iOS): let the "stop" earcon finish and the OS leave the record route
+ * ("play-and-record" plays quietly through the earpiece), park the probe graph, then ask for the "playback" session — for the
+ * session's own token only, and only while that session is still live (`live()`): a session that ended (or moved on to the next
+ * recording) is never switched to "playback" afterwards. A tested step of the live loop.
  */
-export const AFTER_CAPTURE_MS = 300;
-export async function settleAfterCapture(d: { suspend: () => Promise<void>; wait: (ms: number) => Promise<void>; enter: () => void } = {
-  suspend: suspendAudioContext, wait: (ms) => new Promise((r) => setTimeout(r, ms)), enter: () => { enterVoiceSession("playback"); },
-}): Promise<void> {
-  try { await d.suspend(); } catch { /* best effort */ }
+export const AFTER_CAPTURE_MS = 350;
+export type SettleDeps = { suspend: () => Promise<void>; wait: (ms: number) => Promise<void>; enter: () => void; live?: () => boolean };
+export async function settleAfterCapture(d: SettleDeps): Promise<void> {
+  const live = d.live ?? (() => true);
   await d.wait(AFTER_CAPTURE_MS);
+  if (!live()) return;
+  try { await d.suspend(); } catch { /* best effort */ }
+  if (!live()) return;
   try { d.enter(); } catch { /* best effort */ }
 }
-/** Before a microphone turn: the record-capable session and the probe's context running again (best effort). */
-export async function prepareCapture(): Promise<void> {
-  enterVoiceSession("play-and-record");
+/** The browser's settle step for the owner `token`. */
+export const browserSettle = (token: () => VoiceToken | null, live: () => boolean) => settleAfterCapture({
+  suspend: suspendAudioContext, wait: (ms) => new Promise((r) => setTimeout(r, ms)), live,
+  enter: () => { const t = token(); if (t) enterVoiceSession("playback", t); },
+});
+/** Before a microphone turn: the record-capable session (owner `token` only) and the probe's context running again (best effort). */
+export async function prepareCapture(token: VoiceToken | null, live: () => boolean = () => true): Promise<void> {
+  if (!live()) return;
+  if (token) enterVoiceSession("play-and-record", token);
   await resumeAudioContext();
 }
 
@@ -464,7 +479,7 @@ export type RecorderEnv = {
   onLevel?: (level: number) => void;
   now?: () => number;
 };
-export type RecordOpts = { maxMs?: number; silence?: boolean; onStart?: () => void };
+export type RecordOpts = { maxMs?: number; silence?: boolean; onStart?: (handsFree: boolean) => void };
 const failed = (ended: RecordEnd = "error"): RecordResult => ({ audio: null, ended, ms: 0 });
 /** The ONE microphone owner of the app: a new recording (composer voice note or live session) cancels the one in progress, so two
  *  recordings never run at once and a hidden one can never capture (and later send) the live conversation. */
@@ -500,10 +515,13 @@ export function startRecording(env: RecorderEnv, { maxMs = MAX_NOTE_MS, silence 
       const started = now();
       let ended: RecordEnd = "stop";
       const end = (why: RecordEnd) => { ended = why; if (mr.state !== "inactive") try { mr.stop(); } catch { /* already stopping */ } };
-      const tick = setInterval(() => { const ms = now() - started; env.onElapsed(ms); if (ms >= maxMs) end("limit"); }, 200);
-      // hands-free: the input level decides when the owner has finished speaking (and drives the level indicator)
+      // hands-free: the input level decides when the owner has finished speaking (and drives the level indicator). Without a
+      // level (no running audio context) the turn is a manual one: the owner taps, and it is capped at MANUAL_TURN_MS
       let probe: ReturnType<typeof setInterval> | null = null;
       const lvl = silence ? env.levelProbe?.(stream) ?? null : null;
+      const handsFree = !!lvl;
+      const cap = silence && !lvl ? Math.min(maxMs, MANUAL_TURN_MS) : maxMs;
+      const tick = setInterval(() => { const ms = now() - started; env.onElapsed(ms); if (ms >= cap) end("limit"); }, 200);
       if (lvl) {
         const gate = createSilenceGate();
         probe = setInterval(() => { const v = lvl.read(); env.onLevel?.(v); const g = gate(v, now()); if (g === "stop") end("silence"); else if (g === "no_speech") end("no_speech"); }, 100);
@@ -514,10 +532,10 @@ export function startRecording(env: RecorderEnv, { maxMs = MAX_NOTE_MS, silence 
         finish(); // the mic is released between turns (iOS plays BASHT's voice at full volume then)
         env.onPhase("idle"); env.onElapsed(0);
         const keep = ended !== "cancel" && ended !== "no_speech" && ended !== "error" && chunks.length > 0;
-        resolve({ audio: keep ? new Blob(chunks, { type: mr.mimeType || type || "audio/webm" }) : null, ended, ms: now() - started });
+        resolve({ audio: keep ? new Blob(chunks, { type: mr.mimeType || type || "audio/webm" }) : null, ended, ms: now() - started, handsFree });
       };
       endNow = end;
-      try { mr.start(1000); env.onPhase("recording"); onStart?.(); }
+      try { mr.start(1000); env.onPhase("recording"); onStart?.(handsFree); }
       catch { endNow = null; finish(); env.onPhase("idle"); env.onError("تعذّر بدء التسجيل."); resolve(failed()); }
     });
   })();
@@ -590,12 +608,14 @@ export function useVoiceRecorder() {
  *  blocked   : the browser refused to play (or the OS interrupted it): one tap continues the SAME audio (no new /speak request)
  */
 export type LivePhase = "idle" | "starting" | "listening" | "muted" | "thinking" | "speaking" | "blocked";
-export type LiveStep = "" | "transcribing" | "waiting" | "voice";
+/** listening/"manual": no input level here — the owner ends the turn with «أنهِ دورك» (capped at 60 s) */
+export type LiveStep = "" | "transcribing" | "waiting" | "voice" | "manual";
 export type LiveDeps = {
-  /** records one turn; `onStarted` fires once the recorder really runs */
-  record: (onStarted: () => void) => Promise<RecordResult>;
+  /** records one turn; `onStarted` fires once the recorder really runs (`handsFree`: a pause ends the turn by itself) */
+  record: (onStarted: (handsFree: boolean) => void) => Promise<RecordResult>;
   cancelRecord: () => void;
-  transcribe: (audio: Blob) => Promise<string>;
+  /** aborted when the session ends (no upload keeps running behind a closed screen) */
+  transcribe: (audio: Blob, signal: AbortSignal) => Promise<string>;
   /** sends one owner turn (already marked as a voice note) and resolves with BASHT's finished reply */
   ask: (text: string) => Promise<string>;
   /** speaks the reply; `onPlayer` reports the player's real phases (preparing / playing) */
@@ -607,18 +627,24 @@ export type LiveDeps = {
   resume?: (onPlayer: (p: PlayerPhase) => void) => Promise<PlayResult>;
   playError: () => string;
   recordError: () => string;
-  /** before each microphone turn (record-capable audio session, probe context running) */
-  beforeCapture?: () => Promise<void> | void;
-  /** after a microphone turn, before speaking (settleAfterCapture) — runs while the reply is being prepared */
-  afterCapture?: () => Promise<void>;
+  /** before each microphone turn (record-capable audio session, probe context running); skip when `live()` is false */
+  beforeCapture?: (live: () => boolean) => Promise<void> | void;
+  /** after a microphone turn, before speaking (settleAfterCapture) — overlaps the transcription; skip when `live()` is false */
+  afterCapture?: (live: () => boolean) => Promise<void>;
   onPhase: (p: LivePhase, step: LiveStep) => void;
   onHeard: (text: string) => void;
   onReply?: (text: string) => void;
   onError: (msg: string) => void;
   /** the session is over (ended by the owner, an error, or silence) — release the audio session / context */
   onEnd?: () => void;
-  cue?: (kind: "start" | "stop") => void;
+  /** an earcon; returns true when one was played (the start cue then finishes before the mic opens) */
+  cue?: (kind: "start" | "stop") => boolean | void;
+  wait?: (ms: number) => Promise<void>;
 };
+/** How long an earcon lasts (two short notes). */
+export const EARCON_MS = 350;
+export const MANUAL_LIMIT_TEXT = "انتهى الحد (60 ثانية) دون الضغط على «أنهِ دورك»، فأنهيت الجلسة ولم يُرسل شيء.";
+export const NO_SPEECH_TEXT = "لم أسمع كلامًا، فأنهيت الجلسة. اضغط «ابدأ المحادثة» للبدء من جديد.";
 
 const errText = (e: unknown, fallback: string) =>
   e instanceof BashtError && e.code === "voice_unavailable" && e.reason ? `${bashtErrorText(e.code)} ${voiceReasonText(e.reason)}`
@@ -636,10 +662,12 @@ export function createLiveSession(d: LiveDeps) {
   let wake: (() => void) | null = null;
   let resumeReq: ((p: Promise<PlayResult> | null) => void) | null = null;
   let onPlayerNow: ((p: PlayerPhase) => void) | null = null;
+  let turn: AbortController | null = null;
+  const wait = d.wait ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const to = (p: LivePhase, step: LiveStep = "") => { phase = p; d.onPhase(p, step); };
   /** stops everything of the current session (no onEnd: used by start() inside the owner's gesture) */
   const halt = () => {
-    gen++; muteCancel = false; d.cancelRecord(); d.stopPlay();
+    gen++; muteCancel = false; d.cancelRecord(); d.stopPlay(); turn?.abort(); turn = null;
     wake?.(); wake = null; resumeReq?.(null); resumeReq = null; onPlayerNow = null;
     if (phase !== "idle") to("idle");
   };
@@ -649,34 +677,42 @@ export function createLiveSession(d: LiveDeps) {
     const live = () => my === gen;
     const fail = (msg: string) => { if (live()) end(msg); };
     let quiet = 0;
+    let settled: Promise<void> = Promise.resolve();
     while (live()) {
+      await settled; // the previous turn's route switch is over before the next one asks for the microphone
+      if (!live()) return;
       if (micMuted) {
         to("muted");
         await new Promise<void>((r) => { wake = r; });
         if (!live()) return;
         continue;
       }
-      await d.beforeCapture?.();
+      await d.beforeCapture?.(live);
       if (!live()) return;
       to("starting");
-      const r = await d.record(() => { if (live() && phase === "starting") { to("listening"); d.cue?.("start"); } });
+      // the start cue plays BEFORE the microphone opens (never into the recording)
+      if (d.cue?.("start")) { await wait(EARCON_MS); if (!live()) return; }
+      const r = await d.record((handsFree) => { if (live() && phase === "starting") to("listening", handsFree ? "" : "manual"); });
       if (!live()) return;
+      if (r.ended === "limit" && r.handsFree === false) return fail(MANUAL_LIMIT_TEXT); // nobody tapped: never send a minute of noise
       if (!r.audio) {
         if (r.ended === "cancel" && muteCancel) { muteCancel = false; continue; } // muted while listening: nothing kept, wait
         if (r.ended === "no_speech" && ++quiet < 2) continue; // one quiet turn is forgiven; two end the session
-        return fail(r.ended === "no_speech" ? "لم أسمع كلامًا، فأنهيت الجلسة. اضغط «ابدأ المحادثة» للبدء من جديد." : d.recordError() || "توقّف الاستماع.");
+        return fail(r.ended === "no_speech" ? NO_SPEECH_TEXT : d.recordError() || "توقّف الاستماع.");
       }
-      quiet = 0;
       d.cue?.("stop");
-      const settled = (d.afterCapture?.() ?? Promise.resolve()).catch(() => {}); // the route switch overlaps the transcription
+      settled = (d.afterCapture?.(live) ?? Promise.resolve()).catch(() => {}); // the route switch overlaps the transcription
       to("thinking", "transcribing");
       let text: string;
-      try { text = await d.transcribe(r.audio); }
+      turn = new AbortController();
+      try { text = await d.transcribe(r.audio, turn.signal); }
       catch (e) {
         if (!live()) return;
-        if (e instanceof BashtError && e.code === "no_speech") continue;
+        // the engine heard nothing either: it counts as a quiet turn (steady noise never loops billed transcriptions)
+        if (e instanceof BashtError && e.code === "no_speech") { if (++quiet < 2) continue; return fail(NO_SPEECH_TEXT); }
         return fail(errText(e, "تعذّر تفريغ الصوت."));
       }
+      quiet = 0;
       if (!live()) return;
       d.onHeard(text);
       to("thinking", "waiting");
@@ -736,6 +772,22 @@ export function createLiveSession(d: LiveDeps) {
     },
     phase: () => phase,
   };
+}
+
+/** A target for DOM events (document / window, or fakes in tests). */
+type EventHost = { addEventListener: (t: string, f: () => void) => void; removeEventListener: (t: string, f: () => void) => void };
+export const BACKGROUND_TEXT = "توقّفت المحادثة الصوتية لأن التطبيق انتقل إلى الخلفية. لم يُرسل الدور غير المكتمل.";
+/**
+ * Backgrounding (lock screen, app switch, navigation away) ends the live session: the recording in progress is discarded (never
+ * sent), playback stops, and no blocked-playback wait is left behind. Returns the unbind function.
+ */
+export function endOnBackground(onHidden: () => void, env: { doc: EventHost & { visibilityState: string }; win: EventHost } | null =
+  typeof document !== "undefined" && typeof window !== "undefined" ? { doc: document, win: window } : null): () => void {
+  if (!env) return () => {};
+  const vis = () => { if (env.doc.visibilityState === "hidden") onHidden(); };
+  env.doc.addEventListener("visibilitychange", vis);
+  env.win.addEventListener("pagehide", onHidden);
+  return () => { env.doc.removeEventListener("visibilitychange", vis); env.win.removeEventListener("pagehide", onHidden); };
 }
 
 // ── a voice note from the composer: transcribe → send (or keep the text) ──────────────────────────────────────────────────

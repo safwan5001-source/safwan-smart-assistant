@@ -95,7 +95,9 @@ async function readBytes(req: Request, max: number): Promise<Uint8Array | null |
   return total ? new Uint8Array(Buffer.concat(chunks)) : null;
 }
 /** Why the engine's voice failed (fixed list, additive to the code). Anything else is dropped; engine/API free text never reaches the browser. */
-export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout"] as const;
+// Must equal services/api/tests/fixtures/voice-contract.json (shared with the engine; tests compare).
+export const VOICE_REASONS = ["identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout", "bad_audio", "engine_error",
+  "in_flight", "per_minute", "text_rejected", "tool_path_only", "tool_path_unavailable", "no_tts_config", "config_unreadable"] as const;
 const voiceReason = (reason: unknown): (typeof VOICE_REASONS)[number] | undefined => (VOICE_REASONS as readonly unknown[]).includes(reason) ? (reason as (typeof VOICE_REASONS)[number]) : undefined;
 /** `{ error: <code>, reason?: <allowlisted reason> }` with the status of the code (unknown codes: 503 unavailable, as before). */
 const voiceErr = (code: unknown, reason?: unknown) => {

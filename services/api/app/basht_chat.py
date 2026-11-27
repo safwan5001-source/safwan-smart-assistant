@@ -28,7 +28,7 @@ from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi import Request as HttpRequest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .audit import audit_log
@@ -431,7 +431,9 @@ def set_fast(body: FastBody, _: ServiceCall = Depends(require_service_call)):
 # "Voice is not set up / not allowed on the engine" (bridge 503 voice_unavailable, or an older bridge: 404) is a domain answer,
 # 400 voice_unavailable, like model_control_unavailable: the app explains it and falls back to browser dictation.
 # Why the engine's voice failed, from a fixed list (anything else is dropped; engine text is never passed on). Additive to the codes.
-VOICE_REASONS = ("identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout")
+VOICE_REASONS = ("identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout", "bad_audio", "engine_error",
+                 "in_flight", "per_minute", "text_rejected", "tool_path_only", "tool_path_unavailable", "no_tts_config", "config_unreadable")
+# must equal tests/fixtures/voice-contract.json (shared with the engine; tests compare)
 _VOICE_ERRORS = {400: (400, "bad_request"), 413: (413, "too_large"), 415: (415, "unsupported_audio"), 422: (422, "no_speech"),
                  429: (429, "rate_limited")}
 
@@ -511,8 +513,20 @@ def voice_status(_: ServiceCall = Depends(require_service_call)):
     return view
 
 
+def utf16_len(text: str) -> int:
+    """Length in UTF-16 code units, the unit the engine (JavaScript) and the BFF count: an emoji is 2, not 1."""
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
 class SpeakBody(BaseModel):
-    text: str = Field(min_length=1, max_length=MAX_SPEAK)
+    text: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def _within_cap(cls, v: str) -> str:
+        if utf16_len(v) > MAX_SPEAK:
+            raise ValueError("text too long")
+        return v
 
 
 @router.post("/speak")

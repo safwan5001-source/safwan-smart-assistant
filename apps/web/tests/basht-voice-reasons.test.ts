@@ -1,5 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { BASHT_COOKIE, handleBashtChat, readBashtGate, resetBashtLimits, VOICE_FEATURES, VOICE_REASONS, voiceStatusView, type Deps } from "@/server/basht-chat";
+import { BASHT_COOKIE, handleBashtChat, readBashtGate, resetBashtLimits, VOICE_FEATURES, VOICE_REASONS, VOICE_SPEAK_STATES, voiceStatusView, type Deps } from "@/server/basht-chat";
 import { issueCookieValue } from "@/server/assistant-chat-gate";
 import { streamBackend } from "@/server/backend";
 
@@ -121,5 +123,28 @@ describe("GET /api/basht/voice-status", () => {
   });
   it("is a read: the read limiter applies and a POST is not a voice-status route", async () => {
     expect((await call("POST", "voice-status", { ...authed, body: {} })).status).toBe(404);
+  });
+});
+
+
+describe("shared voice contract (identical file in the engine repo)", () => {
+  const contract = JSON.parse(readFileSync(resolve(__dirname, "../../../services/api/tests/fixtures/voice-contract.json"), "utf8")) as { reasons: string[]; features: string[]; speakStates: string[] };
+  it("the BFF allowlists equal the contract exactly", () => {
+    expect([...VOICE_REASONS]).toEqual(contract.reasons);
+    expect([...VOICE_FEATURES]).toEqual(contract.features);
+    expect([...VOICE_SPEAK_STATES]).toEqual(contract.speakStates);
+  });
+  it("every contract reason and feature passes the BFF; an unknown token does not", async () => {
+    for (const reason of contract.reasons) expect(voiceStatusView({ speak: "degraded", reason, features: contract.features })).toEqual({ speak: "degraded", reason, features: contract.features });
+    expect(voiceStatusView({ speak: "degraded", reason: "not_in_contract", features: [...contract.features, "x.y"] })).toEqual({ speak: "degraded", features: contract.features });
+    const stream = vi.fn(async () => ({ kind: "error" as const, status: 400, code: "voice_unavailable", reason: "no_tts_config" }));
+    const r = await handleBashtChat(req("POST", "speak", { ...authed, body: { text: "x" } }), ["speak"], deps({ streamBackend: stream as unknown as Deps["streamBackend"] }));
+    expect(await r.json()).toEqual({ error: "voice_unavailable", reason: "no_tts_config" });
+  });
+  it("speak length is UTF-16 units on this side too (an emoji counts 2)", async () => {
+    const stream = vi.fn();
+    const d = deps({ streamBackend: stream as unknown as Deps["streamBackend"] });
+    expect((await handleBashtChat(req("POST", "speak", { ...authed, body: { text: "😀".repeat(751) } }), ["speak"], d)).status).toBe(400);
+    expect(stream).not.toHaveBeenCalled();
   });
 });
