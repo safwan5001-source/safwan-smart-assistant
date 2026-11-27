@@ -73,7 +73,7 @@ export async function handleAssistantChat(req: Request, path: string[], deps: De
     return json({ authenticated: true }, 200, { "Set-Cookie": setCookieHeader(issueCookieValue(gate, now), deps.env.NODE_ENV === "production") });
   }
 
-  if (!access.authenticated) return err("unauthorized", 401);
+  if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
   // the owner session carries the verified account; the legacy gate keeps using the configured owner account
   const account = access.account ?? ownerAccount(deps.env);
   if (!account) return err("disabled", 503);

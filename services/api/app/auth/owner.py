@@ -286,10 +286,11 @@ def sessions_list(body: SessionBody, settings: Settings = Depends(get_settings),
 def sessions_revoke(body: SessionRevoke, settings: Settings = Depends(get_settings), _: ServiceCall = Depends(require_service_call)):
     _require_on(settings)
     with _db(settings) as conn:
-        if not revoke_session_by_id(conn, _session_account(conn, body.session), body.id):
+        current = revoke_session_by_id(conn, _session_account(conn, body.session), body.id, body.session)
+        if current is None:
             raise refuse("not_found")
     audit_log.record("auth.logout", scope="session")
-    return {"ok": True}
+    return {"ok": True, "current": current}
 
 
 @router.post("/passkeys/list")

@@ -2,8 +2,8 @@
  * Browser-side client for /api/auth/* (A1): one sign-in for the whole app — the owner code or Face ID (a passkey).
  * The session lives in an HttpOnly cookie this code never sees. Failures become Arabic messages; nothing upstream leaks.
  */
-/** `gate`: the web's login gate is on (OWNER_AUTH). gate && !owner_auth means the API could not be asked right now. */
-export type AuthStatus = { owner_auth: boolean; passkeys: boolean; authenticated: boolean; gate: boolean };
+/** `gate`: the web's login gate is on (OWNER_AUTH). `unavailable`: the API/database could not be asked — never read as "signed out". */
+export type AuthStatus = { owner_auth: boolean; passkeys: boolean; authenticated: boolean; gate: boolean; unavailable: boolean };
 export type OwnerSession = { id: string; device: string | null; remember: boolean; created_at: string; last_seen_at: string | null; expires_at: string; current: boolean };
 export type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null };
 
@@ -51,8 +51,8 @@ export function createAuthClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
   const post = (body: unknown = {}): RequestInit => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   return {
     async status(): Promise<AuthStatus> {
-      try { const s = await call<Partial<AuthStatus>>("status"); return { owner_auth: s.owner_auth === true, passkeys: s.passkeys === true, authenticated: s.authenticated === true, gate: s.gate === true }; }
-      catch { return { owner_auth: false, passkeys: false, authenticated: false, gate: false }; }
+      try { const s = await call<Partial<AuthStatus>>("status"); return { owner_auth: s.owner_auth === true, passkeys: s.passkeys === true, authenticated: s.authenticated === true, gate: s.gate === true, unavailable: s.unavailable === true }; }
+      catch { return { owner_auth: false, passkeys: false, authenticated: false, gate: false, unavailable: true }; }
     },
     loginCode: async (code: string, remember: boolean) => { await call("login/code", post({ code, remember })); },
     async loginPasskey(remember: boolean): Promise<void> {

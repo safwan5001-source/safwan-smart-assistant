@@ -6,6 +6,7 @@ import PreferencesEffects from "@/components/preferences-effects";
 import { DialogsProvider } from "@/components/dialogs";
 import { AssistantProvider } from "@/components/assistant-context";
 import NotificationRuntime from "@/components/notification-runtime";
+import AppOnly from "@/components/app-only";
 import { BRAND, BRAND_ASSETS, splashImages } from "@/lib/brand";
 
 export const metadata: Metadata = {
@@ -54,7 +55,7 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         </div>
         <DialogsProvider>
           <PreferencesEffects />
-          <NotificationRuntime />
+          <AppOnly><NotificationRuntime /></AppOnly>
           <AssistantProvider><AppShell>{children}</AppShell></AssistantProvider>
         </DialogsProvider>
       </body>

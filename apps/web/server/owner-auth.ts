@@ -2,7 +2,8 @@ import "server-only";
 /**
  * /api/auth/* — sign in to BASHT once, for the whole app (A1).
  *
- *   GET  status                       → { owner_auth, passkeys, authenticated, gate }  (gate = the web switch OWNER_AUTH)
+ *   GET  status                       → { owner_auth, passkeys, authenticated, gate, unavailable }
+ *                                        (gate = the web switch OWNER_AUTH; unavailable = the API could not be asked)
  *   POST login/code {code, remember}  → owner code → session cookie
  *   POST logout · POST logout-all     → this device · every device
  *   GET  sessions · POST sessions/revoke {id}   (this account's live sessions, by device; end one)
@@ -16,7 +17,7 @@ import "server-only";
 import { callBackend as realCallBackend } from "./backend";
 import { createFailureLimiter, sameOrigin } from "./browser-chat/api";
 import { deviceLabel } from "./device-label";
-import { clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerAuthOn, ownerSessionAccount, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
+import { checkOwnerSession, clearSessionCookieHeader, forgetSession, ownerAuthConfig, ownerAuthOn, readSessionCookie, sessionCookieHeader, type OwnerDeps } from "./owner-session";
 
 export type Deps = OwnerDeps;
 const defaultDeps = (): Deps => ({ env: process.env, callBackend: realCallBackend, now: Date.now });
@@ -74,18 +75,14 @@ const refusal = (json: unknown): [string, number] => {
   return (typeof code === "string" && REFUSALS[code]) || ["bad_request", 400];
 };
 
-/** A fresh lookup (no cache) of this request's session: used right after ending a session to tell whether it was this one. */
-async function ownerSessionAccountFresh(req: Request, deps: Deps): Promise<string | null> {
-  forgetSession(readSessionCookie(req));
-  return ownerSessionAccount(req, deps);
-}
-
 export async function handleAuth(req: Request, path: string[], deps: Deps = defaultDeps()): Promise<Response> {
   const route = path.join("/");
   const cfg = await ownerAuthConfig(deps);
   if (req.method === "GET" && route === "status") {
-    const authenticated = cfg.owner_auth && (await ownerSessionAccount(req, deps)) !== null;
-    return json({ owner_auth: cfg.owner_auth, passkeys: cfg.passkeys, authenticated, gate: ownerAuthOn(deps.env) });
+    const check = cfg.owner_auth ? await checkOwnerSession(req, deps) : { account: null, outage: false };
+    // unavailable: the API (or its database) could not be asked — NOT "signed out"; clients must not send the owner to /login
+    return json({ owner_auth: cfg.owner_auth, passkeys: cfg.passkeys, authenticated: check.account !== null, gate: ownerAuthOn(deps.env),
+      unavailable: !cfg.reachable || check.outage });
   }
   if (!cfg.owner_auth) return err("disabled", 503);
   if (req.method !== "GET" && !sameOrigin(req)) return err("forbidden", 403);
@@ -136,7 +133,9 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
   }
 
   // everything below belongs to a signed-in owner
-  if (!session || (await ownerSessionAccount(req, deps)) === null) return err("unauthorized", 401);
+  if (!session) return err("unauthorized", 401);
+  const me = await checkOwnerSession(req, deps);
+  if (me.account === null) return me.outage ? err("unavailable", 503) : err("unauthorized", 401);
   if (req.method === "GET" && route === "sessions") {
     const r = await api("sessions/list", { session });
     return r.ok ? json({ sessions: Array.isArray(r.data.sessions) ? r.data.sessions : [] }) : r.res;
@@ -146,9 +145,10 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     if (typeof data?.id !== "string" || !UUID.test(data.id)) return err("bad_request", 400);
     const r = await api("sessions/revoke", { session, id: data.id });
     if (!r.ok) return r.res;
-    // ending this device's own session from the list is a sign-out: drop the cookie too
-    const self = (await ownerSessionAccountFresh(req, deps)) === null;
-    return self ? json({ ok: true, signedOut: true }, 200, [clearSessionCookieHeader(secure(deps))]) : json({ ok: true, signedOut: false });
+    // the API says whether the ended session was this device's own (no second lookup that could fail): then it is a sign-out
+    if (r.data.current !== true) return json({ ok: true, signedOut: false });
+    forgetSession(session);
+    return json({ ok: true, signedOut: true }, 200, [clearSessionCookieHeader(secure(deps))]);
   }
   if (req.method === "GET" && route === "passkeys") {
     const r = await api("passkeys/list", { session });

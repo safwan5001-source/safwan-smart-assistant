@@ -33,7 +33,9 @@ describe("login gate: server side (middleware)", () => {
   it("protects every page and keeps static files and /api out of its way", () => {
     const re = new RegExp("^" + config.matcher[0].replace("/((?!", "/(?!").replace(").*)", ").*") + "$");
     for (const p of ["/", "/chat", "/settings", "/hq", "/tasks/123", "/login"]) expect(re.test(p), p).toBe(true);
-    for (const p of ["/api/auth/status", "/_next/static/x.js", "/brand/basht-mark.webp", "/sw.js", "/manifest.webmanifest", "/icons/icon-192.png"]) expect(re.test(p), p).toBe(false);
+    for (const p of ["/api/auth/status", "/_next/static/x.js", "/brand/basht-mark.webp", "/sw.js", "/manifest.webmanifest", "/icons/icon-192.png", "/fonts/a.woff2", "/opengraph-image.png"]) expect(re.test(p), p).toBe(false);
+    // review fix: a dotted page path is no longer a way around the gate
+    for (const p of ["/x.y", "/chat.rsc", "/settings.html", "/chat;.js", "/sw.js.map", "/brandx/a.png"]) expect(re.test(p), p).toBe(true);
     expect(config.runtime).toBe("nodejs");
   });
   it("no session → /login with the original destination (path + query); nothing of the app is served", async () => {
@@ -53,6 +55,13 @@ describe("login gate: server side (middleware)", () => {
     expect((await middleware(page("/login"))).headers.get("x-middleware-next")).toBe("1");
     expect(where(await middleware(page("/login?next=%2Fchat", GOOD)))).toBe("/chat");
     expect(where(await middleware(page("/login?next=https%3A%2F%2Fevil.example", GOOD)))).toBe("/");
+  });
+  it("/login always decides on a fresh lookup (a just-ended session is not bounced back into the app)", async () => {
+    await middleware(page("/settings", GOOD)); // caches a positive answer
+    let n = 0;
+    backend.mockImplementation(async (a) => (a.path.endsWith("/session") ? (n++, ok(400, { detail: { code: "unauthorized" } })) : api(a.path, a.body)));
+    expect((await middleware(page("/login?next=%2Fsettings", GOOD))).headers.get("x-middleware-next")).toBe("1");
+    expect(n).toBe(1);
   });
   it("API unreachable → login page says so (fail closed, never the app)", async () => {
     backend.mockImplementation(async (a) => (a.path.endsWith("/session") ? { kind: "unreachable" } : api(a.path, a.body)));
@@ -96,6 +105,13 @@ describe("devices & sessions", () => {
     new Request(`${BASE}/api/auth/${path}`, { method, headers: { ...same, cookie: `${SESSION_COOKIE}=${cookie}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const ID = "0b5c1d0e-1111-4222-8333-444455556666";
 
+  it("ending another device never signs this one out, even if a later lookup would fail", async () => {
+    backend.mockImplementation(async (a) => a.path.endsWith("sessions/revoke") ? ok(200, { ok: true, current: false }) : api(a.path, a.body));
+    const r = await handleAuth(req("POST", "sessions/revoke", GOOD, { id: ID }), ["sessions", "revoke"], deps());
+    expect(await r.json()).toEqual({ ok: true, signedOut: false });
+    expect(r.headers.get("set-cookie")).toBeNull();
+    expect(backend.mock.calls.filter((c) => c[0].path.endsWith("/session")).length).toBe(1); // only the guard's lookup, none after
+  });
   it("lists this account's sessions and ends another device's one", async () => {
     backend.mockImplementation(async (a) => a.path.endsWith("sessions/list") ? ok(200, { sessions: [{ id: ID, device: "ماك · Chrome", current: false }] })
       : a.path.endsWith("sessions/revoke") ? ok(200, { ok: true }) : api(a.path, a.body));
@@ -107,7 +123,7 @@ describe("devices & sessions", () => {
   });
   it("ending THIS device's session from the list signs out here too", async () => {
     let ended = false;
-    backend.mockImplementation(async (a) => a.path.endsWith("sessions/revoke") ? ((ended = true), ok(200, { ok: true }))
+    backend.mockImplementation(async (a) => a.path.endsWith("sessions/revoke") ? ((ended = true), ok(200, { ok: true, current: true }))
       : a.path.endsWith("/session") && ended ? ok(400, { detail: { code: "unauthorized" } }) : api(a.path, a.body));
     const r = await handleAuth(req("POST", "sessions/revoke", GOOD, { id: ID }), ["sessions", "revoke"], deps());
     expect(await r.json()).toEqual({ ok: true, signedOut: true });

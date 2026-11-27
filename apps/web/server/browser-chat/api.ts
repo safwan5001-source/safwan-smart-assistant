@@ -153,7 +153,7 @@ export async function handleBrowserChat(req: Request, path: string[], deps: Deps
     }
 
     // everything below needs a valid owner cookie
-    if (!access.authenticated) return err("unauthorized", 401);
+    if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
     const id = path[1];
 
     if (route === "POST /tasks") {

@@ -103,11 +103,14 @@ def list_sessions(conn: psycopg.Connection, account_id: UUID, current_secret: st
              "last_seen_at": r[4].isoformat() if r[4] else None, "expires_at": r[5].isoformat(), "current": r[6]} for r in rows]
 
 
-def revoke_session_by_id(conn: psycopg.Connection, account_id: UUID, session_id: UUID) -> bool:
-    """End one session of this account by its id (from list_sessions). Another account's id matches nothing (RLS)."""
+def revoke_session_by_id(conn: psycopg.Connection, account_id: UUID, session_id: UUID, current_secret: str) -> bool | None:
+    """End one session of this account by its id (from list_sessions). Another account's id matches nothing (RLS).
+    Returns None when nothing was ended, else whether it was the caller's OWN session (so the caller signs out too)."""
+    current = digest_secret(current_secret)
     with owner_transaction(conn, verified_account_id(account_id)):
-        return conn.execute("UPDATE sessions SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL",
-                            (session_id,)).rowcount == 1
+        row = conn.execute("UPDATE sessions SET revoked_at = now() WHERE id = %s AND revoked_at IS NULL RETURNING token_hash = %s",
+                           (session_id, current)).fetchone()
+    return None if row is None else bool(row[0])
 
 
 def touch_session(conn: psycopg.Connection, account_id: UUID, secret: str) -> None:

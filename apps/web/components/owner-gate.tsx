@@ -27,6 +27,7 @@ export function OwnerGateProvider({ children }: { children: ReactNode }) {
     const check = async () => {
       const s = await authClient.status();
       if (!alive) return;
+      if (s.unavailable) return; // the server could not be asked: keep everything as it is (the doors show "offline")
       setOn(s.gate && s.owner_auth);
       if (s.gate && s.owner_auth && !s.authenticated) signInAgain(); // only when the server SAID the session is gone
     };

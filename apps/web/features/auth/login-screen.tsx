@@ -26,7 +26,8 @@ export default function LoginScreen() {
   }, [next]);
   useEffect(() => { void load(); }, [load]);
 
-  const unavailable = status !== null && status.gate && !status.owner_auth;
+  const unavailable = status !== null && status.unavailable;
+  const unconfigured = status !== null && !status.unavailable && status.gate && !status.owner_auth;
   return (
     <main className="login-page" id="main">
       <div className="login-panel">
@@ -40,7 +41,12 @@ export default function LoginScreen() {
         </div>
 
         {params.get("reason") === "expired" && <p className="login-note" role="status">انتهت الجلسة. سجّل الدخول للمتابعة من حيث توقفت.</p>}
-        {status === null ? <div className="login-card login-skeleton" aria-busy="true" /> : unavailable || params.get("reason") === "unavailable" && !status.owner_auth ? (
+        {status === null ? <div className="login-card login-skeleton" aria-busy="true" /> : unconfigured ? (
+          <div className="login-card stack" role="alert">
+            <strong>الدخول الموحّد غير مهيأ على الخادم</strong>
+            <small className="muted">رمز المالك غير مضبوط في خدمة الـ API. يضبطه مسؤول الخادم ثم تعمل هذه الصفحة.</small>
+          </div>
+        ) : unavailable ? (
           <div className="login-card stack" role="alert">
             <strong>تعذّر الوصول إلى خادم باشت الآن</strong>
             <small className="muted">لم يتغير شيء في حسابك. أعد المحاولة بعد لحظات.</small>

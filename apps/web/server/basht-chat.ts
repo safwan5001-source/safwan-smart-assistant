@@ -89,7 +89,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     return json({ authenticated: true }, 200, { "Set-Cookie": cookie(issueCookieValue(gate, now), secure) });
   }
 
-  if (!access.authenticated) return err("unauthorized", 401);
+  if (!access.authenticated) return access.outage ? err("unavailable", 503) : err("unauthorized", 401); // an unverifiable session is an outage, not a sign-out
   const write = req.method !== "GET";
   if (write && !sameOrigin(req)) return err("forbidden", 403);
   if (!(write ? limiters.write : limiters.read)("owner", now)) return err("rate_limited", 429);

@@ -237,12 +237,15 @@ def test_sessions_list_names_devices_marks_this_one_and_ends_one(client, env):
     me = next(r for r in rows if r["current"])
     other = next(r for r in rows if not r["current"])
     assert me["device"] == "آيفون · Safari" and other["remember"] is True and "token" not in json.dumps(rows)
-    assert call(client, "/sessions/revoke", {"session": a, "id": other["id"]}).status_code == 200
+    assert call(client, "/sessions/revoke", {"session": a, "id": other["id"]}).json() == {"ok": True, "current": False}
     assert call(client, "/session", {"session": b}).json()["detail"]["code"] == "unauthorized"
     assert [r["current"] for r in call(client, "/sessions/list", {"session": a}).json()["sessions"]] == [True]
     # already ended / unknown id → not_found; a session can't be listed or ended without a valid one
     assert call(client, "/sessions/revoke", {"session": a, "id": other["id"]}).json()["detail"]["code"] == "not_found"
     assert call(client, "/sessions/list", {"session": "x" * 43}).json()["detail"]["code"] == "unauthorized"
+    # ending your own session from the list says so (the BFF then clears this device's cookie without a second lookup)
+    assert call(client, "/sessions/revoke", {"session": a, "id": me["id"]}).json() == {"ok": True, "current": True}
+    assert call(client, "/session", {"session": a}).json()["detail"]["code"] == "unauthorized"
 
 
 def test_session_lookup_records_activity_at_most_every_five_minutes(client, env):
