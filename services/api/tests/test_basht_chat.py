@@ -147,3 +147,32 @@ def test_unconfigured_without_token_or_https(client, engine, monkeypatch):
     assert calls == []
     assert bc.configured({"BASHT_CORE_URL": URL, "BASHT_APP_TOKEN": TOKEN}) is True
     assert bc.configured({"BASHT_CORE_URL": URL}) is False
+
+
+def test_a_redirect_is_never_followed_with_the_token(client, monkeypatch):
+    """The real opener (not the test seam): a 302 from the engine becomes 502, and the Location is never requested."""
+    import http.server
+    import threading
+    hits = []
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            hits.append((self.path, self.headers.get("Authorization")))
+            self.send_response(302)
+            self.send_header("Location", "/stolen")
+            self.end_headers()
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        from urllib.error import HTTPError as E
+        req = bc.Request(f"http://127.0.0.1:{srv.server_address[1]}/app/v1/sessions", headers={"Authorization": f"Bearer {TOKEN}"})
+        with pytest.raises(E) as exc:
+            bc.urlopen(req, timeout=5)
+        assert exc.value.code == 302
+        assert [p for p, _ in hits] == ["/app/v1/sessions"], "the redirect target must never be requested"
+    finally:
+        srv.shutdown()

@@ -17,8 +17,10 @@ import { formatTime } from "@/lib/format";
 
 export const APP_SESSION_KEY = "agent:main:app:owner";
 const POLL_MS = 1200;
-// The run in flight survives client-side navigation (module scope, never persisted).
+// The run in flight survives client-side navigation (module scope, never persisted). Only ONE polling loop may exist:
+// each new loop (or leaving the screen / the App session) bumps the generation and the older loop exits.
 let activeRun: { id: string; prompt: string } | null = null;
+let pollGen = 0;
 
 type Gate = "checking" | "disabled" | "locked" | "open";
 const errText = (e: unknown) => (e instanceof BashtError ? e.message : bashtErrorText("unavailable"));
@@ -36,6 +38,8 @@ export default function BashtChatScreen() {
   const log = useRef<HTMLDivElement>(null);
   const dictation = useDictation();
   const writable = key === APP_SESSION_KEY;
+  const keyRef = useRef(key);
+  keyRef.current = key;
 
   const load = useCallback(async (k: string) => {
     try {
@@ -48,22 +52,26 @@ export default function BashtChatScreen() {
   }, []);
 
   const poll = useCallback(async (run: { id: string; prompt: string }) => {
+    const gen = ++pollGen;
+    const mine = () => gen === pollGen && activeRun?.id === run.id;
     setLive({ prompt: run.prompt, text: "" });
-    for (;;) {
-      if (activeRun?.id !== run.id) return;
+    // the finished turn belongs to the App session: refresh it only if that is still the session on screen
+    const finish = async () => { setLive(null); if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY); };
+    while (mine()) {
       try {
         const r = await bashtClient.run(run.id);
+        if (!mine()) return;
         setLive({ prompt: run.prompt, text: r.text });
         if (r.status !== "running") {
           activeRun = null;
           if (r.status === "error") setNotice("تعذّر إكمال الرد من باشت. أعد المحاولة.");
           if (r.status === "stopped") setNotice("أُوقف الرد.");
-          await load(APP_SESSION_KEY);
-          setLive(null);
+          await finish();
           return;
         }
       } catch (e) {
-        if (e instanceof BashtError && e.code === "not_found") { activeRun = null; setLive(null); await load(APP_SESSION_KEY); return; }
+        if (!mine()) return;
+        if (e instanceof BashtError && e.code === "not_found") { activeRun = null; await finish(); return; }
         setNotice(errText(e));
       }
       await new Promise((r) => setTimeout(r, POLL_MS));
@@ -83,6 +91,8 @@ export default function BashtChatScreen() {
     if (gate !== "open") return;
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
+    else setLive(null);
+    return () => { pollGen++; }; // leaving the App session or the screen stops this consumer; the turn keeps running on the server
   }, [gate, key, load, poll]);
 
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [messages, live]);

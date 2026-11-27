@@ -34,7 +34,8 @@ const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =
 const err = (code: string, status: number) => json({ error: code }, status);
 const RUN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const KEY = /^agent:[a-z0-9_-]{1,64}:\S{1,200}$/i;
-const MAX_BODY = 12_000, MAX_MESSAGE = 8000;
+// 8000 UTF-16 units can need up to 6 bytes each once JSON-escaped (\u00XX); Arabic needs 2. 64 KiB covers both, still bounded.
+const MAX_MESSAGE = 8000, MAX_BODY = 64 * 1024;
 
 // Polling a live reply costs ~40 reads a minute; writes are rarer. The API and the engine limit again on their side.
 const limiters = { unlockFail: createFailureLimiter(5, 60_000), read: createLimiter(240, 60_000), write: createLimiter(30, 60_000) };
@@ -42,9 +43,19 @@ export const resetBashtLimits = () => { limiters.unlockFail = createFailureLimit
 
 async function readJson(req: Request): Promise<Record<string, unknown> | undefined> {
   if ((req.headers.get("content-type") ?? "").split(";")[0].trim() !== "application/json") return undefined;
-  const text = await req.text().catch(() => "");
-  if (!text || Buffer.byteLength(text) > MAX_BODY) return undefined;
-  try { const v = JSON.parse(text); return v && typeof v === "object" && !Array.isArray(v) ? v : undefined; } catch { return undefined; }
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > MAX_BODY) return undefined;
+  const reader = req.body?.getReader();
+  if (!reader) return undefined;
+  const chunks: Uint8Array[] = []; let total = 0;
+  for (;;) { // bounded while reading: an oversized body is cut off, never buffered whole
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY) { await reader.cancel().catch(() => {}); return undefined; }
+    chunks.push(value);
+  }
+  try { const v = JSON.parse(Buffer.concat(chunks).toString("utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : undefined; } catch { return undefined; }
 }
 const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 

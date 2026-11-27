@@ -62,6 +62,11 @@ describe("BASHT chat door: relay", () => {
     expect(backend.mock.calls[0][0]).toMatchObject({ path: "/internal/v1/basht/send", method: "POST", body: { message: "جهّز تقرير اليوم" } });
     expect((await call("POST", "send", { ...authed, body: { message: "  " } })).status).toBe(400);
     expect((await call("POST", "send", { ...authed, body: { message: "x".repeat(8001) } })).status).toBe(400);
+    // the full supported length in Arabic (2 bytes/char) and in characters JSON escapes to 6 bytes each still fits the body bound
+    backend.mockResolvedValue(ok(200, { run_id: RUN }));
+    expect((await call("POST", "send", { ...authed, body: { message: "ب".repeat(8000) } })).status).toBe(200);
+    expect((await call("POST", "send", { ...authed, body: { message: "\u0001".repeat(8000) } })).status).toBe(200);
+    backend.mockReset();
     backend.mockResolvedValueOnce(ok(409, { detail: { code: "busy", secret: "upstream text" } }));
     const busy = await call("POST", "send", { ...authed, body: { message: "ثانية" } });
     expect(busy.status).toBe(409); expect(await busy.json()).toEqual({ error: "busy" });

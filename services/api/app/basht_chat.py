@@ -18,7 +18,8 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlparse
-from urllib.request import Request, urlopen
+from urllib import request as urllib_request
+from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -35,6 +36,19 @@ READ_TIMEOUT = 10.0
 MAX_BYTES = 2 * 1024 * 1024
 _KEY_RE = re.compile(r"^agent:[a-z0-9_-]{1,64}:[^\s]{1,200}$", re.I)
 _RUN_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+class _NoRedirect(urllib_request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any):  # noqa: ANN401
+        return None  # never follow: a redirect would carry BASHT_APP_TOKEN to another place; it surfaces as an HTTPError (502)
+
+
+_opener = urllib_request.build_opener(urllib_request.ProxyHandler({}), _NoRedirect)
+
+
+def urlopen(req: Request, timeout: float):
+    """Single seam for tests (monkeypatched). Never follows redirects, never uses an environment proxy."""
+    return _opener.open(req, timeout=timeout)
+
 
 router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
 
