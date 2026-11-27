@@ -27,18 +27,31 @@ export function primeAudioContext(): AudioContext | null {
     return ctx;
   } catch { return null; }
 }
-/** Resumes a suspended context (best effort; iOS may refuse outside a gesture — callers then work without it). */
-export async function resumeAudioContext(): Promise<boolean> {
-  const c = audioContext();
+/**
+ * iOS can leave an "interrupted" context whose suspend()/resume() never settle: every call is bounded so the voice loop never
+ * waits forever (a stuck «يجهّز الصوت…» or a «يتحدث…» with nothing playing).
+ */
+export const CONTEXT_CALL_MS = 800;
+/** "done" when `p` settles in time, "timeout" otherwise (a rejection counts as done). */
+export function bounded(p: Promise<unknown>, ms = CONTEXT_CALL_MS): Promise<"done" | "timeout"> {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => resolve("timeout"), ms);
+    p.then(() => { clearTimeout(t); resolve("done"); }, () => { clearTimeout(t); resolve("done"); });
+  });
+}
+type CtxLike = { state: string; resume: () => Promise<void>; suspend: () => Promise<void> };
+/** Resumes a suspended context (best effort; iOS may refuse outside a gesture — callers then work without it). False on timeout. */
+export async function resumeAudioContext(c: CtxLike | null = audioContext(), ms = CONTEXT_CALL_MS): Promise<boolean> {
   if (!c) return false;
   if (c.state === "running") return true;
-  try { await c.resume(); } catch { /* refused */ }
-  return (c.state as string) === "running";
+  let r: "done" | "timeout";
+  try { r = await bounded(c.resume(), ms); } catch { return false; }
+  return r === "done" && c.state === "running";
 }
-export async function suspendAudioContext(): Promise<void> {
-  const c = audioContext();
+/** Parks a running context; a suspend that never settles is given up on after `ms` (the caller proceeds). */
+export async function suspendAudioContext(c: CtxLike | null = audioContext(), ms = CONTEXT_CALL_MS): Promise<void> {
   if (!c || c.state !== "running") return;
-  try { await c.suspend(); } catch { /* best effort */ }
+  try { await bounded(c.suspend(), ms); } catch { /* best effort */ }
 }
 export async function closeAudioContext(): Promise<void> {
   const c = ctx;

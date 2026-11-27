@@ -9,7 +9,7 @@ import { earcon, voiceFxStore } from "@/lib/earcons";
 import { claimVoiceSession, enterVoiceSession, leaveVoiceSession, type VoiceToken } from "@/lib/audio";
 import { bashtClient, BashtError } from "@/lib/basht-client";
 import {
-  BACKGROUND_TEXT, browserSettle, recorderSupported, clock, createLiveSession, endOnBackground, MAX_NOTE_MS, prepareCapture, primeAudioInput, releaseAudioInput, useInputLevel,
+  BACKGROUND_TEXT, browserSettle, recorderSupported, clock, createLiveSession, watchBackground, MAX_NOTE_MS, prepareCapture, primeAudioInput, releaseAudioInput, useInputLevel,
   usePlayerProgress, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voicePlayer, type LivePhase, type LiveStep,
 } from "@/lib/basht-voice";
 import { isDurableVoiceFailure, speakGate, useVoiceStatus } from "@/lib/voice-status";
@@ -133,7 +133,7 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
     playError: () => voicePlayer().getSnapshot().error,
     recordError: () => latest.current.rec.errorNow(),
     beforeCapture: (live) => prepareCapture(owner.current, live),
-    afterCapture: (live) => browserSettle(() => owner.current, live),
+    afterCapture: (live, turnInfo) => browserSettle(() => owner.current, live, turnInfo.handsFree), // manual turn: keep the tap-started context
     onPhase: (p, s) => { setPhase(p); setStep(s); },
     onHeard: (t) => { if (t) setTurns((ts) => [...ts, { you: t }].slice(-20)); },
     onReply: (t) => setTurns((ts) => (ts.length ? [...ts.slice(0, -1), { ...ts[ts.length - 1], basht: t }] : ts)),
@@ -143,10 +143,19 @@ function LiveSession({ live, rec, autostart, onClose, note }: { live: LiveVoice;
   });
   // closing the screen ends the session: no mic, no voice, nothing sent afterwards
   useEffect(() => () => { session.current?.end(); release(); }, []);
-  // backgrounding (lock screen, app switch) ends it too: the partial turn is discarded, nothing waits on a blocked playback
-  useEffect(() => endOnBackground(() => { if (session.current && session.current.phase() !== "idle") session.current.end(BACKGROUND_TEXT); }), []);
+  // backgrounding: the partial turn is discarded and BASHT stops at once; the session ends if it stays hidden 3 s (or on pagehide).
+  // A hidden event while the microphone permission prompt is open ("starting") is ignored.
+  useEffect(() => watchBackground({
+    onHide: () => session.current?.setHidden(true),
+    onShow: () => session.current?.setHidden(false),
+    onEnd: () => { const x = session.current; if (x && x.phase() !== "idle") x.end(BACKGROUND_TEXT); },
+    ignoreHide: () => session.current?.phase() === "starting",
+  }), []);
   // opened by a press (long-press / wave button) that already unlocked audio and the probe: start listening right away, owning
   // that press's audio session. A reload or a stale link never records on its own — «ابدأ المحادثة» is shown instead.
+  // NOTE: the press is single-use. React StrictMode (next dev only) mounts → unmounts → mounts this screen: the first mount claims
+  // the press and its cleanup ends that session, so the second mount finds no press and shows «ابدأ المحادثة». Production builds
+  // mount once and are unaffected — test the long-press on a production build (docs/verification/BATCH-1-IPHONE-CHECKLIST.md).
   useEffect(() => {
     const press = autostart ? takeVoiceAutostart() : null;
     if (press) { owner.current = press.token; session.current?.start(); }

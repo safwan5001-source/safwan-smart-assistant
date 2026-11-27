@@ -3,7 +3,8 @@ import { BashtError } from "@/lib/basht-client";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import VoicePanel, { liveText, panelView, TURN_NOTE } from "@/features/calls/calls-screen";
-import { AFTER_CAPTURE_MS, BACKGROUND_TEXT, createLiveSession, endOnBackground, settleAfterCapture, type LiveDeps, type LivePhase, type LiveStep, type PlayerPhase, type PlayResult, type RecordResult } from "@/lib/basht-voice";
+import { CONTEXT_CALL_MS, resumeAudioContext, suspendAudioContext } from "@/lib/audio-context";
+import { AFTER_CAPTURE_MS, BACKGROUND_GRACE_MS, BACKGROUND_TEXT, createLiveSession, watchBackground, settleAfterCapture, type LiveDeps, type LivePhase, type LiveStep, type PlayerPhase, type PlayResult, type RecordResult } from "@/lib/basht-voice";
 import { deferred, flush } from "./voice-fakes";
 
 const audio: RecordResult = { audio: new Blob([new Uint8Array(2000)]), ended: "silence", ms: 1500 };
@@ -263,25 +264,79 @@ describe("live session: errors end it with a clear message, never a stuck screen
   });
 });
 
-describe("backgrounding ends the session", () => {
+describe("backgrounding: stop at once, end only if it stays hidden", () => {
   const host = () => { const ls = new Map<string, () => void>(); return { ls, addEventListener: (t: string, f: () => void) => ls.set(t, f), removeEventListener: (t: string) => ls.delete(t) }; };
-  it("visibilitychange → hidden and pagehide call onHidden; visible does not; unbinding removes both listeners", () => {
-    const doc = { ...host(), visibilityState: "visible" }, win = host();
-    const hidden = vi.fn();
-    const off = endOnBackground(hidden, { doc, win });
-    doc.ls.get("visibilitychange")!(); expect(hidden).not.toHaveBeenCalled();
-    doc.visibilityState = "hidden"; doc.ls.get("visibilitychange")!(); expect(hidden).toHaveBeenCalledTimes(1);
-    win.ls.get("pagehide")!(); expect(hidden).toHaveBeenCalledTimes(2);
-    off(); expect(doc.ls.size + win.ls.size).toBe(0);
+  const env = () => { const doc = { ...host(), visibilityState: "visible" }, win = host(); return { doc, win, set: (v: string) => { doc.visibilityState = v; doc.ls.get("visibilitychange")!(); } }; };
+  it("hidden → onHide at once, onEnd after 3 s; back within 3 s → onShow and the session lives; pagehide ends now", async () => {
+    vi.useFakeTimers();
+    const e = env(); const h = { onHide: vi.fn(), onShow: vi.fn(), onEnd: vi.fn() };
+    const off = watchBackground(h, e);
+    e.set("hidden"); expect(h.onHide).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000); e.set("visible");
+    expect(h.onShow).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000); expect(h.onEnd).not.toHaveBeenCalled(); // a quick app-switcher glance
+    e.set("hidden"); await vi.advanceTimersByTimeAsync(BACKGROUND_GRACE_MS); expect(h.onEnd).toHaveBeenCalledTimes(1);
+    e.win.ls.get("pagehide")!(); expect(h.onEnd).toHaveBeenCalledTimes(2);
+    off(); expect(e.doc.ls.size + e.win.ls.size).toBe(0);
   });
-  it("ending while listening discards the partial turn (nothing transcribed or sent) and stops playback", async () => {
+  it("a hidden event while the permission prompt is open (ignoreHide) is ignored", async () => {
+    vi.useFakeTimers();
+    const e = env(); const h = { onHide: vi.fn(), onShow: vi.fn(), onEnd: vi.fn(), ignoreHide: () => true };
+    watchBackground(h, e);
+    e.set("hidden"); await vi.advanceTimersByTimeAsync(5000);
+    expect(h.onHide).not.toHaveBeenCalled(); expect(h.onEnd).not.toHaveBeenCalled();
+  });
+  it("hidden while listening: the partial turn is discarded (never transcribed), no new recording while hidden; visible listens again", async () => {
     const t = rig();
     t.s.start(); await flush(); t.records[0].started(true);
-    t.s.end(BACKGROUND_TEXT);
-    expect(t.d.cancelRecord).toHaveBeenCalled(); expect(t.d.stopPlay).toHaveBeenCalled();
-    t.records[0].d.resolve(audio); await flush();
+    t.s.setHidden(true);
+    expect(t.d.cancelRecord).toHaveBeenCalled();
+    t.records[0].d.resolve({ audio: null, ended: "cancel", ms: 100 }); await flush();
     expect(t.log).not.toContain("transcribe");
-    expect(t.errors).toEqual([BACKGROUND_TEXT]);
+    expect(t.records).toHaveLength(1);
+    expect(t.errors).toEqual([]);
+    t.s.setHidden(false); await flush();
+    expect(t.records).toHaveLength(2);
+  });
+  it("hidden while BASHT speaks: playback stops at once and nothing records until visible; ending after the grace leaves nothing behind", async () => {
+    const t = rig();
+    t.s.start(); await toPlay(t); t.plays[0].onPlayer("playing");
+    t.s.setHidden(true);
+    expect(t.d.stopPlay).toHaveBeenCalled();
+    t.plays[0].d.resolve("stopped"); await flush();
+    expect(t.records).toHaveLength(1);
+    t.s.end(BACKGROUND_TEXT); await flush();
+    expect(t.errors).toEqual([BACKGROUND_TEXT]); expect(t.last().phase).toBe("idle");
+  });
+  it("start() is 'starting' synchronously (a hidden event right after the tap sees a running session)", () => {
+    const t = rig();
+    t.s.start();
+    expect(t.s.phase()).toBe("starting");
+  });
+});
+
+describe("bounded audio-context calls and the manual-turn context", () => {
+  it("a resume() that never settles reports false after 800 ms (the manual-turn fallback runs); a stuck suspend() is given up", async () => {
+    vi.useFakeTimers();
+    const stuck = { state: "suspended", resume: () => new Promise<void>(() => {}), suspend: () => new Promise<void>(() => {}) };
+    const r = resumeAudioContext(stuck);
+    await vi.advanceTimersByTimeAsync(CONTEXT_CALL_MS);
+    expect(await r).toBe(false);
+    const running = { ...stuck, state: "running" };
+    const p = suspendAudioContext(running); let done = false; void p.then(() => { done = true; });
+    await vi.advanceTimersByTimeAsync(CONTEXT_CALL_MS); await flush();
+    expect(done).toBe(true);
+  });
+  it("after a manual turn the settle step keeps the tap-started context running (no suspend)", async () => {
+    const o: string[] = [];
+    await settleAfterCapture({ suspend: async () => { o.push("suspend"); }, wait: async () => {}, enter: () => o.push("enter"), park: false });
+    expect(o).toEqual(["enter"]);
+    const seen: boolean[] = [];
+    const t = rig({ afterCapture: async (_l, turn) => { seen.push(turn.handsFree); } });
+    t.s.start(); await flush(); t.records[0].started(false);
+    t.records[0].d.resolve({ ...audio, ended: "stop", handsFree: false }); await flush();
+    t.transcripts[0].resolve("x"); await flush();
+    expect(seen).toEqual([false]);
   });
 });
 

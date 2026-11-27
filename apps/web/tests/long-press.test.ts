@@ -111,6 +111,22 @@ describe("a press is claimed by the voice screen, or given back", () => {
     expect(y.log.filter((l) => l === "close")).toHaveLength(2);
     expect(takeVoiceAutostart(1500)).toBeNull();
   });
+  it("an unclaimed press whose token was superseded (live screen / «استمع» took over) never closes the shared context", () => {
+    const x = deps();
+    primeVoiceFromGesture({ ...x.d, isOwner: () => false });
+    x.timers[0].f();
+    expect(x.log).not.toContain("close"); expect(x.log.filter((l) => l.startsWith("leave"))).toEqual([]);
+    const y = deps();
+    primeVoiceFromGesture({ ...y.d, isOwner: (t) => t === y.token });
+    y.timers[0].f();
+    expect(y.log.slice(-2)).toEqual(["leave:press", "close"]);
+  });
+  it("the press is single-use: a second mount (React StrictMode in next dev) finds none — production mounts once", () => {
+    const x = deps();
+    primeVoiceFromGesture(x.d);
+    expect(takeVoiceAutostart(1001)).not.toBeNull(); // first mount claims it
+    expect(takeVoiceAutostart(1002)).toBeNull();     // StrictMode's re-mount: «ابدأ المحادثة» is shown instead
+  });
   it("one failing step never skips the others", () => {
     const steps: string[] = [];
     primeVoiceFromGesture({ enter: () => { steps.push("e"); }, unlock: () => { throw new Error("blocked"); }, prime: () => steps.push("p"), now: () => 1000 });

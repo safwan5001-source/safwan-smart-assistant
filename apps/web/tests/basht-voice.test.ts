@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
 import { FakeEl } from "./voice-fakes";
+import { MANUAL_TURN_MS, STOP_GUARD_MS } from "@/lib/basht-voice";
 import { clock, createLiveSession, createVoiceNotes, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
@@ -217,6 +218,28 @@ describe("recording lifecycle (permission prompt)", () => {
     const r = await result;
     expect(r.ended).toBe("stop"); expect(r.audio?.size).toBe(2000);
     expect(m.track.stop).toHaveBeenCalled();
+  });
+});
+
+describe("recording: a recorder whose onstop never comes", () => {
+  it("the turn still ends after STOP_GUARD_MS: tracks released, nothing kept (the 60 s manual cap is guaranteed)", async () => {
+    vi.useFakeTimers();
+    try {
+      const track = { stop: vi.fn() };
+      let now = 0;
+      const rec = { state: "inactive", mimeType: "audio/webm", ondataavailable: null as null | ((e: { data: Blob }) => void), onstop: null as null | (() => void),
+        start: vi.fn(() => { rec.state = "recording"; }), stop: vi.fn(() => { /* never fires onstop */ }) };
+      const env: RecorderEnv = { getUserMedia: async () => ({ getTracks: () => [track] }), pickType: () => "audio/webm", createRecorder: () => rec,
+        levelProbe: () => null, onPhase: vi.fn(), onElapsed: vi.fn(), onError: vi.fn(), now: () => now };
+      const { result } = startRecording(env, { silence: true, maxMs: MAX_NOTE_MS });
+      await vi.advanceTimersByTimeAsync(0);
+      now = MANUAL_TURN_MS; await vi.advanceTimersByTimeAsync(200); // the manual cap fires
+      expect(rec.stop).toHaveBeenCalled();
+      expect(track.stop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(STOP_GUARD_MS);
+      expect(await result).toMatchObject({ audio: null, ended: "limit", handsFree: false });
+      expect(track.stop).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 });
 

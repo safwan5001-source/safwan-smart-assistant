@@ -8,7 +8,7 @@
  * المحادثة» button instead. A press nobody claims by the deadline (a redirect to sign-in, the screen never mounted, the dictation
  * fallback shown instead) is released: the audio session goes back to "auto" and the probe's context is closed.
  */
-import { enterVoiceSession, leaveVoiceSession, type VoiceToken } from "./audio";
+import { audioSession, enterVoiceSession, leaveVoiceSession, type VoiceToken } from "./audio";
 import { closeAudioContext } from "./audio-context";
 import { primeAudioInput, voicePlayer } from "./basht-voice";
 
@@ -22,12 +22,14 @@ export type GestureDeps = {
   enter: () => VoiceToken | void; unlock: () => void; prime: () => void;
   /** what an unclaimed press gives back at its deadline */
   leave?: (t: VoiceToken | null) => void; close?: () => void;
+  /** whether the press's token still owns the audio session (another experience may have taken it — and the shared context) */
+  isOwner?: (t: VoiceToken | null) => boolean;
   now?: () => number;
   setTimer?: (f: () => void, ms: number) => unknown; clearTimer?: (h: unknown) => void;
 };
 const browserDeps = (): GestureDeps => ({
   enter: () => enterVoiceSession("play-and-record"), unlock: () => voicePlayer().unlock(), prime: primeAudioInput,
-  leave: (t) => leaveVoiceSession(t), close: () => { void closeAudioContext(); },
+  leave: (t) => leaveVoiceSession(t), close: () => { void closeAudioContext(); }, isOwner: (t) => audioSession().isOwner(t),
 });
 
 type Press = { at: number; token: VoiceToken | null; timer: unknown; clear: (h: unknown) => void; release: () => void };
@@ -44,7 +46,13 @@ export function primeVoiceFromGesture(d: GestureDeps = browserDeps()) {
   const clear = d.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   const p: Press = {
     at: now, token, clear, timer: null,
-    release: () => { try { d.leave?.(token); } catch { /* ignore */ } try { d.close?.(); } catch { /* ignore */ } },
+    // only while this press still owns the session: if a live screen or «استمع» took over, the shared context is theirs now
+    release: () => {
+      let mine = true;
+      try { mine = d.isOwner ? d.isOwner(token) : true; } catch { mine = false; }
+      if (!mine) return;
+      try { d.leave?.(token); } catch { /* ignore */ } try { d.close?.(); } catch { /* ignore */ }
+    },
   };
   p.timer = setTimer(() => { if (press === p) { press = null; p.release(); } }, VOICE_AUTOSTART_MS);
   press = p;
