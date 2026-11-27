@@ -20,6 +20,7 @@ import { doorAccess, ownerAuthOn } from "./owner-session";
 import { handleAuth } from "./owner-auth";
 import { DECIDE_CODES, handleBashtLive } from "./basht-live";
 import { MEDIA_CODES, handleBashtExtras } from "./basht-extras";
+import { handleBashtControl } from "./basht-control";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 import { clientIp } from "./client-ip";
 
@@ -217,6 +218,9 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     const text = (r.json as { text?: unknown } | null)?.text;
     return typeof text === "string" && text.trim() ? json({ text: text.trim().slice(0, MAX_MESSAGE) }) : err("no_speech", 422);
   }
+  // B5–B7: BASHT's scheduled tasks, usage, memory (read-only) and capabilities — same gate and limits (server/basht-control.ts)
+  const control = await handleBashtControl(req, route, deps);
+  if (control) return control;
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
     if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,

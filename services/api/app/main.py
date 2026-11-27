@@ -19,6 +19,7 @@ from .internal import router as internal_router
 from .basht_chat import router as basht_chat_router
 from .basht_live import router as basht_live_router
 from .basht_media import router as basht_media_router
+from .basht_control import router as basht_control_router
 from .auth.owner import router as owner_auth_router
 from .permissions import PermissionMode, Risk, policy_matrix
 from .security import require_auth
@@ -33,6 +34,7 @@ app.include_router(browser_tasks_router)
 app.include_router(basht_chat_router)
 app.include_router(basht_live_router)
 app.include_router(basht_media_router)
+app.include_router(basht_control_router)
 app.include_router(owner_auth_router)
 # Ceilings applied BEFORE any body is buffered (independent review IR-A1). The browser routes take a ~100-byte JSON; the signed
 # prefix matches service_auth.MAX_BODY_BYTES. This layer only rejects; each route keeps its own authentication.

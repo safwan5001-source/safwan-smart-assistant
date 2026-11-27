@@ -75,6 +75,17 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/basht/media"),
     ("POST", "/internal/v1/basht/new"),
     ("POST", "/internal/v1/basht/search"),
+    # B5–B7 app control (tests/test_basht_control.py): same signature; two audited cron switches, everything else read-only
+    ("GET", "/internal/v1/basht/automations"),
+    ("GET", "/internal/v1/basht/automations/{job_id}/runs"),
+    ("POST", "/internal/v1/basht/automations/{job_id}/run"),
+    ("POST", "/internal/v1/basht/automations/{job_id}/enabled"),
+    ("GET", "/internal/v1/basht/usage"),
+    ("GET", "/internal/v1/basht/memory/status"),
+    ("POST", "/internal/v1/basht/memory/search"),
+    ("POST", "/internal/v1/basht/memory/item"),
+    ("POST", "/internal/v1/basht/memory/file"),
+    ("GET", "/internal/v1/basht/capabilities"),
     # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
     ("POST", "/internal/v1/auth/config"),
     ("POST", "/internal/v1/auth/login/code"),

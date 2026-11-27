@@ -12,7 +12,7 @@ const GROUPS: { title: string; hrefs: string[] }[] = [
   // with the HQ tab on, الملفات leaves the tab bar and lives here (same route, same on-device library)
   ...(HQ_ENABLED ? [{ title: "المكتبة", hrefs: ["/files"] }] : []),
   { title: "المتابعة", hrefs: ["/reminders", "/notifications"] },
-  { title: "باشت", hrefs: ["/calls", "/integrations"] },
+  { title: "باشت", hrefs: ["/calls", "/integrations", "/memory"] },
   { title: "التطبيق", hrefs: ["/settings"] },
 ];
 

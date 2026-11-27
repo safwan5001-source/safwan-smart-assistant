@@ -8,6 +8,7 @@ import { CATEGORY_LABEL, INTEGRATIONS, STATUS_LABEL, type IntegrationDef, type I
 import { MODES, MODE_LABEL, RISKS, RISK_LABEL, VERDICT_LABEL, evaluate, type Risk } from "@/lib/permissions";
 import { matches } from "@/lib/search";
 import { useUrlQuery } from "@/lib/hooks";
+import BashtCapabilities from "./basht-capabilities";
 
 const statusTone = (s: IntegrationStatus) => (s === "connected" ? "ok" : s === "configured_unverified" ? "warn" : undefined);
 const riskTone = (r: Risk) => (r === "sensitive" ? "danger" : r === "write" ? "warn" : "info");
@@ -25,8 +26,12 @@ export default function IntegrationsScreen() {
 
   return (
     <div className="page">
-      <PageHeader icon="integrations" eyebrow="التكاملات" title="التكاملات والصلاحيات" description="الخدمات المخطط ربطها وما يحتاجه كل ربط من صلاحيات. لا يوجد أي اتصال فعلي حتى الآن، ولا تطلب هذه الشاشة رموز وصول." />
-      <Notice tone="warn"><strong>{connected} من {items.length} خدمة متصلة.</strong> تتحول الحالة إلى «متصل» فقط بعد نجاح فحص حي من الخادم. اتصال حساباتك داخل أدوات أخرى لا يعني أن هذا التطبيق متصل بها.</Notice>
+      <PageHeader icon="integrations" eyebrow="التكاملات" title="التكاملات والصلاحيات" description="ما يستطيعه باشت الآن كما يقرؤه التطبيق من المحرك مباشرة، ثم الخدمات المخطط ربطها بالتطبيق نفسه. لا تطلب هذه الشاشة رموز وصول." />
+      <BashtCapabilities />
+
+      <details className="ctl-details card card-pad" open={!!query}>
+        <summary><strong>ربط مباشر من التطبيق (قيد التخطيط)</strong> <small className="muted num">{connected} من {items.length} متصلة</small></summary>
+      <Notice tone="warn">هذه خدمات مخطط أن يتصل بها التطبيق نفسه، ولا يوجد أي اتصال فعلي منها بعد. ما يستطيعه باشت عبر مهاراته وأدواته (مثل دفترة) يظهر أعلاه.</Notice>
 
       <div className="stack">
         <div className="search"><Icon name="search" size={18} /><input className="input" type="search" aria-label="ابحث عن خدمة" placeholder="ابحث عن خدمة…" value={query} onChange={(e) => setQuery(e.target.value)} /></div>
@@ -50,6 +55,7 @@ export default function IntegrationsScreen() {
           ))}
         </ul>
       ) : <div className="card"><Empty icon="search" title="لا خدمات مطابقة">جرّب كلمة أخرى أو غيّر الفئة.</Empty></div>}
+      </details>
 
       <section className="card card-pad stack" aria-labelledby="policy-h">
         <div><h2 id="policy-h">كيف تُدار الصلاحيات؟</h2><p className="muted" style={{ fontSize: 14 }}>يُحدَّد نمط كل مهمة في بدايتها، ويُصنَّف كل إجراء حسب خطورته. العمليات الحساسة (تحويل أموال، إرسال، حذف واسع) تحتاج موافقة صريحة خاصة بها مهما كان النمط.</p></div>
