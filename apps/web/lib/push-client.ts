@@ -186,6 +186,11 @@ export async function sendTestPush(): Promise<TestResult> {
 }
 
 let epoch = 0; // bumped by every wipe: responses of syncs started before it are discarded
+let suspended = false;
+/** For a local wipe: answers of syncs already in flight are discarded and no new sync runs until `resumeSync()`, so nothing can
+ *  re-import reminders into the stores being cleared. */
+export function suspendSync() { suspended = true; epoch++; clearRetry(); }
+export function resumeSync() { suspended = false; }
 /** A sync that failed for a TRANSIENT reason (network, 429, 5xx) is retried with a bounded exponential backoff until it succeeds, so a
  *  saved edit/deletion can never stay unapplied on the push server (where the old notification would still fire). */
 export const syncRetry = { baseMs: 5_000, maxMs: 300_000 };
@@ -206,12 +211,13 @@ export async function syncReminders(): Promise<boolean> {
   return inflight;
 }
 async function doSync(): Promise<boolean> {
+  if (suspended) return false; // a wipe is running
   const device = pushDeviceStore.getSnapshot();
   if (!device?.subscribed || device.erasePending) { clearRetry(); return false; } // never re-import server rows of a device whose erasure is pending
   const sentTombs = tombstonesStore.getSnapshot();
   const ep = epoch, did = device.deviceId;
   const r = await api("PUT", "/reminders/sync", { reminders: remindersStore.getSnapshot(), deleted: sentTombs, prefs: toServerPrefs(prefsStore.getSnapshot()) }, device);
-  if (ep !== epoch || pushDeviceStore.getSnapshot()?.deviceId !== did) return false; // a wipe/re-registration happened meanwhile: never import this stale answer
+  if (suspended || ep !== epoch || pushDeviceStore.getSnapshot()?.deviceId !== did) return false; // a wipe/re-registration happened meanwhile: never import this stale answer
   if (r.status === 401) { clearRetry(); pushDeviceStore.reset(); return false; }   // server forgot us (erased / expired)
   if (r.status === 409) { clearRetry(); setSubscribed(false); return false; }      // subscription removed server-side
   if (r.status === 0 || r.status === 429 || r.status >= 500) { armRetry(); return false; } // transient: try again later

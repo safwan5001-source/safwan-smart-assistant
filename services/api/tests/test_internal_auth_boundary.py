@@ -70,6 +70,7 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/auth/sessions/revoke"),
     ("POST", "/internal/v1/auth/passkeys/list"),
     ("POST", "/internal/v1/auth/passkeys/delete"),
+    ("POST", "/internal/v1/auth/passkeys/delete-all"),
     ("POST", "/internal/v1/auth/passkeys/register/options"),
     ("POST", "/internal/v1/auth/passkeys/register/verify"),
     ("POST", "/internal/v1/auth/passkeys/login/options"),

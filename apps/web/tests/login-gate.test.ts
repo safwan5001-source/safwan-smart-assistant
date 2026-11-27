@@ -4,7 +4,7 @@ import { loginHref, safeNext } from "@/lib/login-path";
 import { expiredLoginHref } from "@/components/owner-gate";
 import { deviceLabel } from "@/server/device-label";
 import { handleAuth, resetAuthLimits, type Deps } from "@/server/owner-auth";
-import { resetOwnerSessionCache, SESSION_COOKIE } from "@/server/owner-session";
+import { resetOwnerSessionCache, SESSION_COOKIE, sessionCookieValue } from "@/server/owner-session";
 
 // ── the middleware talks to the API through callBackend: one fake for the whole file ──
 type Reply = { kind: "ok"; status: number; json: unknown } | { kind: "unreachable" };
@@ -20,7 +20,7 @@ const api = (path: string, body: Record<string, unknown>): Reply => {
   if (path.endsWith("/session")) return body.session === GOOD ? ok(200, { account_id: "a" }) : ok(400, { detail: { code: "unauthorized" } });
   return ok(404, {});
 };
-const page = (path: string, cookie?: string) => new NextRequest(BASE + path, { headers: cookie ? { cookie: `${SESSION_COOKIE}=${cookie}` } : {} });
+const page = (path: string, cookie?: string) => new NextRequest(BASE + path, { headers: cookie ? { cookie: `${SESSION_COOKIE}=${sessionCookieValue(cookie, { SERVICE_AUTH_SECRET: "s".repeat(48) })}` } : {} });
 const where = (r: Response) => { const l = r.headers.get("location"); return l ? new URL(l).pathname + new URL(l).search : null; };
 
 beforeEach(() => {
@@ -102,7 +102,7 @@ describe("devices & sessions", () => {
     callBackend: ((a: { path: string; body: Record<string, unknown> }) => backend(a)) as unknown as Deps["callBackend"], now: () => 1_800_000_000_000 });
   const same = { origin: BASE, host: HOST, "sec-fetch-site": "same-origin" };
   const req = (method: string, path: string, cookie: string, body?: unknown) =>
-    new Request(`${BASE}/api/auth/${path}`, { method, headers: { ...same, cookie: `${SESSION_COOKIE}=${cookie}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    new Request(`${BASE}/api/auth/${path}`, { method, headers: { ...same, cookie: `${SESSION_COOKIE}=${sessionCookieValue(cookie, { SERVICE_AUTH_SECRET: "s".repeat(48) })}`, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const ID = "0b5c1d0e-1111-4222-8333-444455556666";
 
   it("ending another device never signs this one out, even if a later lookup would fail", async () => {

@@ -5,19 +5,30 @@ import { createPgStore } from "./pg-store";
 import { createWebPushSender, type PushSender } from "./push";
 import { dispatchTick } from "./dispatch";
 import type { NotifyStore } from "./types";
+import { callBackend } from "../backend";
+import { checkOwnerSession, ownerAuthOn } from "../owner-session";
 
 export type StoreKind = "postgres" | "memory" | "none";
+/** May this request register a new device? "ok" while unified sign-in (OWNER_AUTH) is off, else only with a valid owner session. */
+export type OwnerGate = (req: Request) => Promise<"ok" | "unauthorized" | "unavailable">;
 export type Runtime = {
-  cfg: NotifyConfig; store: NotifyStore | null; storeKind: StoreKind; send: PushSender | null; now: () => number;
+  cfg: NotifyConfig; store: NotifyStore | null; storeKind: StoreKind; send: PushSender | null; now: () => number; ownerGate: OwnerGate;
 };
 
-export function buildRuntime(cfg: NotifyConfig = readNotifyConfig(), over: Partial<Pick<Runtime, "store" | "send" | "now">> = {}): Runtime {
+/** Security review M4: with the login gate on, device registration is behind the same owner session as every other door. */
+export const sessionOwnerGate = (env: Record<string, string | undefined> = process.env, call: typeof callBackend = callBackend): OwnerGate => async (req) => {
+  if (!ownerAuthOn(env)) return "ok";
+  const { account, outage } = await checkOwnerSession(req, { env, callBackend: call, now: Date.now });
+  return account ? "ok" : outage ? "unavailable" : "unauthorized";
+};
+
+export function buildRuntime(cfg: NotifyConfig = readNotifyConfig(), over: Partial<Pick<Runtime, "store" | "send" | "now" | "ownerGate">> = {}): Runtime {
   let store: NotifyStore | null = over.store ?? null;
   let storeKind: StoreKind = over.store ? "memory" : "none";
   if (!store && cfg.databaseUrl) { store = createPgStore(cfg.databaseUrl); storeKind = "postgres"; }
   else if (!store && cfg.allowMemory) { store = createMemoryStore(); storeKind = "memory"; }
   const send = over.send ?? (cfg.push ? createWebPushSender(cfg.push) : null);
-  return { cfg, store, storeKind, send, now: over.now ?? Date.now };
+  return { cfg, store, storeKind, send, now: over.now ?? Date.now, ownerGate: over.ownerGate ?? sessionOwnerGate() };
 }
 /** Push is usable only when keys AND a store are configured. */
 export const isReady = (rt: Runtime) => !!rt.cfg.push && !!rt.store && !!rt.send;

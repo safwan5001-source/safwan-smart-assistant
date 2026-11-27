@@ -1,7 +1,8 @@
 "use client";
 /**
  * «الدخول والأمان»: the owner's sessions and devices. Lists every live session by device (this one marked), ends any one of them,
- * signs out here or everywhere — then goes to the login page. Face ID (passkeys) is managed here once the permanent domain is set.
+ * signs out here or everywhere — then clears this device's private data and goes to the login page. Face ID (passkeys) is managed
+ * here once the permanent domain is set: adding one asks for the owner code again (step-up), and all of them can be removed at once.
  * Renders nothing while unified sign-in is off (legacy per-door codes).
  */
 import { useCallback, useEffect, useState } from "react";
@@ -12,6 +13,9 @@ import { useOwnerGate } from "@/components/owner-gate";
 import { formatTime } from "@/lib/format";
 import { LOGIN_PATH } from "@/lib/login-path";
 import { authClient, AuthError, passkeysSupported, type AuthStatus, type OwnerSession, type Passkey } from "@/lib/owner-auth";
+import { clearPrivateData, markLeaving, signOut, wipeLeftovers, type WipeResult } from "@/lib/sign-out";
+
+const WIPE_NOTE = "تُمسح من هذا الجهاز بياناته المحلية: المهام والمحادثات المحلية والتذكيرات والإشعارات والملفات.";
 
 const when = (iso: string | null) => (iso ? formatTime(Date.parse(iso)) : "");
 
@@ -34,28 +38,46 @@ export default function SecuritySettings() {
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { if (status && !status.unavailable && status.owner_auth && !status.authenticated) ownerGate.signInAgain(); }, [status, ownerGate]);
 
-  const run = async (fn: () => Promise<boolean | void>, ok: string) => {
+  // Signed out: go to the login page — but first say plainly if anything private stayed on this device (never a silent "done").
+  const leave = async (wipe: WipeResult | null) => {
+    const left = wipe ? wipeLeftovers(wipe) : [];
+    if (left.length) await confirm({ title: "خرجت، لكن بقي شيء على هذا الجهاز", message: `تعذّر حذف: ${left.join("، ")}. يمكنك مسح بيانات الموقع من إعدادات المتصفح.`, confirmLabel: "حسنًا" });
+    window.location.assign(LOGIN_PATH);
+  };
+  const run = async (fn: () => Promise<boolean | void | WipeResult>, ok: string) => {
     if (busy) return;
     setBusy(true); setError("");
     try {
-      const signedOut = await fn();
-      if (signedOut === true) { window.location.assign(LOGIN_PATH); return; }
+      const out = await fn();
+      if (out === true) { await leave(null); return; }
+      if (out && typeof out === "object") { await leave(out); return; }
       toast(ok); await load();
     } catch (e) { setError(e instanceof AuthError ? e.message : "تعذّر إكمال الطلب."); }
     finally { setBusy(false); }
   };
   const end = async (x: OwnerSession) => {
     if (!(await confirm({ title: `إنهاء جلسة «${x.device ?? "جهاز"}»؟`, message: "يُطلب الدخول من جديد على ذلك الجهاز.", confirmLabel: "إنهاء الجلسة", tone: "danger" }))) return;
-    await run(() => authClient.endSession(x.id), "أُنهيت الجلسة");
+    await run(async () => { const own = await authClient.endSession(x.id); if (!own) return false; markLeaving(); return clearPrivateData(); }, "أُنهيت الجلسة");
   };
   const signOutAll = async () => {
-    if (!(await confirm({ title: "الخروج من كل الأجهزة؟", message: "تنتهي كل جلسات المالك فورًا، ومنها هذا الجهاز.", confirmLabel: "خروج من الكل", tone: "danger" }))) return;
-    await run(async () => { await authClient.logout(true); return true; }, "");
+    if (!(await confirm({ title: "الخروج من كل الأجهزة؟", message: `تنتهي كل جلسات المالك فورًا، ومنها هذا الجهاز. تبقى أجهزة Face ID مسجّلة (أزلها من قسم Face ID إن لزم). ${WIPE_NOTE}`, confirmLabel: "خروج من الكل", tone: "danger" }))) return;
+    await run(() => signOut(true), "");
+  };
+  const signOutHere = async () => {
+    if (!(await confirm({ title: "الخروج من هذا الجهاز؟", message: WIPE_NOTE, confirmLabel: "خروج", tone: "danger" }))) return;
+    await run(() => signOut(), "");
   };
   const addFaceId = async () => {
     const name = await prompt({ title: "اسم هذا الجهاز", label: "يظهر في قائمة الأجهزة لتعرفه لاحقًا", initial: "iPhone", confirmLabel: "متابعة", maxLength: 60 });
     if (name === null) return;
-    await run(() => authClient.registerPasskey(name), "تمت إضافة Face ID لهذا الجهاز");
+    // step-up: adding a lasting sign-in method needs the owner code again (a session alone is not enough)
+    const code = await prompt({ title: "أكّد رمز المالك", label: "لإضافة Face ID أدخل رمز المالك مرة أخرى", confirmLabel: "متابعة", maxLength: 256, secret: true });
+    if (code === null) return;
+    await run(() => authClient.registerPasskey(name, code.trim()), "تمت إضافة Face ID لهذا الجهاز");
+  };
+  const removeAllKeys = async () => {
+    if (!(await confirm({ title: "إزالة كل أجهزة Face ID؟", message: "لن يتمكن أي جهاز من الدخول بـ Face ID بعد الآن. يبقى الدخول برمز المالك متاحًا.", confirmLabel: "إزالة الكل", tone: "danger" }))) return;
+    await run(() => authClient.removeAllPasskeys(), "أُزيلت كل أجهزة Face ID");
   };
   const removeKey = async (k: Passkey) => {
     if (!(await confirm({ title: `إزالة «${k.name}»؟`, message: "لن يتمكن هذا الجهاز من الدخول بـ Face ID بعد الآن. يبقى الدخول برمز المالك متاحًا.", confirmLabel: "إزالة", tone: "danger" }))) return;
@@ -81,7 +103,7 @@ export default function SecuritySettings() {
                   <small className="muted">{x.last_seen_at ? `آخر نشاط ${when(x.last_seen_at)}` : `بدأت ${when(x.created_at)}`} · {x.remember ? "متذكَّر 30 يومًا" : "جلسة 12 ساعة"} · تنتهي {when(x.expires_at)}</small>
                 </span>
                 {x.current
-                  ? <button className="btn btn-sm" onClick={() => void run(async () => { await authClient.logout(); return true; }, "")} disabled={busy}>خروج</button>
+                  ? <button className="btn btn-sm" onClick={() => void signOutHere()} disabled={busy}>خروج</button>
                   : <button className="btn btn-sm" onClick={() => void end(x)} disabled={busy} aria-label={`إنهاء جلسة ${x.device ?? "جهاز"}`}>إنهاء</button>}
               </li>
             ))}
@@ -107,12 +129,13 @@ export default function SecuritySettings() {
             {passkeysSupported()
               ? <button className="btn" onClick={() => void addFaceId()} disabled={busy} style={{ justifySelf: "start" }}><Icon name="shield" size={18} />إضافة Face ID لهذا الجهاز</button>
               : <small className="muted">هذا المتصفح لا يدعم مفاتيح المرور.</small>}
+            {keys !== null && keys.length > 0 && <button className="btn" onClick={() => void removeAllKeys()} disabled={busy} style={{ justifySelf: "start" }}>إزالة كل أجهزة Face ID</button>}
           </>
         )}
       </div>
 
       <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        <button className="btn" onClick={() => void run(async () => { await authClient.logout(); return true; }, "")} disabled={busy}>خروج من هذا الجهاز</button>
+        <button className="btn" onClick={() => void signOutHere()} disabled={busy}>خروج من هذا الجهاز</button>
         <button className="btn" onClick={() => void signOutAll()} disabled={busy}>خروج من كل الأجهزة</button>
       </div>
       {error && <Notice tone="warn" role="alert">{error}</Notice>}

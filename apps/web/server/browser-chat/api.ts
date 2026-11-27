@@ -15,6 +15,7 @@ import { isolateScopes, readScopes, sessionResultOk, sessionStartUrl, sessionTar
 import { doorAccess, ownerAuthOn } from "../owner-session";
 import { handleAuth } from "../owner-auth";
 import { COOKIE_NAME, COOKIE_PATH, codeMatches, issueCookieValue, readCookie, readGate, setCookieHeader, verifyCookieValue, type Env } from "./gate";
+import { clientIp } from "../client-ip";
 
 const BASE = "/internal/v1/browser/tasks";
 const MAX_BODY = 2048;
@@ -51,7 +52,6 @@ const limiters = {
   create: createLimiter(6, 60_000), poll: createLimiter(240, 60_000), cancel: createLimiter(20, 60_000),
   act: createLimiter(40, 60_000), decide: createLimiter(30, 60_000),
 };
-const clientIp = (req: Request) => (req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "unknown").slice(0, 64);
 
 /** State-changing calls must come from our own page: Origin present and equal to Host (a cross-site form/fetch cannot forge Origin). */
 export function sameOrigin(req: Request): boolean {
