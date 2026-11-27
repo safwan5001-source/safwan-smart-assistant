@@ -459,9 +459,10 @@ a.attn-item:hover { border-color: var(--accent-border); }
 /* iPhone pass: the draft grows with its text (up to max-height) where supported; while typing on a phone the standing note gives its
    lines back to the conversation (the keyboard already takes half the screen) */
 .composer .textarea { field-sizing: content; }
-/* Only while the DRAFT has focus (not any composer button): a tap on the mic/attach button that focused it would otherwise remove
-   the note mid-press, move the button and lose the tap (integration fix, see chat-screen.tsx onMouseDown on .composer). */
-@media (max-width: 899px) { .composer:has(.textarea:focus) .composer-note { display: none; } }
+/* Keyed to the draft's CONTENT, never to focus: a focus change happens between press and release of a tap (the draft blurs, a
+   button takes focus), and a note appearing/disappearing then moves the composer under the finger and the tap is lost (integration
+   fix: the mic, attach and send buttons, and a file chip's download in the timeline, all lost their first tap). */
+@media (max-width: 899px) { .composer:has(.textarea:not(:placeholder-shown)) .composer-note { display: none; } }
 /* 44px touch targets without growing the bubble: the small message actions get an invisible hit area */
 .bubble .meta { gap: 8px; }
 .bubble .meta .icon-btn.sm::after { content: ""; position: absolute; inset: -4px; }
