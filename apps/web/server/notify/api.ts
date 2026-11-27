@@ -52,7 +52,8 @@ export async function handleNotify(req: Request, path: string[], rt: Runtime): P
       if (!bearerMatches(req, rt.cfg.dispatchSecret)) return err("unauthorized", 401);
       if (!isReady(rt)) return err("not_configured", 503);
       const basht = await pollBasht(rt);
-      return json({ ...(await dispatchTick(rt.store!, rt.send!, now)), ...(basht?.polled ? { basht } : {}) });
+      // a fresh clock after the poll (as the in-process loop does): deliveries it just queued are due now, not next minute
+      return json({ ...(await dispatchTick(rt.store!, rt.send!, rt.now())), ...(basht?.polled ? { basht } : {}) });
     }
     if (!isReady(rt)) return err("not_configured", 503);
     const store = rt.store!;

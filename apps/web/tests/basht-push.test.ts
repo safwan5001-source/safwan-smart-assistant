@@ -171,6 +171,21 @@ describe("B4: polling the feed into deliveries", () => {
     expect(asked).toEqual({ path: "/internal/v1/basht/events", method: "POST", body: { after: 42 }, timeoutMs: 15_000, maxBytes: 512 * 1024 });
   });
 
+  it("Codex #7: the external POST /dispatch sends what the BASHT poll just queued in the same call (fresh clock after the poll)", async () => {
+    const { store } = await setup();
+    const { sent, send } = fakeSender();
+    await store.setCursor(CURSOR, JSON.stringify({ after: 0, epoch: "e1", offlineSince: null, offlineNotified: false, initialized: true }), NOW);
+    let t = NOW;
+    const rt = makeRuntime({ store, send, now: () => (t += 1) }); // the clock moves between the two calls
+    rt.bashtFeed = feedOf(ok([approval(1)])).feed;
+    const res = await handleNotify(req("POST", undefined, { authorization: `Bearer ${"s".repeat(32)}` }), ["dispatch"], rt);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { sent: number; basht?: { queued: number } };
+    expect(body.basht?.queued).toBe(1);
+    expect(body.sent).toBe(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it("goes out through the existing dispatcher: TTL, urgency, quiet hours, and nothing when push is not configured", async () => {
     const { store, id } = await setup(true, { quiet: { enabled: true, start: "23:00", end: "07:00", allowCritical: false } });
     const { sent, send } = fakeSender();
