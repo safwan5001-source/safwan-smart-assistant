@@ -98,3 +98,18 @@ export function createApprovalsClient(fetchImpl: Fetch = (...a) => fetch(...a)) 
   };
 }
 export const approvalsClient = createApprovalsClient();
+
+/**
+ * Approval polls never overlap: a periodic poll while another is still in flight is skipped, so a server slower than the poll
+ * interval still updates the screen (each answer is no longer invalidated by the next tick). An explicit refresh (`force`, e.g.
+ * after a decision) supersedes the one in flight; only the newest started poll may apply its answer.
+ */
+export function pollGate() {
+  let gen = 0;
+  let busy = false;
+  return {
+    begin(force = false): number | null { if (busy && !force) return null; busy = true; return ++gen; },
+    /** true when this poll is still the newest (apply its answer); frees the gate for the next tick. */
+    end(token: number): boolean { if (token !== gen) return false; busy = false; return true; },
+  };
+}

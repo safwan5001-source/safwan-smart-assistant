@@ -138,3 +138,23 @@ describe("approvals UI helpers", () => {
     await expect(createApprovalsClient((async () => { throw new Error("x"); }) as typeof fetch).list()).rejects.toBeInstanceOf(ApprovalError);
   });
 });
+
+describe("approval polls never overlap (Codex review on #62)", () => {
+  it("a server slower than the poll interval still updates the screen; a forced refresh supersedes", async () => {
+    const { pollGate } = await import("@/lib/basht-approvals");
+    const gate = pollGate();
+    const shown: string[] = [];
+    // a 4 s answer with a 3 s interval: the next tick is skipped instead of invalidating the answer in flight
+    const first = gate.begin();
+    expect(first).not.toBeNull();
+    expect(gate.begin()).toBeNull(); // tick while in flight → skipped
+    if (gate.end(first!)) shown.push("slow answer");
+    expect(shown).toEqual(["slow answer"]);
+    // after a decision: a forced refresh wins over a poll still in flight
+    const tick = gate.begin()!;
+    const forced = gate.begin(true)!;
+    expect(gate.end(tick)).toBe(false);
+    expect(gate.end(forced)).toBe(true);
+    expect(gate.begin()).not.toBeNull(); // the gate is free again
+  });
+});

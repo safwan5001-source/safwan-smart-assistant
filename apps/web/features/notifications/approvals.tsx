@@ -9,7 +9,7 @@ import Icon from "@/components/icon";
 import { Badge, Empty, ListSkeleton, Notice } from "@/components/ui";
 import { useDialogs } from "@/components/dialogs";
 import {
-  approvalsClient, answerable, ApprovalError, confirmCopy, countdown, DECISION_LABEL, KIND_LABEL, outcomeText, SESSION_LABEL,
+  approvalsClient, answerable, pollGate, ApprovalError, confirmCopy, countdown, DECISION_LABEL, KIND_LABEL, outcomeText, SESSION_LABEL,
   type DecidedApproval, type Decision, type PendingApproval,
 } from "@/lib/basht-approvals";
 import "./approvals.css";
@@ -21,26 +21,29 @@ export function useApprovals(intervalMs: number, enabled = true) {
   const [view, setView] = useState<ApprovalsView>("loading");
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [error, setError] = useState("");
-  const gen = useRef(0);
-  const refresh = useCallback(async () => {
-    const g = ++gen.current;
+  const gate = useRef(pollGate()).current;
+  // periodic polls skip while one is in flight (a slow server still gets its answer shown); `refresh()` from a decision forces
+  const poll = useCallback(async (force: boolean) => {
+    const g = gate.begin(force);
+    if (g === null) return;
     try {
       const s = await approvalsClient.list();
-      if (g !== gen.current) return;
+      if (!gate.end(g)) return;
       setApprovals(s.approvals); setError("");
       setView(s.available ? "ok" : "down");
     } catch (e) {
-      if (g !== gen.current) return;
+      if (!gate.end(g)) return;
       const code = e instanceof ApprovalError ? e.code : "unavailable";
       setView(code === "unauthorized" ? "locked" : code === "disabled" ? "disabled" : code === "link_down" ? "down" : "error");
       setError(e instanceof Error ? e.message : "");
     }
-  }, []);
+  }, [gate]);
+  const refresh = useCallback(() => poll(true), [poll]);
   useEffect(() => {
     if (!enabled) return;
-    void refresh();
-    const t = setInterval(() => { if (typeof document === "undefined" || document.visibilityState === "visible") void refresh(); }, intervalMs);
-    const onVis = () => { if (document.visibilityState === "visible") void refresh(); };
+    void poll(false);
+    const t = setInterval(() => { if (typeof document === "undefined" || document.visibilityState === "visible") void poll(false); }, intervalMs);
+    const onVis = () => { if (document.visibilityState === "visible") void poll(false); };
     document.addEventListener("visibilitychange", onVis);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, [enabled, intervalMs, refresh]);
