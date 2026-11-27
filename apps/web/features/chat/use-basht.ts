@@ -271,6 +271,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     try {
       const page = await bashtClient.historyPage(k, { around: messageId });
       if (keyRef.current !== k || gen !== loadGen.current) return;
+      viewGen.current++; // an older page requested while this window loaded belongs to the previous view: it is dropped
       olderRowsRef.current = []; windowedRef.current = true;
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
     } catch (e) { setError(errText(e)); }
