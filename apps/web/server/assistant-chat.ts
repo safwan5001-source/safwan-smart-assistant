@@ -61,7 +61,8 @@ export async function handleAssistantChat(req: Request, path: string[], deps: De
   if (!access.enabled) return err("disabled", 503);
 
   if (route === "session") {
-    if (ownerAuthOn(deps.env) && req.method === "POST") return handleAuth(req, ["login", "code"], { env: deps.env, callBackend: deps.callBackend, now: deps.now }); // A1
+    if (ownerAuthOn(deps.env) && (req.method === "POST" || req.method === "DELETE")) // A1: unlock = sign in, lock = sign out (one session)
+      return handleAuth(req, req.method === "POST" ? ["login", "code"] : ["logout"], { env: deps.env, callBackend: deps.callBackend, now: deps.now });
     if (!gate) return err("disabled", 503);
     if (!sameOrigin(req)) return err("forbidden", 403);
     if (req.method === "DELETE") return json({ authenticated: false }, 200, { "Set-Cookie": `${COOKIE_NAME}=; Path=${COOKIE_PATH}; Max-Age=0; HttpOnly; SameSite=Strict${deps.env.NODE_ENV === "production" ? "; Secure" : ""}` });

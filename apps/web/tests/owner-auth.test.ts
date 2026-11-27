@@ -176,10 +176,12 @@ describe("one session opens every door", () => {
   const basht = (method: string, path: string, headers: Record<string, string>, body?: unknown, e: Record<string, string> = bashtEnv) =>
     handleBashtChat(new Request(`https://${HOST}/api/basht/${path}`, { method, headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) }), path.split("/"), { env: e, callBackend: backend as unknown as Deps["callBackend"], now: () => NOW });
 
-  it("doorAccess: legacy cookie wins without a lookup; owner session needs OWNER_AUTH=on; no cookie → no API call", async () => {
+  it("doorAccess: with OWNER_AUTH on only the owner session counts; a legacy cookie works only while it is off; no cookie → no API call", async () => {
     const d = deps();
-    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: false, ok: true })).toEqual({ enabled: true, authenticated: true, account: null , outage: false });
-    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: false, account: null , outage: false });
+    // review fix: a per-door cookie from before the switch must not keep a door open after signing out of the app
+    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: true, ok: true })).toEqual({ enabled: true, authenticated: false, account: null, outage: false });
+    expect(await doorAccess(new Request(`https://${HOST}/x`), deps({ env: base }), { on: true, ok: true })).toEqual({ enabled: true, authenticated: true, account: null, outage: false });
+    expect(await doorAccess(new Request(`https://${HOST}/x`), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: false, account: null, outage: false });
     expect(backend).not.toHaveBeenCalled();
     expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), d, { on: false, ok: false })).toEqual({ enabled: true, authenticated: true, account: ACCOUNT , outage: false });
     expect(await doorAccess(new Request(`https://${HOST}/x`, { headers: withSession() }), deps({ env: base }), { on: false, ok: false })).toEqual({ enabled: false, authenticated: false, account: null , outage: false });
@@ -217,5 +219,39 @@ describe("review fixes (gate): an outage is never a sign-out", () => {
   it("signed-in routes: 503 during an outage, 401 only when the API said no", async () => {
     expect((await call("GET", "passkeys", withSession(), undefined, sessionDown())).status).toBe(503);
     expect((await call("GET", "passkeys", withSession(OTHER))).status).toBe(401);
+  });
+});
+
+describe("review fixes (#57)", () => {
+  it("sign-out reports a revocation failure and KEEPS the cookie so the owner can retry", async () => {
+    const d = deps({ callBackend: (async (a: Call) => (a.path.endsWith("config") ? ok(200, api.config) : a.path.endsWith("logout-all") ? { kind: "unreachable" } : backend(a))) as unknown as Deps["callBackend"] });
+    const r = await call("POST", "logout-all", withSession(), undefined, d);
+    expect(r.status).toBe(503);
+    expect(r.headers.get("set-cookie")).toBeNull();
+  });
+  it("a session the API no longer knows is simply signed out", async () => {
+    const d = deps({ callBackend: (async (a: Call) => (a.path.endsWith("config") ? ok(200, api.config) : a.path.endsWith("/logout") ? no("unauthorized") : backend(a))) as unknown as Deps["callBackend"] });
+    expect((await call("POST", "logout", withSession(), undefined, d)).status).toBe(200);
+  });
+  it("sign-out also expires the per-door cookies of the transition", async () => {
+    const cookies = (await call("POST", "logout", withSession())).headers.getSetCookie();
+    for (const [name, path] of [["safwan_ai", "/api/assistant"], ["safwan_bc", "/api/browser"], ["safwan_basht", "/api/basht"]])
+      expect(cookies.some((c) => c.startsWith(`${name}=;`) && c.includes(`Path=${path};`) && c.includes("Max-Age=0")), name).toBe(true);
+  });
+  it("each door's legacy lock (DELETE …/session) signs out of the app", async () => {
+    const { handleAssistantChat } = await import("@/server/assistant-chat");
+    const { handleBrowserChat } = await import("@/server/browser-chat/api");
+    const e = { ...env, BASHT_CHAT_ACCESS_CODE: "basht-owner-code-0123456789-abcdefghijkl" };
+    const d = { env: e, callBackend: backend as unknown as Deps["callBackend"], now: () => NOW };
+    const mk = (door: string) => new Request(`https://${HOST}/api/${door}/session`, { method: "DELETE", headers: withSession() });
+    for (const [name, res] of [
+      ["basht", await handleBashtChat(mk("basht"), ["session"], d)],
+      ["assistant", await handleAssistantChat(mk("assistant"), ["session"], d as never)],
+      ["browser", await handleBrowserChat(mk("browser"), ["session"], d as never)],
+    ] as const) {
+      expect(res.status, name).toBe(200);
+      expect(res.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE}=;`)), name).toBe(true);
+    }
+    expect(onlyAuthPaths().filter((p) => p === "logout").length).toBe(3);
   });
 });
