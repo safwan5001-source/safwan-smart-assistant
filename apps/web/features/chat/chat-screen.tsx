@@ -177,6 +177,8 @@ export default function ChatScreen() {
   const send = async () => {
     const text = draft.trim();
     const photos = bashtOn ? pics.images : [];
+    // same barrier as the send button (Enter submits here too): never send while photos are still being prepared
+    if (bashtOn && pics.preparing) { setNotice("انتظر حتى تُجهَّز الصور، ثم أرسل."); return; }
     if ((!text && !attachments.length && !photos.length) || busy || view.kind !== "main") return;
     setBusy(true); dictation.abort();
     try {
