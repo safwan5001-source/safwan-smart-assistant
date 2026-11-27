@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
-import { clock, createLiveSession, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
+import { clock, createLiveSession, createVoiceNotes, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
 const src = (p: string) => readFileSync(join(WEB, p), "utf8");
@@ -138,9 +138,12 @@ describe("one conversation, one mic", () => {
     expect(chat).toMatch(/const noteMode = voiceOn && recorder\.supported && voiceAvail\.transcribe !== "no";/);
   });
   it("a voice note goes through the same send path, is marked, and is never claimed as sent when it was not", () => {
-    expect(chat).toMatch(/await basht\.send\(voiceNoteText\(text\)\)/);
-    expect(chat).toMatch(/catch \(e\) \{ setAgentPhase\("reply_failed"\); setDraft\(text\);/);
-    expect(chat).toMatch(/if \(!ready \|\| basht\.live\) \{ setDraft\(text\);/);
+    expect(chat).toMatch(/send: async \(text\) => \{ try \{ await noteDeps\.current\.basht\.send\(text\); \}/); // the same send path
+    expect(chat).toMatch(/canSend: \(\) => sendable\.current/);
+    expect(chat).toMatch(/notes\.current\?\.cancel\(\); setDraft\(""\)/); // a composer reset cancels the note in flight
+    const lib = src("lib/basht-voice.ts");
+    expect(lib).toMatch(/await d\.send\(voiceNoteText\(text\)\)/);
+    expect(lib).toMatch(/if \(!d\.canSend\(\)\) \{ d\.setDraft\(text\);/);
   });
   it("«استمع» is on BASHT's replies only, and the live session speaks in the same conversation", () => {
     expect(chat).toMatch(/\{m\.role === "assistant" && <ListenButton id=\{key\} text=\{m\.text\} \/>\}/);
@@ -262,5 +265,74 @@ describe("live voice session (restart race)", () => {
     t.replies[0].resolve("رد"); await tick(); await tick();
     expect(t.calls.ask).toEqual(["[رسالة صوتية] جديد"]);
     expect(t.calls.play).toEqual(["رد"]);
+  });
+});
+
+
+describe("one microphone owner (composer note vs live panel)", () => {
+  it("a new recording cancels the one in progress: a hidden voice note never keeps recording (or sends) behind the voice panel", async () => {
+    const note = fakeMic(), live = fakeMic();
+    const a = startRecording(note.env); note.grant(); await new Promise((r) => setTimeout(r, 0));
+    expect(note.recorders[0].start).toHaveBeenCalled();  // the composer's voice note is recording
+    const b = startRecording(live.env);                   // the live session takes the microphone
+    expect(note.track.stop).toHaveBeenCalled();           // the hidden note's mic is released at once
+    const ra = await a.result;
+    expect(ra).toMatchObject({ audio: null, ended: "cancel" }); // nothing kept, so nothing is transcribed or sent
+    expect(note.track.stop).toHaveBeenCalled();
+    live.grant(); await new Promise((r) => setTimeout(r, 0));
+    expect(live.recorders[0].start).toHaveBeenCalled();
+    b.handle.stop();
+    expect((await b.result).audio?.size).toBe(2000);
+  });
+  it("opening the voice panel cancels a composer recording", () => {
+    const chat = src("features/chat/chat-screen.tsx");
+    expect(chat).toMatch(/const openVoice = \(\) => \{ recorder\.cancel\(\); setVoice\(true\); \};/);
+    expect(chat).not.toMatch(/setVoice\(true\)(?!; \};)/);
+  });
+});
+
+describe("voice note operation (switching conversations)", () => {
+  function noteRig(canSend = true) {
+    const tr = deferred<string>();
+    let signal: AbortSignal | null = null;
+    const calls = { send: [] as string[], draft: [] as string[], notice: [] as string[], busy: [] as boolean[] };
+    let sendable = canSend;
+    const n = createVoiceNotes({
+      transcribe: (_a, s) => { signal = s; return tr.promise; },
+      canSend: () => sendable,
+      send: async (t) => { calls.send.push(t); },
+      setDraft: (t) => calls.draft.push(t), setNotice: (m) => calls.notice.push(m), setBusy: (b) => calls.busy.push(b),
+    });
+    return { n, tr, calls, signal: () => signal, setSendable: (v: boolean) => { sendable = v; } };
+  }
+  const blob = new Blob([new Uint8Array(2000)]);
+
+  it("a transcript that arrives after the composer was reset is never sent, and writes no draft or notice", async () => {
+    const t = noteRig();
+    const done = t.n.run(blob);
+    t.n.cancel();                              // the owner switched conversations while it was transcribing
+    expect(t.signal()?.aborted).toBe(true);    // the upload is aborted
+    t.tr.resolve("ملاحظة قديمة");
+    expect(await done).toBe("cancelled");
+    expect(t.calls).toMatchObject({ send: [], draft: [], notice: [] });
+    expect(t.calls.busy.at(-1)).toBe(false);
+  });
+  it("a failure after the reset never overwrites the new draft", async () => {
+    const t = noteRig();
+    const done = t.n.run(blob);
+    t.n.cancel();
+    t.tr.reject(new BashtError("unavailable"));
+    expect(await done).toBe("cancelled");
+    expect(t.calls).toMatchObject({ draft: [], notice: [] });
+  });
+  it("whether BASHT can take it is decided when the transcript is back, not when the note started", async () => {
+    const t = noteRig(true);
+    const done = t.n.run(blob);
+    t.setSendable(false);                      // BASHT went busy/offline meanwhile
+    t.tr.resolve("نص");
+    expect(await done).toBe("kept");
+    expect(t.calls.send).toEqual([]); expect(t.calls.draft).toEqual(["نص"]);
+    const ok = noteRig(true); const d2 = ok.n.run(blob); ok.tr.resolve("نص"); expect(await d2).toBe("sent");
+    expect(ok.calls.send).toEqual(["[رسالة صوتية] نص"]);
   });
 });

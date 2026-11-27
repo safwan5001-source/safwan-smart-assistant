@@ -44,7 +44,7 @@ import { formatTime } from "@/lib/format";
 import { matches } from "@/lib/search";
 import type { Attachment, Message, Thread } from "@/lib/domain";
 import { bashtClient, BashtError, type BashtMessage } from "@/lib/basht-client";
-import { clock, MAX_NOTE_MS, parseVoiceNote, usePlayer, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voiceNoteText, voicePlayer } from "@/lib/basht-voice";
+import { clock, createVoiceNotes, MAX_NOTE_MS, parseVoiceNote, usePlayer, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voicePlayer } from "@/lib/basht-voice";
 import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
 import type { BrowserRef } from "@/lib/domain";
 
@@ -146,7 +146,7 @@ export default function ChatScreen() {
   }, [draftParam]); // eslint-disable-line react-hooks/exhaustive-deps
   // «?voice=1» (the old /calls address, the voice entry points): the voice panel opens inside the conversation.
   const voiceParam = params.get("voice");
-  useEffect(() => { if (voiceParam === "1") { setView({ kind: "main" }); setVoice(true); router.replace("/chat", { scroll: false }); } }, [voiceParam]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (voiceParam === "1") { setView({ kind: "main" }); openVoice(); router.replace("/chat", { scroll: false }); } }, [voiceParam]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One timeline: engine messages (server) + this device's events (local), ordered by time.
   const items: Item[] = useMemo(() => {
@@ -177,7 +177,9 @@ export default function ChatScreen() {
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
-  const resetComposer = () => { dictation.abort(); recorder.cancel(); setDraft(""); setAttachments([]); setNotice(""); };
+  /** The voice panel takes the microphone: a composer voice note still recording is cancelled (never kept running behind it). */
+  const openVoice = () => { recorder.cancel(); setVoice(true); };
+  const resetComposer = () => { dictation.abort(); recorder.cancel(); notes.current?.cancel(); setDraft(""); setAttachments([]); setNotice(""); };
   const go = (v: View) => {
     resetComposer(); setView(v); setSheet(false);
     const t = v.kind === "archive" ? v.id : null;
@@ -270,28 +272,31 @@ export default function ChatScreen() {
   };
 
   /** A voice note: recorded here, transcribed by the engine, then sent to BASHT as the owner's message (marked as a voice note).
-   *  Nothing is claimed as sent unless BASHT accepted it; if sending fails the transcript stays in the composer. */
+   *  Nothing is claimed as sent unless BASHT accepted it; if sending fails the transcript stays in the composer. Switching
+   *  conversations or leaving the screen cancels it (createVoiceNotes): a late transcript is then never sent or written anywhere. */
+  const sendable = useRef(false);
+  sendable.current = ready && !basht.live; // read when the transcript is back, not when the note started
+  const notes = useRef<ReturnType<typeof createVoiceNotes> | null>(null);
+  const noteDeps = useRef({ basht, lapsed, toast });
+  noteDeps.current = { basht, lapsed, toast };
+  notes.current ??= createVoiceNotes({
+    transcribe: async (audio, signal) => {
+      try { const t = await bashtClient.transcribe(audio, signal); voiceAvailability.set("transcribe", "yes"); return t; }
+      catch (e) { if (e instanceof BashtError && e.code === "voice_unavailable") voiceAvailability.set("transcribe", "no"); throw e; }
+    },
+    canSend: () => sendable.current,
+    send: async (text) => { try { await noteDeps.current.basht.send(text); } catch (e) { setAgentPhase("reply_failed"); throw e; } },
+    setDraft, setNotice, setBusy: setNoteBusy,
+    onError: (e) => noteDeps.current.lapsed(e),
+    onLimit: () => noteDeps.current.toast("بلغ التسجيل حده (3 دقائق)، فأُرسل حتى هنا."),
+  });
+  useEffect(() => () => notes.current?.cancel(), []);
   const recordNote = async () => {
     if (recorder.recording || noteBusy) return;
     setNotice(""); dictation.abort();
     const r = await recorder.record({ maxMs: MAX_NOTE_MS });
     if (!r.audio) return; // cancelled, or the mic could not start (recorder.error says why)
-    setNoteBusy(true);
-    try {
-      let text: string;
-      try { text = await bashtClient.transcribe(r.audio); voiceAvailability.set("transcribe", "yes"); }
-      catch (e) {
-        lapsed(e);
-        if (e instanceof BashtError && e.code === "voice_unavailable") {
-          voiceAvailability.set("transcribe", "no");
-          setNotice("تفريغ الصوت غير مفعّل في محرك باشت الآن، فلم تُرسل رسالتك الصوتية. صار زر الميكروفون للإملاء.");
-        } else setNotice((e instanceof Error ? e.message : "تعذّر تفريغ الرسالة الصوتية.") + " لم تُرسل رسالتك الصوتية.");
-        return;
-      }
-      if (!ready || basht.live) { setDraft(text); setNotice("باشت غير متاح الآن، فلم تُرسل رسالتك الصوتية. وضعتُ نصها في مربع الكتابة."); return; }
-      try { await basht.send(voiceNoteText(text)); if (r.ended === "limit") toast("بلغ التسجيل حده (3 دقائق)، فأُرسل حتى هنا."); }
-      catch (e) { setAgentPhase("reply_failed"); setDraft(text); setNotice((e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت.") + " وضعتُ نص رسالتك الصوتية في مربع الكتابة."); }
-    } finally { setNoteBusy(false); }
+    await notes.current?.run(r.audio, r.ended);
   };
   /** The live voice session: one owner turn (a voice note) and BASHT's finished reply, in this same conversation. */
   const liveVoice = {
@@ -474,7 +479,7 @@ export default function ChatScreen() {
             </div>
             {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={() => { refreshHealth(); basht.refresh(); }} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
             {view.kind === "main" && model.supported && <button className="icon-btn" onClick={() => { setModelOpen(true); void model.reload(); }} aria-label="النموذج والقدرات" aria-haspopup="dialog"><Icon name="spark" size={20} /></button>}
-            {view.kind === "main" && <button className="icon-btn" onClick={() => setVoice(true)} aria-label="الجلسة الصوتية"><Icon name="wave" size={21} /></button>}
+            {view.kind === "main" && <button className="icon-btn" onClick={() => openVoice()} aria-label="الجلسة الصوتية"><Icon name="wave" size={21} /></button>}
           </div>
 
           {view.kind === "main" && bashtOn && basht.gate === "locked" && auth && !auth.owner_auth && (

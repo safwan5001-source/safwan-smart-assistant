@@ -246,6 +246,10 @@ export type RecorderEnv = {
   now?: () => number;
 };
 const failed = (ended: RecordEnd = "error"): RecordResult => ({ audio: null, ended, ms: 0 });
+/** The ONE microphone owner of the app: a new recording (composer voice note or live session) cancels the one in progress, so two
+ *  recordings never run at once and a hidden one can never capture (and later send) the live conversation. */
+let activeRecording: Rec | null = null;
+export const cancelActiveRecording = () => activeRecording?.cancel();
 
 /**
  * One recording. The handle exists BEFORE the microphone permission is asked: a cancel (or stop, or unmount) while the permission
@@ -257,6 +261,8 @@ export function startRecording(env: RecorderEnv, { maxMs = MAX_NOTE_MS, silence 
   let early = false; // stop/cancel before recording started: nothing to keep
   let endNow: ((why: RecordEnd) => void) | null = null;
   const handle: Rec = { stop: () => (endNow ? endNow("stop") : (early = true)), cancel: () => (endNow ? endNow("cancel") : (early = true)) };
+  activeRecording?.cancel();
+  activeRecording = handle;
   const result = (async (): Promise<RecordResult> => {
     env.onError(""); env.onPhase("starting"); env.onElapsed(0);
     let stream: StreamLike;
@@ -295,6 +301,7 @@ export function startRecording(env: RecorderEnv, { maxMs = MAX_NOTE_MS, silence 
       catch { endNow = null; finish(); env.onPhase("idle"); env.onError("تعذّر بدء التسجيل."); resolve(failed()); }
     });
   })();
+  void result.finally(() => { if (activeRecording === handle) activeRecording = null; });
   return { handle, result };
 }
 
@@ -416,4 +423,56 @@ export function createLiveSession(d: LiveDeps) {
     },
     end,
   };
+}
+
+// ── a voice note from the composer: transcribe → send (or keep the text) ──────────────────────────────────────────────────
+export type NoteDeps = {
+  transcribe: (audio: Blob, signal: AbortSignal) => Promise<string>;
+  /** read at the moment of sending (never a value captured when the note started) */
+  canSend: () => boolean;
+  send: (text: string) => Promise<unknown>;
+  setDraft: (text: string) => void;
+  setNotice: (msg: string) => void;
+  setBusy: (busy: boolean) => void;
+  onError?: (e: unknown) => void;
+  onLimit?: () => void;
+};
+export type NoteOutcome = "sent" | "kept" | "failed" | "cancelled";
+
+/**
+ * Each voice note is one operation with its own token. Resetting the composer (switching conversations) or leaving the screen
+ * cancels it: the upload is aborted, and when the transcription comes back anyway nothing is sent, no draft or notice is
+ * written into the conversation now on screen.
+ */
+export function createVoiceNotes(d: NoteDeps) {
+  let gen = 0, ctl: AbortController | null = null;
+  const cancel = () => { gen++; ctl?.abort(); ctl = null; d.setBusy(false); };
+  async function run(audio: Blob, ended: RecordEnd = "stop"): Promise<NoteOutcome> {
+    cancel();
+    const my = gen, c = new AbortController(); ctl = c;
+    const live = () => my === gen;
+    d.setBusy(true);
+    try {
+      let text: string;
+      try { text = await d.transcribe(audio, c.signal); }
+      catch (e) {
+        if (!live()) return "cancelled";
+        d.onError?.(e);
+        d.setNotice(e instanceof BashtError && e.code === "voice_unavailable"
+          ? "تفريغ الصوت غير مفعّل في محرك باشت الآن، فلم تُرسل رسالتك الصوتية. صار زر الميكروفون للإملاء."
+          : (e instanceof Error ? e.message : "تعذّر تفريغ الرسالة الصوتية.") + " لم تُرسل رسالتك الصوتية.");
+        return "failed";
+      }
+      if (!live()) return "cancelled";
+      if (!d.canSend()) { d.setDraft(text); d.setNotice("باشت غير متاح الآن، فلم تُرسل رسالتك الصوتية. وضعتُ نصها في مربع الكتابة."); return "kept"; }
+      try { await d.send(voiceNoteText(text)); if (ended === "limit" && live()) d.onLimit?.(); return "sent"; }
+      catch (e) {
+        if (!live()) return "cancelled";
+        d.onError?.(e);
+        d.setDraft(text); d.setNotice((e instanceof Error ? e.message : "تعذّر الإرسال إلى باشت.") + " وضعتُ نص رسالتك الصوتية في مربع الكتابة.");
+        return "kept";
+      }
+    } finally { if (live()) { ctl = null; d.setBusy(false); } }
+  }
+  return { run, cancel };
 }
