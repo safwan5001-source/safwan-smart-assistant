@@ -5,12 +5,12 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import OwnerSignIn from "@/components/owner-sign-in";
 import { BrandMark } from "@/components/ui";
 import { BRAND, BRAND_ASSETS } from "@/lib/brand";
 import { authClient, type AuthStatus } from "@/lib/owner-auth";
-import { safeNext } from "@/lib/login-path";
+import { loginHref, safeNext } from "@/lib/login-path";
 
 export default function LoginScreen() {
   const params = useSearchParams();
@@ -25,6 +25,19 @@ export default function LoginScreen() {
     if (s.authenticated) window.location.replace(next); // already signed in (e.g. another tab)
   }, [next]);
   useEffect(() => { void load(); }, [load]);
+
+  // A notification tapped while the app sits on this page: the service worker focuses this window and posts its destination.
+  // Navigation only (no reminders run, nothing of the app shows): it becomes `next`, so signing in lands there.
+  const router = useRouter();
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data as { type?: unknown; url?: unknown } | null;
+      if (d && d.type === "safwan:navigate" && typeof d.url === "string") router.replace(loginHref(d.url));
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, [router]);
 
   const unavailable = status !== null && status.unavailable;
   const unconfigured = status !== null && !status.unavailable && status.gate && !status.owner_auth;
