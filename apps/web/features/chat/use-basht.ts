@@ -87,6 +87,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const setOlder = useCallback((o: Older) => { olderRef.current = o; setOlderState(o); }, []);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [focusId, setFocusId] = useState<string | null>(null);
+  // every deliberate focus request (a search pick, an earlier page) gets its own number: picking the same hit again scrolls again
+  const [focusReq, setFocusReq] = useState(0);
+  const requestFocus = useCallback((id: string) => { setFocusId(id); setFocusReq((n) => n + 1); }, []);
   const [windowed, setWindowed] = useState(false);
   const [failedTurn, setFailedTurn] = useState<{ text: string; images: number } | null>(lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
   const [resetting, setResetting] = useState(false);
@@ -270,16 +273,16 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const firstShown = [...olderRows, ...(messages ?? [])].find((m) => m.id && m.kind !== "reset")?.id ?? null;
       setOlderRows((o) => mergeRows(page.messages, o));
       setOlder(olderOf(page));
-      if (firstShown) setFocusId(firstShown);
+      if (firstShown) requestFocus(firstShown);
     } catch (e) { setError(errText(e)); } finally { setLoadingOlder(false); }
-  }, [older, loadingOlder, olderRows, messages, setOlder]);
+  }, [older, loadingOlder, olderRows, messages, setOlder, requestFocus]);
 
   /** B1 search hit: the message itself if it is on screen, else a window around it (read-only until «العودة إلى الأحدث»). */
   const jumpTo = useCallback(async (messageId: string) => {
     const k = keyRef.current;
     if (!k) return;
     const pick = ++jumpGen.current; // a hit picked later (even one already on screen) supersedes this one
-    if ([...olderRows, ...(messages ?? [])].some((m) => m.id === messageId)) { setFocusId(messageId); return; }
+    if ([...olderRows, ...(messages ?? [])].some((m) => m.id === messageId)) { requestFocus(messageId); return; }
     const gen = ++loadGen.current; // a plain load still in flight for this conversation must not replace the window
     viewGen.current++; // nor may an older page requested for the previous view land in this window
     try {
@@ -287,14 +290,14 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       if (keyRef.current !== k || gen !== loadGen.current || pick !== jumpGen.current) return;
       viewGen.current++; // an older page requested while this window loaded belongs to the previous view: it is dropped
       olderRowsRef.current = []; windowedRef.current = true;
-      setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
+      setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); requestFocus(messageId);
     } catch (e) { setError(errText(e)); }
-  }, [olderRows, messages, setOlder]);
+  }, [olderRows, messages, setOlder, requestFocus]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
 
   // one array per real change of the history: a new array on every render would re-run the screen's scroll effect (e.g. on each
   // keystroke) and pull the owner back to the focused message while reading elsewhere
   const shown = useMemo(() => (messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages), [olderRows, messages]);
   return { gate, sessions, messages: shown, live, error, unlock, recheck, send, waitRun, stop, refresh,
-    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, setFocusId, windowed, backToLatest };
+    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, focusReq, setFocusId, windowed, backToLatest };
 }

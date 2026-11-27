@@ -51,7 +51,7 @@ import { bashtClient, BashtError, type BashtMessage } from "@/lib/basht-client";
 import { clock, createVoiceNotes, MAX_NOTE_MS, parseVoiceNote, usePlayer, useVoiceAvailability, useVoiceRecorder, voiceAvailability, voicePlayer } from "@/lib/basht-voice";
 import { AGENT_STATE_TEXT, agentState, phaseForBrowser, phaseForQuick, setAgentPhase, useAgentActivity } from "@/lib/agent-activity";
 import type { BrowserRef } from "@/lib/domain";
-import { newFocusScroll, nextScroll } from "@/lib/chat-scroll";
+import { focusKey, focusTarget, newFocusScroll, nextScroll } from "@/lib/chat-scroll";
 
 /** Tap-to-fill starters: they only put text in the composer; nothing is sent until the user presses send. */
 const STARTERS: { label: string; text: string }[] = [
@@ -176,12 +176,13 @@ export default function ChatScreen() {
   useEffect(() => { stick.current = true; }, [view]);
   const focusScroll = useRef(newFocusScroll());
   useEffect(() => {
-    // B1: a search hit / the first earlier row is scrolled to once (and stops following); otherwise follow the newest message
-    // while the owner is at the bottom. A streaming reply never pulls the owner back to the focused row (lib/chat-scroll).
-    const next = nextScroll(focusScroll.current, basht.focusId ?? null, (id) => !!document.getElementById("m-" + id), stick.current);
-    if (next?.to === "focus") { stick.current = false; document.getElementById("m-" + next.id)?.scrollIntoView({ block: "center" }); }
+    // B1: a search hit / the first earlier row is scrolled to once (and stops following); picking the same hit again is a new
+    // request. Otherwise follow the newest message while the owner is at the bottom. A streaming reply never pulls the owner
+    // back to the focused row (lib/chat-scroll).
+    const next = nextScroll(focusScroll.current, focusKey(basht.focusId ?? null, basht.focusReq), (k) => !!document.getElementById("m-" + focusTarget(k)), stick.current);
+    if (next?.to === "focus") { stick.current = false; document.getElementById("m-" + focusTarget(next.id))?.scrollIntoView({ block: "center" }); }
     else if (next?.to === "bottom") toBottom();
-  }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view, basht.focusId]);
+  }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view, basht.focusId, basht.focusReq]);
   // B1: a picked search hit opens once its conversation is on screen
   useEffect(() => {
     if (!jump || basht.messages === null || engineKey !== jump.key) return;
