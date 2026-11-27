@@ -24,6 +24,12 @@ describe("an older page for an abandoned history view is dropped", () => {
     expect(fn).toMatch(/if \(keyRef\.current !== k \|\| view !== viewGen\.current\) return;/);
     expect(fn.search(/view !== viewGen\.current/)).toBeLessThan(fn.search(/setOlderRows\(/));
   });
+  // Review (Codex, round 8): «عرض الرسائل السابقة» pressed while a search window was loading captured the generation jumpTo had
+  // already bumped, so its page landed inside the window. Installing the window starts a new view again.
+  it("installing a search window invalidates an older page requested while it loaded", () => {
+    const fn = body(hook, /const jumpTo = useCallback/);
+    expect(fn).toMatch(/if \(keyRef\.current !== k \|\| gen !== loadGen\.current\) return;\s*viewGen\.current\+\+;[^\n]*\n\s*olderRowsRef\.current = \[\]; windowedRef\.current = true;/);
+  });
   it("refresh / «العودة إلى الأحدث», opening a conversation, «محادثة جديدة» and a search window start a new view", () => {
     expect(body(hook, /const refresh = useCallback/)).toMatch(/viewGen\.current\+\+/);
     expect(hook).toMatch(/const backToLatest = useCallback\(\(\) => \{ setFocusId\(null\); refresh\(\); \}/);
