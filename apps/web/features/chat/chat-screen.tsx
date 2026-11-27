@@ -53,7 +53,7 @@ export default function ChatScreen() {
   const threads = useStore(threadsStore);
   const storageError = useStoreError(threadsStore);
   const { confirm, prompt, toast } = useDialogs();
-  const { status } = useAssistant();
+  const { status, refresh: refreshHealth } = useAssistant();
   const desktop = useMediaQuery("(min-width: 900px)");
   const params = useSearchParams();
   const router = useRouter();
@@ -79,7 +79,10 @@ export default function ChatScreen() {
   const agent = agentState(status, useAgentActivity());
 
   // Which brain backs the conversation. BASHT whenever the server has it configured; Claude only without an engine.
-  const bashtOn = status.server === "online" && status.bashtChat;
+  // A health re-check passes through "checking": keep the last known configuration meanwhile, so nothing flickers or resets.
+  const lastBashtOn = useRef(false);
+  if (status.server === "online") lastBashtOn.current = status.bashtChat;
+  const bashtOn = status.server === "online" ? status.bashtChat : status.server === "checking" && lastBashtOn.current;
   const claudeOn = !bashtOn && aiReady(status);
   const engineUp = bashtOn && status.server === "online" && status.basht === "connected";
   const engineKey = view.kind === "main" ? APP_SESSION_KEY : view.kind === "engine" ? view.key : null;
@@ -121,6 +124,12 @@ export default function ChatScreen() {
   }, [view.kind, mainThread, bashtOn, basht.messages]);
 
   useEffect(() => { log.current?.scrollTo({ top: log.current.scrollHeight }); }, [items.length, archived?.messages.length, basht.messages, basht.live?.text, streaming?.text, view]);
+  // While BASHT is unreachable, re-check health every 20 s so sending unlocks by itself when it is back.
+  useEffect(() => {
+    if (!bashtOn || engineUp) return;
+    const t = setInterval(refreshHealth, 20_000);
+    return () => clearInterval(t);
+  }, [bashtOn, engineUp, refreshHealth]);
   useEffect(() => () => abortRef.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
 
@@ -145,6 +154,7 @@ export default function ChatScreen() {
       const quick: QuickReply = text ? await runQuickCommand(text) : { handled: false };
       // Free text needs a brain that is really reachable: otherwise nothing is recorded as sent and the draft stays.
       if (!quick.handled && text && !ready) {
+        if (bashtOn && !engineUp) refreshHealth(); // re-check now: the engine may be back
         setNotice(bashtOn ? (basht.gate === "locked" ? "افتح جلسة باشت أولًا برمز المالك؛ لم تُرسل رسالتك." : "باشت غير متصل الآن؛ لم تُرسل رسالتك. ستبقى في مربع الكتابة.")
           : "لم يُفعَّل محرك باشت على الخادم بعد؛ لم تُرسل رسالتك.");
         return;
@@ -155,7 +165,12 @@ export default function ChatScreen() {
       // On this device: a quick command and its result, attachments, and (with direct Claude) the message itself.
       const keepLocally = quick.handled || claudeOn;
       const id = keepLocally ? await local(text, { attachments }) : attachments.length ? await local("", { attachments }) : mainThread?.id ?? null;
-      if (keepLocally && !id) { setNotice("تعذر حفظ الرسالة على هذا الجهاز."); return; }
+      if (keepLocally && !id) {
+        // a quick command has ALREADY run: clear it so a retry can never repeat its effect (no duplicate task/reminder)
+        if (quick.handled) { setDraft(""); setAttachments([]); setNotice("نُفّذ الأمر، لكن تعذر حفظه في المحادثة على هذا الجهاز."); }
+        else setNotice("تعذر حفظ الرسالة على هذا الجهاز.");
+        return;
+      }
       setAttachments([]); setNotice("");
       // «/متصفح»: only a card is added. The page is opened when (and only if) the user presses «السماح وتشغيل» on it.
       if (quick.browserOffer) {
@@ -349,7 +364,7 @@ export default function ChatScreen() {
               <AgentOrb state={agent} size="sm" />
               <span className="grow"><span className="who-name">{title}</span><small role="status">{sub}</small></span>
             </div>
-            {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={basht.refresh} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
+            {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={() => { refreshHealth(); basht.refresh(); }} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
             {view.kind === "main" && <button className="icon-btn" onClick={() => setVoice(true)} aria-label="الجلسة الصوتية"><Icon name="wave" size={21} /></button>}
           </div>
 
@@ -361,7 +376,7 @@ export default function ChatScreen() {
                 <button className="btn btn-primary" type="submit">فتح</button></div>
             </form>
           )}
-          {view.kind === "main" && bashtOn && basht.gate !== "locked" && !engineUp && (
+          {view.kind === "main" && bashtOn && basht.gate !== "locked" && !engineUp && status.server !== "checking" && (
             <Notice tone="warn" role="status">باشت غير متصل الآن. لن تُرسل الرسائل حتى يعود الاتصال؛ الأوامر السريعة تعمل على جهازك.</Notice>
           )}
           {view.kind === "main" && !bashtOn && !claudeOn && status.server !== "checking" && (

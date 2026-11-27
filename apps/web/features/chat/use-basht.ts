@@ -54,7 +54,8 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     const mine = () => gen === pollGen && activeRun?.id === run.id;
     setLive({ prompt: run.prompt, text: "", at: run.at });
     // the finished turn belongs to the App session: refresh it only if that is still the conversation on screen
-    const finish = async () => { setLive(null); if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY, true); };
+    // the live bubble stays until the refreshed history is on screen, so the reply never blinks out in between
+    const finish = async () => { if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY, true); setLive(null); };
     let first = true;
     while (mine()) {
       try {

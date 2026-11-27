@@ -106,7 +106,8 @@ const chatCommands = {
       // the BASHT conversation has exactly one local thread: reuse it instead of creating a second one
       const main = p.main ? threadsStore.getSnapshot().find((t) => t.main) : undefined;
       if (main) { patchThread(main.id, (t) => ({ ...t, messages: [...t.messages, m], updated: Date.now() })); return main.id; }
-      assertRoomForThread();
+      // the conversation's own thread is a single system thread: never refused by the archive's thread cap
+      if (!p.main) assertRoomForThread();
       const t: Thread = { id: uid(), title: p.main ? "باشت" : titleFrom(m.text, m.attachments), created: Date.now(), messages: [m], ...(p.main ? { main: true as const } : {}) };
       threadsStore.set((old) => [t, ...old]);
       return t.id;

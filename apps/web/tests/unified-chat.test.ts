@@ -27,6 +27,21 @@ describe("U1: one conversation — the app is BASHT", () => {
     expect(parseThreads([{ id: "x", title: "t", created: 1, messages: [] }])[0].main).toBeUndefined();
   });
 
+  it("the conversation's own thread is never refused by the archive's thread cap (a command that already ran is never left to repeat)", async () => {
+    threadsStore.set(Array.from({ length: 500 }, (_, i) => ({ id: "t" + i, title: "t", created: i, messages: [] })));
+    expect((await runCommand("chat.send", { threadId: null, text: "سلسلة جديدة" })).status).not.toBe("executed");
+    expect((await runCommand("chat.send", { threadId: null, main: true, text: "/مهمة" })).status).toBe("executed");
+    expect(threadsStore.getSnapshot().filter((t) => t.main)).toHaveLength(1);
+    const chat = src("features/chat/chat-screen.tsx");
+    expect(chat).toMatch(/if \(quick\.handled\) \{ setDraft\(""\);/);
+  });
+
+  it("a down engine is re-checked automatically and by the conversation's refresh control", () => {
+    const chat = src("features/chat/chat-screen.tsx");
+    expect(chat).toMatch(/setInterval\(refreshHealth, 20_000\)/);
+    expect(chat).toMatch(/onClick=\{\(\) => \{ refreshHealth\(\); basht\.refresh\(\); \}\}/);
+  });
+
   it("agent state follows BASHT (the engine), not Claude; an unreachable engine reads as offline, never as notes", () => {
     const idle = { phase: "idle" as const, at: 0 };
     const on = { server: "online" as const, assistant: false, version: "1", bashtChat: true };
