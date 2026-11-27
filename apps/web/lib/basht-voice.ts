@@ -129,7 +129,14 @@ export type MediaLike = {
   error?: { code: number } | null;
   play: () => Promise<void> | void; pause: () => void;
   addEventListener: (type: string, cb: () => void) => void;
+  load?: () => void; removeAttribute?: (name: string) => void;
 };
+/** Silences the element for good after a failure: pause, and (unless the same audio may be resumed) drop its source. */
+function silence(a: MediaLike, detach: boolean) {
+  try { a.pause(); } catch { /* not playing */ }
+  if (!detach) return;
+  try { if (a.removeAttribute) a.removeAttribute("src"); else a.src = ""; a.load?.(); } catch { /* best effort */ }
+}
 type PlayerDeps = {
   speak: (text: string, signal: AbortSignal) => Promise<Blob>;
   audio: () => MediaLike;
@@ -229,7 +236,8 @@ export function createVoicePlayer(deps: PlayerDeps) {
     const finish = (err?: PlaybackFailure) => {
       if (handler !== h) return;
       handler = null; clear();
-      if (err) reject(err); else resolve();
+      // a watchdog or error ends this playback: the element must not start/resume on its own after the UI said "error"
+      if (err) { silence(a, false); reject(err); } else resolve();
     };
     const armStall = () => { if (stall) clearTimeout(stall); stall = setTimeout(() => finish(new PlaybackFailure("stalled")), stallMs); };
     const h = (type: string) => {
@@ -303,7 +311,7 @@ export function createVoicePlayer(deps: PlayerDeps) {
       const f = classify(e);
       const resumable = f.kind === "playback_blocked" || f.kind === "interrupted";
       if (resumable) suspended = { job: j, next }; // keep the audio (and the prefetch): a fresh tap continues without a new request
-      else { j.ctl.abort(); urls.forEach((x) => url.revoke(x)); urls = []; job = null; setProgress(0); }
+      else { silence(a, true); j.ctl.abort(); urls.forEach((x) => url.revoke(x)); urls = []; job = null; setProgress(0); }
       if (f.kind === "unavailable") { if (isDurableVoiceFailure(f.reason)) voiceAvailability.set("speak", "no", f.reason); }
       const message = f.kind === "unavailable"
         ? (f.reason ? `صوت باشت غير متاح الآن. ${voiceReasonText(f.reason)}` : PLAYER_ERRORS.voice_unavailable)
@@ -674,6 +682,8 @@ export function createLiveSession(d: LiveDeps) {
   let gen = 0;
   let phase: LivePhase = "idle";
   let micMuted = false, speakerMuted = false, muteCancel = false, hidden = false;
+  /** «تخطَّ الصوت» pressed for the reply being prepared (reset every turn) */
+  let skipVoice = false;
   let wake: (() => void) | null = null;
   let resumeReq: ((p: Promise<PlayResult> | null) => void) | null = null;
   let onPlayerNow: ((p: PlayerPhase) => void) | null = null;
@@ -721,6 +731,7 @@ export function createLiveSession(d: LiveDeps) {
         return fail(r.ended === "no_speech" ? NO_SPEECH_TEXT : d.recordError() || "توقّف الاستماع.");
       }
       d.cue?.("stop");
+      skipVoice = false; // a new turn: an earlier «skip» does not carry over
       settled = (d.afterCapture?.(live, { handsFree: r.handsFree !== false }) ?? Promise.resolve()).catch(() => {}); // the route switch overlaps the transcription
       to("thinking", "transcribing");
       let text: string;
@@ -741,11 +752,11 @@ export function createLiveSession(d: LiveDeps) {
       catch (e) { if (!live()) return; return fail(errText(e, "تعذّر الإرسال إلى باشت.")); }
       if (!live()) return;
       d.onReply?.(reply);
-      if (speakerMuted) continue; // the owner muted BASHT's voice: the reply stays text, no voice is requested
+      if (speakerMuted || skipVoice || hidden) continue; // muted / skipped / backgrounded: the reply stays text, no voice is requested
       to("thinking", "voice");
       await settled;
       if (!live()) return;
-      if (speakerMuted || hidden) continue; // muted (or backgrounded) while the route was settling: still no voice is requested (the reply is shown as text)
+      if (speakerMuted || skipVoice || hidden) continue; // muted, skipped or backgrounded while the route was settling: still no voice is requested (the reply is shown as text)
       const onPlayer = (p: PlayerPhase) => {
         if (!live()) return;
         if (p === "playing") to("speaking");
@@ -777,7 +788,10 @@ export function createLiveSession(d: LiveDeps) {
     },
     end,
     /** Stop BASHT speaking (or fetching its voice) now and listen again. */
-    interrupt() { if (phase === "speaking" || phase === "thinking") d.stopPlay(); },
+    interrupt() {
+      if (phase === "thinking") skipVoice = true; // remembered: no playback job may exist yet (the route is still settling)
+      if (phase === "speaking" || phase === "thinking") d.stopPlay();
+    },
     /** Mute the microphone: a turn being recorded is discarded and the loop waits; unmuting (a tap) listens again. */
     setMicMuted(m: boolean) {
       micMuted = m;

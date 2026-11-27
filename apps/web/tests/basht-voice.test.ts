@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
 import { FakeEl } from "./voice-fakes";
-import { MANUAL_TURN_MS, STOP_GUARD_MS } from "@/lib/basht-voice";
+import { MANUAL_TURN_MS, MAX_NOTE_MS, STOP_GUARD_MS } from "@/lib/basht-voice";
 import { clock, createLiveSession, createVoiceNotes, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
