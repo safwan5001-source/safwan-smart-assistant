@@ -192,3 +192,31 @@ describe("chunk pipeline and generation token", () => {
     r.p.setMuted(false); expect(r.el.muted).toBe(false); expect(r.p.isMuted()).toBe(false);
   });
 });
+
+describe("a terminated playback can never start or resume behind an error (review P2)", () => {
+  it("start watchdog: the element is paused and its source dropped", async () => {
+    const r = rig();
+    const d = r.p.play("m", "نص.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    const before = r.el.pause.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(await d).toBe("error");
+    expect(r.el.pause.mock.calls.length).toBeGreaterThan(before);
+    expect(r.el.src).toBe(""); // a late `playing` of the old source has nothing to play
+    r.el.emit("playing");
+    expect(r.p.getSnapshot().phase).toBe("error");
+  });
+  it("stall watchdog: paused at once; if the clock recovers after the error, the state stays error and nothing plays on", async () => {
+    const r = rig();
+    const d = r.p.play("m", "نص.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    r.el.emit("playing");
+    const before = r.el.pause.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(await d).toBe("error");
+    expect(r.el.pause.mock.calls.length).toBeGreaterThan(before);
+    r.el.currentTime = 2; r.el.emit("timeupdate"); r.el.emit("playing"); // recovery after the error
+    expect(r.p.getSnapshot()).toMatchObject({ phase: "error", code: "stalled" });
+    expect(r.el.src).toBe("");
+  });
+});

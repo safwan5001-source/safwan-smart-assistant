@@ -745,6 +745,9 @@ export function createLiveSession(d: LiveDeps) {
       }
       quiet = 0;
       if (!live()) return;
+      // backgrounded after the turn was transcribed: nothing is sent while hidden (sent on return; ended after the grace period)
+      while (hidden && live()) await new Promise<void>((r) => { wake = r; });
+      if (!live()) return;
       d.onHeard(text);
       to("thinking", "waiting");
       let reply: string;

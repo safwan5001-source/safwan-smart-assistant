@@ -410,3 +410,35 @@ describe("mute during an await never records or speaks (review P1/P2)", () => {
     expect(t.errors).toEqual([]);
   });
 });
+
+describe("skip / hidden checks right before acting (review P2)", () => {
+  it("«تخطَّ الصوت» while the route is still settling really skips the audio (the reply stays text)", async () => {
+    const settle = deferred<void>();
+    const t = rig({ afterCapture: () => settle.promise });
+    t.s.start(); await toPlay(t);
+    expect(t.last()).toEqual({ phase: "thinking", step: "voice" });
+    t.s.interrupt();                  // no playback job exists yet
+    settle.resolve(); await flush();
+    expect(t.plays).toHaveLength(0);
+    expect(t.d.onReply).toHaveBeenCalledWith("الرد");
+    expect(t.records).toHaveLength(2);
+  });
+  it("the skip does not carry over to the next turn", async () => {
+    const t = rig();
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
+    t.s.interrupt();                  // during transcription
+    t.transcripts[0].resolve("a"); await flush(); t.replies[0].resolve("r1"); await flush();
+    expect(t.plays).toHaveLength(0);
+    await toPlay(t, 1);
+    expect(t.plays).toHaveLength(1);
+  });
+  it("a turn transcribed while the page is hidden is not sent until it is visible again", async () => {
+    const t = rig();
+    t.s.start(); await flush(); t.records[0].started(true); t.records[0].d.resolve(audio); await flush();
+    t.s.setHidden(true);
+    t.transcripts[0].resolve("سؤال"); await flush();
+    expect(t.log).not.toContain("ask");
+    t.s.setHidden(false); await flush();
+    expect(t.log).toContain("ask");
+  });
+});
