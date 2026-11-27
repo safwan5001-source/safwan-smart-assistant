@@ -52,6 +52,17 @@ export const mergeRows = (a: BashtMessage[], b: BashtMessage[]) => {
  * sit between the earlier rows already paged in and the new page — keep them there, so nothing loaded disappears. Without
  * earlier rows paged in, the page's own cursor still reaches them, so nothing is kept.
  */
+/**
+ * Earlier rows after loading the newest page. From a search window (turn completion, refresh, «العودة إلى الأحدث») the
+ * anchored state is reset entirely — the window and its earlier pages belong to another place in the conversation — and only
+ * the newest page is shown (its own cursor reaches everything older). From the newest page, rows that slid off are kept.
+ */
+export function rowsAfterLoad(windowed: boolean, olderRows: BashtMessage[], prevLatest: BashtMessage[] | null, nextLatest: BashtMessage[]):
+  { olderRows: BashtMessage[]; leftWindow: boolean } {
+  if (windowed) return { olderRows: olderRows.length ? [] : olderRows, leftWindow: true };
+  return { olderRows: reconcileOlder(olderRows, prevLatest, nextLatest), leftWindow: false };
+}
+
 export function reconcileOlder(olderRows: BashtMessage[], prevLatest: BashtMessage[] | null, nextLatest: BashtMessage[]): BashtMessage[] {
   if (!olderRows.length || !prevLatest?.length) return olderRows;
   const next = new Set(nextLatest.map(rowKey));
@@ -82,6 +93,10 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const keyRef = useRef(key);
   keyRef.current = key;
   const loadGen = useRef(0);
+  // B1: which history VIEW is on screen. Opening a conversation, «العودة إلى الأحدث» / refresh, «محادثة جديدة» and a search
+  // window each start a new view; an older page requested for an abandoned view is dropped when it arrives.
+  const viewGen = useRef(0);
+  const windowedRef = useRef(false); // a search window (not the newest page) is on screen
 
   // Only the latest load for the conversation still on screen may write: a slower, older response is dropped.
   const load = useCallback(async (k: string, keepError = false) => {
@@ -90,9 +105,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     try {
       const [list, page] = await Promise.all([bashtClient.sessions(), bashtClient.historyPage(k)]);
       if (!current()) return;
-      // rows that slid off the newest page stay between the earlier rows and it (never lost after «عرض الرسائل السابقة»)
-      const kept = reconcileOlder(olderRowsRef.current, messagesRef.current, page.messages);
-      if (kept !== olderRowsRef.current) { olderRowsRef.current = kept; setOlderRows(kept); }
+      const next = rowsAfterLoad(windowedRef.current, olderRowsRef.current, messagesRef.current, page.messages);
+      if (next.leftWindow) { windowedRef.current = false; viewGen.current++; setFocusId(null); }
+      if (next.olderRows !== olderRowsRef.current) { olderRowsRef.current = next.olderRows; setOlderRows(next.olderRows); }
       setSessions(list); setMessages(page.messages); setWindowed(false);
       // older rows already paged in stay above; the cursor continues from them, else from this page
       if (!olderRowsRef.current.length) setOlder(olderOf(page));
@@ -154,6 +169,8 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   useEffect(() => {
     if (gate !== "open" || !key) return;
     messagesRef.current = null; olderRowsRef.current = []; // a new conversation on screen: nothing to reconcile with
+    viewGen.current++;
+    windowedRef.current = false;
     setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
@@ -203,7 +220,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   }), []);
 
   const stop = useCallback(async () => { if (activeRun) { try { await bashtClient.stop(activeRun.id); } catch (e) { setError(errText(e)); } } }, []);
-  const refresh = useCallback(() => { if (keyRef.current) { olderRowsRef.current = []; setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
+  const refresh = useCallback(() => { if (keyRef.current) { viewGen.current++; olderRowsRef.current = []; setOlderRows([]); setFocusId(null); void load(keyRef.current); } }, [load]);
 
   /** B1 Retry: re-sends the last failed/stopped owner turn through the same send path (same text, same photos). */
   const retry = useCallback(async () => {
@@ -218,6 +235,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     setResetting(true);
     try {
       await bashtClient.newConversation();
+      viewGen.current++;
       turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null); olderRowsRef.current = []; setOlderRows([]); setOlder(null); setFocusId(null);
       if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY);
       return null;
@@ -231,10 +249,11 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const loadEarlier = useCallback(async () => {
     const k = keyRef.current;
     if (!k || !older || loadingOlder) return;
+    const view = viewGen.current;
     setLoadingOlder(true);
     try {
       const page = await bashtClient.historyPage(k, older);
-      if (keyRef.current !== k) return;
+      if (keyRef.current !== k || view !== viewGen.current) return; // the view it belonged to was left meanwhile
       const firstShown = (olderRows[0] ?? messages?.[0])?.id ?? null;
       setOlderRows((o) => mergeRows(page.messages, o));
       setOlder(olderOf(page));
@@ -248,10 +267,12 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     if (!k) return;
     if ([...olderRows, ...(messages ?? [])].some((m) => m.id === messageId)) { setFocusId(messageId); return; }
     const gen = ++loadGen.current; // a plain load still in flight for this conversation must not replace the window
+    viewGen.current++; // nor may an older page requested for the previous view land in this window
     try {
       const page = await bashtClient.historyPage(k, { around: messageId });
       if (keyRef.current !== k || gen !== loadGen.current) return;
-      olderRowsRef.current = []; setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
+      olderRowsRef.current = []; windowedRef.current = true;
+      setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); setFocusId(messageId);
     } catch (e) { setError(errText(e)); }
   }, [olderRows, messages]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);

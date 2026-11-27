@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { reconcileOlder } from "@/features/chat/use-basht";
+import { reconcileOlder, rowsAfterLoad } from "@/features/chat/use-basht";
 import type { BashtMessage } from "@/lib/basht-client";
 
 const rows = (from: number, to: number): BashtMessage[] =>
@@ -26,7 +26,20 @@ describe("earlier rows stay contiguous after a refresh", () => {
   });
   it("the hook reconciles on every load and resets the references when the conversation changes", () => {
     const src = readFileSync(new URL("../features/chat/use-basht.ts", import.meta.url), "utf8");
-    expect(src).toMatch(/const kept = reconcileOlder\(olderRowsRef\.current, messagesRef\.current, page\.messages\);/);
+    expect(src).toMatch(/const next = rowsAfterLoad\(windowedRef\.current, olderRowsRef\.current, messagesRef\.current, page\.messages\);/);
+    expect(src).toMatch(/if \(next\.leftWindow\) \{ windowedRef\.current = false; viewGen\.current\+\+; setFocusId\(null\); \}/);
+    expect(src).toMatch(/olderRowsRef\.current = \[\]; windowedRef\.current = true;/); // opening a search window marks it
     expect(src).toMatch(/messagesRef\.current = null; olderRowsRef\.current = \[\];/);
+  });
+
+  // Review (Codex, round 6): a turn finishing while a search window is open must not stitch the window onto the newest page
+  it("leaving a search window resets the anchored state: only the newest page, no gap-hiding stitch", () => {
+    const olderInWindow = rows(1, 50); const windowRows = rows(51, 100); const newest = rows(151, 200);
+    const r = rowsAfterLoad(true, olderInWindow, windowRows, newest);
+    expect(r.leftWindow).toBe(true);
+    expect(r.olderRows).toEqual([]); // the screen shows 151–200 with the newest page's own cursor, never 1–100 + 151–200
+    const fromLatest = rowsAfterLoad(false, rows(1, 50), rows(51, 100), rows(53, 102));
+    expect(fromLatest.leftWindow).toBe(false);
+    expect(fromLatest.olderRows.map((m) => m.at)).toEqual(rows(1, 52).map((m) => m.at));
   });
 });
