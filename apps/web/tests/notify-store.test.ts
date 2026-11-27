@@ -134,6 +134,18 @@ describe.each(impls)("NotifyStore contract — %s", (_name, make) => {
     expect((await store.listDeliveries(id, 5))[0].kind).toBe("basht");
   });
 
+  it("B4 (Codex #2): unlinking BASHT alerts cancels only that device's pending BASHT deliveries", async () => {
+    const id = await newDevice(true);
+    await store.setBashtAlerts(id, true);
+    await store.addDelivery(id, del("basht:reply:1", { kind: "basht", reminderId: null }));
+    await store.addDelivery(id, del("rem-1"));
+    await store.setBashtAlerts(id, false);
+    const ds = await store.listDeliveries(id, 10);
+    expect(ds.find((d) => d.key === "basht:reply:1")!.status).toBe("cancelled");
+    expect(ds.find((d) => d.key === "rem-1")!.status).toBe("pending");
+    expect((await store.dueDeliveries(NOW + 1, 1000)).some((x) => x.delivery.key === "basht:reply:1")).toBe(false);
+  });
+
   it("withLock is exclusive", async () => {
     let inner: unknown = "unset";
     const out = await store.withLock(async () => { inner = await store.withLock(async () => "nested"); return "outer"; });

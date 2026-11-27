@@ -165,11 +165,11 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
     },
     async dueDeliveries(now, limit) {
       const res = await q(
-        `SELECT dl.*, d.id AS d_id, d.token_hash, d.subscription, d.prefs, d.created_at AS d_created, d.last_seen_at
+        `SELECT dl.*, d.id AS d_id, d.token_hash, d.subscription, d.prefs, d.created_at AS d_created, d.last_seen_at, d.basht_alerts
          FROM notify.deliveries dl JOIN notify.devices d ON d.id = dl.device_id
          WHERE dl.status = 'pending' AND dl.next_attempt_at <= $1 ORDER BY dl.next_attempt_at LIMIT $2`, [now, limit]);
       return res.rows.map((row) => ({
-        device: toDevice({ id: row.d_id, token_hash: row.token_hash, subscription: row.subscription, prefs: row.prefs, created_at: row.d_created, last_seen_at: row.last_seen_at }),
+        device: toDevice({ id: row.d_id, token_hash: row.token_hash, subscription: row.subscription, prefs: row.prefs, created_at: row.d_created, last_seen_at: row.last_seen_at, basht_alerts: row.basht_alerts }),
         delivery: toDelivery(row),
       }));
     },
@@ -191,7 +191,11 @@ export function createPgStore(connectionString: string, opts: { max?: number } =
       const b = await q("DELETE FROM notify.devices WHERE last_seen_at < $1", [now - RETENTION_DEVICES]);
       return (a.rowCount ?? 0) + (b.rowCount ?? 0);
     },
-    async setBashtAlerts(id, on) { await q("UPDATE notify.devices SET basht_alerts = ($2 AND subscription IS NOT NULL) WHERE id = $1", [id, on]); },
+    async setBashtAlerts(id, on) {
+      await q("UPDATE notify.devices SET basht_alerts = ($2 AND subscription IS NOT NULL) WHERE id = $1", [id, on]);
+      // unlinking withdraws what is still queued (held by quiet hours / waiting for a retry)
+      if (!on) await q("UPDATE notify.deliveries SET status = 'cancelled', last_error = 'unlinked' WHERE device_id = $1 AND kind = 'basht' AND status = 'pending'", [id]);
+    },
     async bashtDevices(limit) {
       const res = await q("SELECT * FROM notify.devices WHERE basht_alerts AND subscription IS NOT NULL ORDER BY created_at LIMIT $1", [limit]);
       return res.rows.map(toDevice);

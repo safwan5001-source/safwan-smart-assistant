@@ -95,25 +95,25 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
   if (r.kind === "ok") {
     const events = [...r.events].sort((a, b) => a.id - b.id);
     rep.events = events.length;
-    if (!saved) {
-      // first poll ever: start from "now" (the backlog is in the app); still announce approvals that are waiting right now
-      for (const e of events) if (e.type === "approval.requested") { const a = alertFor(e, now); if (a) await queue(a); }
-    } else {
-      for (const e of events) {
-        if (e.id <= cur.after) continue;
-        if (e.type === "approval.resolved" && e.approval_id) {
-          // answered elsewhere (or expired) before the push went out (e.g. held by quiet hours): withdraw it
-          for (const d of devices) {
-            if (await store.isDeliveryPending(d.id, `basht:approval:${e.approval_id}`)) {
-              await store.markDelivery(d.id, `basht:approval:${e.approval_id}`, { status: "cancelled", attempts: 0, lastError: "answered" });
-              rep.cancelled++;
-            }
+    // an approval answered within this same page (requested … resolved) is never pushed: reconcile before queuing
+    const answered = new Set(events.filter((e) => e.type === "approval.resolved" && e.approval_id).map((e) => e.approval_id!));
+    for (const e of events) {
+      if (saved && e.id <= cur.after) continue;
+      if (e.type === "approval.resolved" && e.approval_id) {
+        // answered elsewhere (or expired) before the push went out (e.g. held by quiet hours): withdraw it
+        for (const d of devices) {
+          if (await store.isDeliveryPending(d.id, `basht:approval:${e.approval_id}`)) {
+            await store.markDelivery(d.id, `basht:approval:${e.approval_id}`, { status: "cancelled", attempts: 0, lastError: "answered" });
+            rep.cancelled++;
           }
-          continue;
         }
-        const a = alertFor(e, now);
-        if (a) await queue(a);
+        continue;
       }
+      if (e.type === "approval.requested" && e.approval?.id && answered.has(e.approval.id)) continue;
+      // first poll ever: start from "now" (the backlog is in the app); still announce approvals that are waiting right now
+      if (!saved && e.type !== "approval.requested") continue;
+      const a = alertFor(e, now);
+      if (a) await queue(a);
     }
     const maxId = events.reduce((m, e) => Math.max(m, e.id), cur.after);
     // a new ring whose ids are all below our cursor (should not happen: ids are seeded with the engine's boot time) restarts at 0

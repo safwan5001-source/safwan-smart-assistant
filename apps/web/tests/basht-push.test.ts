@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "@/server/notify/memory-store";
 import { alertFor, apiFeed, CURSOR, OFFLINE_AFTER_MS, pollBashtEvents, STALE_MS, type Feed, type FeedEvent, type FeedResult } from "@/server/notify/basht-events";
-import { applyPrivacy, bashtPayload } from "@/server/notify/push";
+import { applyPrivacy, bashtPayload, deliveryOf } from "@/server/notify/push";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { pollBasht } from "@/server/notify/runtime";
 import { handleNotify } from "@/server/notify/api";
@@ -172,6 +172,50 @@ describe("B4: polling the feed into deliveries", () => {
     const off = makeRuntime({ store, send, env: { VAPID_PUBLIC_KEY: "" } });
     off.bashtFeed = feedOf(ok([approval(9)])).feed;
     expect(await pollBasht(off)).toBeNull();
+  });
+
+  it("Codex #1: a BASHT push never outlives its subject: TTL capped by the time left, nothing sent when it is (almost) over", async () => {
+    const { store, id } = await setup();
+    const { sent, send } = fakeSender();
+    await store.setCursor(CURSOR, JSON.stringify({ after: 0, epoch: "e1", offlineSince: null, offlineNotified: false }), NOW);
+    const soon = "aaaaaaaa-0000-4000-8000-000000000001", gone = "aaaaaaaa-0000-4000-8000-000000000002";
+    await pollBashtEvents(store, feedOf(ok([approval(1, soon, { expires_at: NOW + 5 * 60_000 }), approval(2, gone, { expires_at: NOW + 8_000 })])).feed, NOW);
+    await dispatchTick(store, send, NOW);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].opts.ttl).toBe(300); // not the fixed 1800 s
+    expect(JSON.parse(sent[0].payload).url).toContain(soon);
+    expect((await store.listDeliveries(id, 10)).find((d) => d.key === `basht:approval:${gone}`)!.status).toBe("expired");
+  });
+
+  it("Codex #2: unlinking withdraws queued BASHT pushes, and an unlinked device is never sent one", async () => {
+    const { store, id } = await setup(true, { quiet: { enabled: true, start: "23:00", end: "07:00", allowCritical: false } });
+    const { sent, send } = fakeSender();
+    const night = riyadh(2026, 11, 28, 1, 0);
+    await store.setCursor(CURSOR, JSON.stringify({ after: 0, epoch: "e1", offlineSince: null, offlineNotified: false }), night);
+    await pollBashtEvents(store, feedOf(ok([{ id: 1, type: "cron.failed", at: night, name: "x" }])).feed, night);
+    expect((await dispatchTick(store, send, night)).held).toBe(1); // held by quiet hours
+    await store.setBashtAlerts(id, false);
+    expect((await store.listDeliveries(id, 10))[0].status).toBe("cancelled");
+    await dispatchTick(store, send, riyadh(2026, 11, 28, 8, 0));
+    expect(sent).toHaveLength(0);
+    // enforced at send time too: a basht delivery for a device that is not linked is withdrawn, not sent
+    const { store: s2, other } = await setup();
+    await s2.addDelivery(other, deliveryOf(bashtPayload("reply", "basht:reply:9", { url: "/chat" }, parseServerPrefs({})), NOW));
+    await dispatchTick(s2, send, NOW);
+    expect(sent).toHaveLength(0);
+    expect((await s2.listDeliveries(other, 5))[0]).toMatchObject({ status: "cancelled", lastError: "unlinked" });
+  });
+
+  it("Codex #3: an approval answered within the same page is never pushed (first poll and later polls)", async () => {
+    const page = (base: number) => ok([approval(base), { id: base + 1, type: "approval.resolved", at: NOW, approval_id: AID }]);
+    const first = await setup();
+    expect((await pollBashtEvents(first.store, feedOf(page(1)).feed, NOW)).queued).toBe(0);
+    expect(await first.store.listDeliveries(first.id, 5)).toEqual([]);
+    expect(JSON.parse((await first.store.getCursor(CURSOR))!).after).toBe(2);
+    const later = await setup();
+    await later.store.setCursor(CURSOR, JSON.stringify({ after: 10, epoch: "e1", offlineSince: null, offlineNotified: false }), NOW);
+    expect((await pollBashtEvents(later.store, feedOf(page(11)).feed, NOW)).queued).toBe(0);
+    expect(await later.store.listDeliveries(later.id, 5)).toEqual([]);
   });
 
   it("unsubscribing a device unlinks it; the dispatch endpoint polls too", async () => {

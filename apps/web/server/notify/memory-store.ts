@@ -105,7 +105,12 @@ export function createMemoryStore(): NotifyStore {
       for (const b of deliveries.values()) for (const [k, dl] of b) if (dl.status !== "pending" && now - dl.createdAt > RETENTION_DELIVERIES) { b.delete(k); n++; }
       return n;
     },
-    async setBashtAlerts(id, on) { const d = devices.get(id); if (d) d.bashtAlerts = on && !!d.subscription; },
+    async setBashtAlerts(id, on) {
+      const d = devices.get(id); if (!d) return;
+      d.bashtAlerts = on && !!d.subscription;
+      // unlinking withdraws what is still queued (held by quiet hours / waiting for a retry)
+      if (!on) for (const dl of deliveries.get(id)?.values() ?? []) if (dl.kind === "basht" && dl.status === "pending") { dl.status = "cancelled"; dl.lastError = "unlinked"; }
+    },
     async bashtDevices(limit) { return [...devices.values()].filter((d) => d.bashtAlerts && d.subscription).slice(0, limit).map(clone); },
     async getCursor(name) { return cursors.get(name) ?? null; },
     async setCursor(name, value) { cursors.set(name, value); },
