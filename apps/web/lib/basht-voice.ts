@@ -687,11 +687,16 @@ export function createLiveSession(d: LiveDeps) {
         if (!live()) return;
         continue;
       }
+      // every await before the microphone opens is re-validated: the session may have ended, or the owner muted the mic meanwhile
+      // (a mute before any recorder exists has nothing to cancel — it must stop the recorder from ever starting)
+      const mayRecord = () => live() && !micMuted;
       await d.beforeCapture?.(live);
       if (!live()) return;
+      if (!mayRecord()) { muteCancel = false; continue; }
       to("starting");
       // the start cue plays BEFORE the microphone opens (never into the recording)
       if (d.cue?.("start")) { await wait(EARCON_MS); if (!live()) return; }
+      if (!mayRecord()) { muteCancel = false; continue; }
       const r = await d.record((handsFree) => { if (live() && phase === "starting") to("listening", handsFree ? "" : "manual"); });
       if (!live()) return;
       if (r.ended === "limit" && r.handsFree === false) return fail(MANUAL_LIMIT_TEXT); // nobody tapped: never send a minute of noise
@@ -725,6 +730,7 @@ export function createLiveSession(d: LiveDeps) {
       to("thinking", "voice");
       await settled;
       if (!live()) return;
+      if (speakerMuted) continue; // muted while the route was settling: still no voice is requested (the reply is shown as text)
       const onPlayer = (p: PlayerPhase) => {
         if (!live()) return;
         if (p === "playing") to("speaking");
@@ -762,7 +768,12 @@ export function createLiveSession(d: LiveDeps) {
       if (!m) { const w = wake; wake = null; w?.(); }
     },
     /** Mute BASHT's voice: replies stay text (no voice requested); a reply being spoken stops. */
-    setSpeakerMuted(m: boolean) { speakerMuted = m; if (m && (phase === "speaking" || phase === "thinking")) d.stopPlay(); },
+    setSpeakerMuted(m: boolean) {
+      speakerMuted = m;
+      if (!m) return;
+      if (phase === "speaking" || phase === "thinking") d.stopPlay();
+      if (phase === "blocked" && resumeReq) { const r = resumeReq; resumeReq = null; d.stopPlay(); r(Promise.resolve("stopped")); } // no tap-to-play left waiting
+    },
     /** Continues a blocked reply with the same audio. Call synchronously inside the owner's tap. */
     resumePlayback() {
       if (phase !== "blocked" || !resumeReq || !d.resume || !onPlayerNow) return;

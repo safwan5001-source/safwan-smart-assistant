@@ -308,3 +308,50 @@ describe("the voice screen (rendered / pure)", () => {
     expect(html).not.toContain("يستمع…");
   });
 });
+
+describe("mute during an await never records or speaks (review P1/P2)", () => {
+  it("mic muted during the start earcon: the recorder never starts; the loop waits muted, unmute listens", async () => {
+    const w = deferred<void>();
+    const t = rig({ cue: () => true, wait: () => w.promise });
+    t.s.start(); await flush();
+    expect(t.last().phase).toBe("starting");
+    t.s.setMicMuted(true);               // no recorder exists yet
+    w.resolve(); await flush();
+    expect(t.records).toHaveLength(0);   // never recorded, so nothing can be transcribed or sent
+    expect(t.last().phase).toBe("muted");
+    t.s.setMicMuted(false); await flush();
+    expect(t.records).toHaveLength(1);   // unmuting (a tap) listens again
+  });
+  it("mic muted while the capture session is being prepared: no recording", async () => {
+    const prep = deferred<void>();
+    const t = rig({ beforeCapture: () => prep.promise });
+    t.s.start(); await flush();
+    t.s.setMicMuted(true);
+    prep.resolve(); await flush();
+    expect(t.records).toHaveLength(0);
+    expect(t.last().phase).toBe("muted");
+    expect(t.log).not.toContain("transcribe");
+  });
+  it("speaker muted while the route is still settling: no voice is requested or played; the reply stays text", async () => {
+    const settle = deferred<void>();
+    const t = rig({ afterCapture: () => settle.promise });
+    t.s.start(); await toPlay(t);        // reply arrived; waiting for the settle step
+    expect(t.last()).toEqual({ phase: "thinking", step: "voice" });
+    t.s.setSpeakerMuted(true);           // no playback job exists yet
+    settle.resolve(); await flush();
+    expect(t.plays).toHaveLength(0);
+    expect(t.d.onReply).toHaveBeenCalledWith("الرد");
+    expect(t.records).toHaveLength(2);   // back to listening
+  });
+  it("speaker muted while a blocked reply waits for its tap: the wait is dropped and the loop listens again", async () => {
+    const resume = vi.fn(async () => "done" as PlayResult);
+    const t = rig({ canResume: () => true, resume });
+    t.s.start(); await toPlay(t);
+    t.plays[0].d.resolve("error"); await flush();
+    expect(t.last().phase).toBe("blocked");
+    t.s.setSpeakerMuted(true); await flush();
+    expect(resume).not.toHaveBeenCalled();
+    expect(t.records).toHaveLength(2);
+    expect(t.errors).toEqual([]);
+  });
+});
