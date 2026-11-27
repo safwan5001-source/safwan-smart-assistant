@@ -64,6 +64,18 @@ describe("B4: which BASHT records become a push", () => {
 });
 
 describe("B4: polling the feed into deliveries", () => {
+  it("Codex #6: a first poll whose later page fails keeps startup suppression until the backlog is fully read", async () => {
+    const { store, id } = await setup();
+    const paged = (r: FeedResult, nextAfter: number, more: boolean): FeedResult => (r.kind === "ok" ? { ...r, nextAfter, more } : r);
+    const page1 = paged(ok([{ id: 100, type: "chat.final", at: NOW, seen: false }], 103), 100, true);
+    const page2 = paged(ok([{ id: 101, type: "chat.final", at: NOW, seen: false }, approval(102), { id: 103, type: "cron.failed", at: NOW, name: "x" }], 103), 103, false);
+    const { feed } = feedOf(page1, { kind: "offline" }, page2);
+    await pollBashtEvents(store, feed, NOW); // page 1 read, page 2 failed: not yet a start point
+    expect(JSON.parse((await store.getCursor(CURSOR))!)).toMatchObject({ after: 100, initialized: false });
+    await pollBashtEvents(store, feed, NOW + 1000); // the rest of the startup backlog: only the waiting approval is announced
+    expect((await payloads(store, id)).map((d) => d.key)).toEqual([`basht:approval:${AID}`]);
+    expect(JSON.parse((await store.getCursor(CURSOR))!)).toMatchObject({ after: 103, initialized: true });
+  });
   it("Codex #5: a first poll that failed (outage cursor saved) still starts from now on recovery — no backlog burst", async () => {
     const { store, id } = await setup();
     const { feed } = feedOf({ kind: "offline" }, ok([{ id: 100, type: "chat.final", at: NOW, seen: false }, approval(101), { id: 102, type: "cron.failed", at: NOW, name: "x" }], 102));

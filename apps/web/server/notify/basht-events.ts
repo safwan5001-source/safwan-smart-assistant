@@ -144,7 +144,8 @@ export async function pollBashtEvents(store: NotifyStore, feed: Feed, now: numbe
     // a new ring whose ids are all below our cursor (should not happen: ids are seeded with the engine's boot time) restarts at 0
     cur.after = started && r.latest !== null && r.epoch !== cur.epoch && r.latest < cur.after ? 0 : Math.max(reached, started ? cur.after : 0);
     cur.epoch = r.epoch;
-    cur.initialized = true;
+    // startup suppression lasts until the initial backlog has been read to the end (a later page may have failed this tick)
+    cur.initialized = started || complete;
   }
   await store.setCursor(CURSOR, JSON.stringify(cur), now);
   return rep;
