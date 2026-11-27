@@ -32,7 +32,7 @@ export default function SecuritySettings() {
     setSessions(list); setKeys(pk);
   }, []);
   useEffect(() => { void load(); }, [load]);
-  useEffect(() => { if (status?.owner_auth && !status.authenticated) ownerGate.signInAgain(); }, [status, ownerGate]);
+  useEffect(() => { if (status && !status.unavailable && status.owner_auth && !status.authenticated) ownerGate.signInAgain(); }, [status, ownerGate]);
 
   const run = async (fn: () => Promise<boolean | void>, ok: string) => {
     if (busy) return;
@@ -62,6 +62,7 @@ export default function SecuritySettings() {
     await run(() => authClient.removePasskey(k.id), "أُزيل الجهاز");
   };
 
+  if (status?.unavailable) return <section className="card card-pad"><Notice tone="warn" role="status">تعذّر الوصول إلى الخادم الآن؛ لم تتغير جلستك. أعد المحاولة بعد لحظات.</Notice></section>;
   if (!status?.owner_auth || !status.authenticated) return null;
   return (
     <section className="card card-pad stack" aria-labelledby="sec-h">

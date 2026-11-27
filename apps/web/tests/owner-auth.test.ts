@@ -203,6 +203,11 @@ describe("review fixes (gate): an outage is never a sign-out", () => {
   it("status: the database is down → unavailable, not signed out (the watcher stays put)", async () => {
     expect(await (await call("GET", "status", withSession(), undefined, sessionDown())).json()).toMatchObject({ authenticated: false, unavailable: true });
   });
+  it("door status during an outage is 503 (clients show offline), never authenticated:false (Codex #59)", async () => {
+    const d = { env: { ...env, BASHT_CHAT_ACCESS_CODE: "basht-owner-code-0123456789-abcdefghijkl" }, callBackend: sessionDown().callBackend, now: () => NOW };
+    const r = await handleBashtChat(new Request(`https://${HOST}/api/basht/status`, { headers: withSession() }), ["status"], d);
+    expect(r.status).toBe(503);
+  });
   it("doors answer 503 unavailable (shown as offline), not 401", async () => {
     const d = { env: { ...env, BASHT_CHAT_ACCESS_CODE: "basht-owner-code-0123456789-abcdefghijkl" }, callBackend: sessionDown().callBackend, now: () => NOW };
     const r = await handleBashtChat(new Request(`https://${HOST}/api/basht/sessions`, { headers: withSession() }), ["sessions"], d);

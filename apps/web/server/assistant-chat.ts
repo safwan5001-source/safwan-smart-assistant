@@ -56,7 +56,8 @@ export async function handleAssistantChat(req: Request, path: string[], deps: De
   const gate = readGate(deps.env);
   const now = deps.now();
   const access = await doorAccess(req, deps, { on: !!gate, ok: !!gate && verifyCookieValue(gate, readCookie(req), now) }); // A1
-  if (req.method === "GET" && route === "status") return json({ enabled: access.enabled, authenticated: access.authenticated });
+  // a session that could not be checked (API/DB down) is "unavailable" (clients show offline), never "signed out"
+  if (req.method === "GET" && route === "status") return access.outage ? err("unavailable", 503) : json({ enabled: access.enabled, authenticated: access.authenticated });
   if (!access.enabled) return err("disabled", 503);
 
   if (route === "session") {
