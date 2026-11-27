@@ -140,7 +140,7 @@ describe("tasks (authenticated)", () => {
   });
   it("a chat command handled locally is never forwarded to the AI provider (review F4)", async () => {
     const src = (await import("node:fs")).readFileSync(new URL("../features/chat/chat-screen.tsx", import.meta.url), "utf8");
-    expect(src).toMatch(/if \(quick\.handled\) \{ if \(quick\.reply\)[\s\S]*?\}\s*else if \(ready && text\)/);
+    expect(src).toMatch(/if \(quick\.handled\) \{ if \(quick\.reply\)[\s\S]*?\}\s*else if \(ready && \(text \|\| photos\.length\)\)/);
   });
   it("maps upstream failures to fixed codes and never leaks upstream text, addresses or secrets", async () => {
     const cases: [unknown, number, string][] = [

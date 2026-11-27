@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 import app.service_auth as sa
 from app import main
 from app.main import app
-from app.service_auth import MemoryNonceStore, require_service_call, require_service_call_audio, sign
+from app.service_auth import MemoryNonceStore, require_service_call, require_service_call_audio, require_service_call_media, sign
 
 SECRET = "unit-test-secret-0123456789abcdef-0123456789abcdef"
 BROWSER_TOKEN = "t" * 40
@@ -69,6 +69,12 @@ SIGNED_ROUTES = {
     # /transcribe is the ONE route whose signed body may be 10 MiB of raw audio (require_service_call_audio, see SIGNATURE_GUARDS).
     ("POST", "/internal/v1/basht/speak"),
     ("POST", "/internal/v1/basht/transcribe"),
+    # B1/B2 chat basics + media (tests/test_basht_media.py): same signature. /send-media is the ONE route whose signed JSON may
+    # carry up to 19 MiB of photos (require_service_call_media, see SIGNATURE_GUARDS).
+    ("POST", "/internal/v1/basht/send-media"),
+    ("POST", "/internal/v1/basht/media"),
+    ("POST", "/internal/v1/basht/new"),
+    ("POST", "/internal/v1/basht/search"),
     # A1 one owner session (tests/test_owner_auth.py): same signature; owner code / session secret / passkey proofs in the body
     ("POST", "/internal/v1/auth/config"),
     ("POST", "/internal/v1/auth/login/code"),
@@ -86,9 +92,11 @@ SIGNED_ROUTES = {
     ("POST", "/internal/v1/auth/passkeys/login/verify"),
 }
 BROWSER_TOKEN_ROUTES = {("POST", "/internal/browser/smoke"), ("POST", "/internal/browser/read")}
-# The signature dependency, and its one larger-body variant (same check, 10 MiB cap) — only on the routes listed here.
-SIGNATURE_GUARDS = {require_service_call, require_service_call_audio}
+# The signature dependency, and its two larger-body variants (same check; 10 MiB raw audio, 19 MiB photo JSON) — each only on
+# the one route listed here.
+SIGNATURE_GUARDS = {require_service_call, require_service_call_audio, require_service_call_media}
 AUDIO_BODY_ROUTES = {("POST", "/internal/v1/basht/transcribe")}
+MEDIA_BODY_ROUTES = {("POST", "/internal/v1/basht/send-media")}
 
 
 @pytest.fixture(autouse=True)
@@ -176,6 +184,8 @@ def test_every_signed_route_depends_on_the_service_signature():
             assert SIGNATURE_GUARDS & deps, f"{method} {path} lost its signature dependency"
             # the larger audio body is allowed on the voice-note route only
             assert (require_service_call_audio in deps) == ((method, path) in AUDIO_BODY_ROUTES), f"{method} {path}: wrong body cap"
+            # the larger photo body is allowed on the photo route only
+            assert (require_service_call_media in deps) == ((method, path) in MEDIA_BODY_ROUTES), f"{method} {path}: wrong body cap"
 
 
 def test_there_is_no_global_exemption_or_guard_hiding_behind_middleware():

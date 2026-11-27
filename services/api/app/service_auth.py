@@ -226,3 +226,17 @@ async def _verify(request: Request, settings: Settings, store: NonceStore | None
     if not fresh:
         raise _deny("replayed nonce")
     return ServiceCall(account_id=account)
+
+
+# BASHT photos (B2): the one JSON body that carries images for BASHT (/internal/v1/basht/send-media, base64 inside JSON), still
+# signed like every other body. Matches the BodyLimitMiddleware entry for that path in main.py.
+MAX_MEDIA_BODY_BYTES = 19 * 1024 * 1024
+
+
+async def require_service_call_media(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+    store: NonceStore | None = Depends(get_nonce_store),
+) -> ServiceCall:
+    """The same signature check, for the photo route (a body up to MAX_MEDIA_BODY_BYTES)."""
+    return await _verify(request, settings, store, MAX_MEDIA_BODY_BYTES)

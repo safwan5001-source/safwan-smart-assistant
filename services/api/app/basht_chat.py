@@ -221,9 +221,10 @@ def reset_limits() -> None:
 
 
 def _run_view(j: dict) -> dict:
+    from .basht_media import steps  # B1 tool progress (names only)
     status = j.get("status") if j.get("status") in ("running", "done", "error", "stopped") else "error"
     return {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error",
-            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs"))}
+            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs")), "steps": steps(j.get("steps"))}
 
 
 @router.get("/sessions")
@@ -240,6 +241,9 @@ class HistoryBody(BaseModel):
     key: str = Field(min_length=1, max_length=260)
     limit: int = Field(50, ge=1, le=200)
     offset: int | None = Field(None, ge=0)
+    # B1: earlier rows (also across «محادثة جديدة») by cursor, or a window around one message (a search hit). Ids only.
+    before: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{6,100}(?:\.[A-Za-z0-9_-]{6,100})?$")
+    around: str | None = Field(None, pattern=r"^[A-Za-z0-9_-]{6,100}$")
 
 
 @router.post("/history")
@@ -247,12 +251,20 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
     """POST with a JSON body: the BFF only ever calls fixed /internal/v1/* paths (no query strings, see apps/web/server/backend.ts)."""
     if not _KEY_RE.fullmatch(body.key):
         raise HTTPException(status_code=400, detail={"code": "bad_request"})
+    from .basht_media import cursor, row_extras
     q = f"/history?key={quote(body.key, safe='')}&limit={body.limit}" + (f"&offset={body.offset}" if body.offset is not None else "")
-    j = _guard(lambda: _call("GET", q))
+    if body.before or body.around:
+        q += f"&before={body.before}" if body.before else f"&around={body.around}"
+    # an anchored read runs through the engine's CLI (a few seconds)
+    j = _guard(lambda: _call("GET", q, timeout=30.0 if body.before or body.around else READ_TIMEOUT))
     msgs = j.get("messages") if isinstance(j.get("messages"), list) else []
     out: list[dict] = []
     pending_fallback: dict | None = None
     for m in msgs:
+        if isinstance(m, dict) and m.get("kind") == "reset":  # «محادثة جديدة»: a boundary, shown as a divider
+            out.append({"role": "system", "kind": "reset", "text": "", "at": m.get("at") if isinstance(m.get("at"), int) else 0, **row_extras(m)})
+            pending_fallback = None
+            continue
         if not isinstance(m, dict) or m.get("role") not in ("user", "assistant"):
             continue
         if m.get("role") == "assistant" and _is_switch_notice(m):
@@ -262,7 +274,7 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
             continue
         if m.get("role") == "user":
             pending_fallback = None  # a switch belongs to the reply of ITS turn, never to a later one
-        row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0}
+        row = {"role": m.get("role"), "text": _text(m.get("text")), "at": m.get("at") if isinstance(m.get("at"), int) else 0, **row_extras(m)}
         if m.get("role") == "assistant":
             row.update(_reply_meta(m))
             if pending_fallback and "fallback" not in row:
@@ -270,7 +282,8 @@ def history(body: HistoryBody, _: ServiceCall = Depends(require_service_call)):
             pending_fallback = None
         out.append(row)
     nxt = j.get("nextOffset")
-    return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True}
+    return {"key": body.key, "messages": out, "next_offset": nxt if isinstance(nxt, int) else None, "has_more": j.get("hasMore") is True,
+            "earlier": cursor(j.get("earlier"))}
 
 
 class SendBody(BaseModel):

@@ -81,7 +81,7 @@ describe("BASHT chat door: relay", () => {
     // every relayed path is a fixed /internal/v1/* route, which the real callBackend enforces (no query strings)
     for (const c of backend.mock.calls) expect(c[0].path).toMatch(/^\/internal\/v1\/[a-z0-9/_-]+$/);
     backend.mockResolvedValueOnce(ok(200, { run_id: RUN, status: "done", text: "تم", failed: false, extra: "x" }));
-    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "تم", failed: false, firstTokenMs: null, totalMs: null });
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "تم", failed: false, firstTokenMs: null, totalMs: null, steps: [] });
     backend.mockResolvedValueOnce({ kind: "unreachable" });
     expect((await call("GET", "sessions", authed)).status).toBe(503);
   });
@@ -131,7 +131,7 @@ describe("BASHT chat door: model control (M)", () => {
   });
   it("a run carries the bridge-measured latency", async () => {
     backend.mockResolvedValueOnce(ok(200, { status: "done", text: "x", failed: false, first_token_ms: 640, total_ms: 2100 }));
-    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "x", failed: false, firstTokenMs: 640, totalMs: 2100 });
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "x", failed: false, firstTokenMs: 640, totalMs: 2100, steps: [] });
   });
 });
 

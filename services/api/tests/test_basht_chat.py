@@ -96,7 +96,7 @@ def test_history_passes_the_key_encoded_and_rejects_malformed_keys(client, engin
     calls, replies = engine
     replies["/history"] = {"ok": True, "messages": [{"role": "user", "text": "مرحبا", "at": 1}, {"role": "tool", "text": "x"}], "hasMore": False}
     r = call(client, "POST", "/internal/v1/basht/history", {"key": "agent:main:whatsapp:direct:+9665", "limit": 20})
-    assert r.status_code == 200 and r.json()["messages"] == [{"role": "user", "text": "مرحبا", "at": 1}]
+    assert r.status_code == 200 and r.json()["messages"] == [{"role": "user", "text": "مرحبا", "at": 1, "id": None, "media": []}]  # B1/B2 fields
     assert calls[0]["url"] == URL + "/app/v1/history?key=agent%3Amain%3Awhatsapp%3Adirect%3A%2B9665&limit=20"
     assert call(client, "POST", "/internal/v1/basht/history", {"key": "../setup"}).status_code == 400
 
@@ -133,7 +133,7 @@ def test_run_view_and_stop(client, engine):
     replies[f"/runs/{RUN}/stop"] = {"ok": True}
     replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "running", "text": "جارٍ", "error": None}
     r = call(client, "GET", f"/internal/v1/basht/runs/{RUN}")
-    assert r.json() == {"run_id": RUN, "status": "running", "text": "جارٍ", "failed": False, "first_token_ms": None, "total_ms": None}
+    assert r.json() == {"run_id": RUN, "status": "running", "text": "جارٍ", "failed": False, "first_token_ms": None, "total_ms": None, "steps": []}
     assert call(client, "POST", f"/internal/v1/basht/runs/{RUN}/stop", {}).status_code == 200
     assert call(client, "GET", "/internal/v1/basht/runs/not-a-uuid").status_code == 404
 

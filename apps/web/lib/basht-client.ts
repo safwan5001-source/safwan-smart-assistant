@@ -4,9 +4,19 @@
  */
 export type BashtSession = { key: string; label: string; channel: string; updated_at: number; writable: boolean };
 export type BashtFallback = { from: string | null; to: string | null; reason: string | null; at?: number | null };
-/** `provider`/`model`: the model that actually wrote an assistant reply (as the engine recorded it), with any fallback. */
-export type BashtMessage = { role: "user" | "assistant"; text: string; at: number; provider?: string | null; model?: string | null; fallback?: BashtFallback };
-export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean; firstTokenMs?: number | null; totalMs?: number | null };
+/** B2: an image/file of one engine message. `ref` is opaque (no path ever reaches the app); `link` is a public https URL. */
+export type BashtMedia = { kind: "image" | "file" | "link"; name: string; ref?: string; mime?: string | null; size?: number | null; available?: boolean; url?: string };
+/** `provider`/`model`: the model that actually wrote an assistant reply (as the engine recorded it), with any fallback.
+ *  `kind: "reset"` (role "system") marks «محادثة جديدة» in the engine's record; `id` is the engine's message id (B1). */
+export type BashtMessage = { role: "user" | "assistant" | "system"; text: string; at: number; provider?: string | null; model?: string | null; fallback?: BashtFallback;
+  id?: string | null; kind?: "reset"; media?: BashtMedia[] };
+/** B1: a tool BASHT is using in the running turn (name only, never its arguments). */
+export type BashtStep = { tool: string; done: boolean };
+export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean; firstTokenMs?: number | null; totalMs?: number | null; steps?: BashtStep[] };
+/** One page of a conversation: `earlier` is the cursor for older rows (also across «محادثة جديدة»), or null. */
+export type BashtPage = { messages: BashtMessage[]; earlier: string | null; hasMore: boolean; nextOffset: number | null };
+export type BashtHit = { key: string; label: string; message_id: string; role: "user" | "assistant"; at: number; snippet: string };
+export type BashtImage = { mime: string; data: string };
 
 /** One model the engine offers this agent (models.list, the agent's allowlist). Nothing here is invented by the app. */
 export type BashtModel = {
@@ -34,7 +44,11 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
   fast_mode_unsupported: "النموذج الحالي لا يدعم الوضع السريع.", rejected: "رفض المحرك هذا التغيير.",
   model_control_unavailable: "التحكم بالنماذج غير متاح في نسخة المحرك الحالية.",
   voice_unavailable: "صوت باشت غير مفعّل في المحرك الآن.", no_speech: "لم أسمع كلامًا واضحًا في التسجيل. حاول مرة أخرى.",
-  too_large: "التسجيل أطول من الحد المسموح (3 دقائق).", unsupported_audio: "صيغة التسجيل غير مدعومة في هذا المتصفح.",
+  unsupported_audio: "صيغة التسجيل غير مدعومة في هذا المتصفح.",
+  too_many_images: "يمكن إرسال 8 صور كحد أقصى في الرسالة.", image_too_large: "إحدى الصور كبيرة جدًا (الحد 10 ميجابايت).",
+  images_too_large: "الصور كبيرة جدًا معًا؛ أرسل عددًا أقل.", unsupported_image: "نوع الصورة غير مدعوم.",
+  // one code from two routes (voice note 413, media file 413): one text that fits both
+  too_large: "الحجم أكبر من الحد المسموح (التسجيل الصوتي حتى 3 دقائق).", unsupported: "نوع الملف غير مدعوم للعرض.",
   not_found: "المحادثة غير متاحة.", bad_request: "طلب غير صالح.", unavailable: "تعذّر الوصول إلى محرك باشت الآن.", network: "انقطع الاتصال بالخادم.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
@@ -60,6 +74,18 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
     async lock(): Promise<void> { try { await call("session", { method: "DELETE" }); } catch { /* expires by itself */ } },
     sessions: async () => (await call<{ sessions: BashtSession[] }>("sessions")).sessions,
     history: async (key: string) => (await call<{ messages: BashtMessage[] }>(`history?key=${encodeURIComponent(key)}`)).messages,
+    /** B1: a page with paging info; `before` = an `earlier` cursor, `around` = a message id (search hit), `offset` = engine offset. */
+    historyPage: async (key: string, at: { before?: string; around?: string; offset?: number } = {}): Promise<BashtPage> => {
+      const q = at.before ? `&before=${encodeURIComponent(at.before)}` : at.around ? `&around=${encodeURIComponent(at.around)}` : at.offset !== undefined ? `&offset=${at.offset}` : "";
+      const j = await call<{ messages?: BashtMessage[]; earlier?: unknown; has_more?: unknown; next_offset?: unknown }>(`history?key=${encodeURIComponent(key)}${q}`);
+      return { messages: Array.isArray(j.messages) ? j.messages : [], earlier: typeof j.earlier === "string" ? j.earlier : null,
+        hasMore: j.has_more === true, nextOffset: typeof j.next_offset === "number" ? j.next_offset : null };
+    },
+    /** B2: one owner turn with photos (already downscaled/re-encoded by lib/image-prep). */
+    sendMedia: async (message: string, images: BashtImage[]) => (await call<{ runId: string }>("send-media", post({ message, images }))).runId,
+    /** B1: «محادثة جديدة» — the engine starts a fresh context; earlier messages stay readable. */
+    newConversation: () => call<{ at: number | null; earlier: boolean }>("new", post({})),
+    search: async (q: string) => (await call<{ results: BashtHit[] }>(`search?q=${encodeURIComponent(q)}`)).results,
     send: async (message: string) => (await call<{ runId: string }>("send", post({ message }))).runId,
     run: (id: string) => call<BashtRun>(`runs/${id}`),
     stop: async (id: string) => { await call(`runs/${id}/stop`, post({})); },
@@ -89,3 +115,6 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a)) {
   };
 }
 export const bashtClient = createBashtClient();
+/** Same-origin URL of one media item (served with the owner session, never cached by shared caches). */
+export const bashtMediaUrl = (key: string, msg: string, ref: string) =>
+  `/api/basht/media?key=${encodeURIComponent(key)}&msg=${encodeURIComponent(msg)}&ref=${encodeURIComponent(ref)}`;
