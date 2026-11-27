@@ -9,6 +9,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
 import type { PreparedImage } from "@/lib/image-prep";
+import { turnPreviews } from "@/lib/composer-photos";
+
+const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
 
 export const APP_SESSION_KEY = "agent:main:app:owner";
@@ -91,12 +94,16 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         setLive({ prompt: run.prompt, text: r.text, at: run.at, images: run.images, steps: r.steps ?? [] });
         if (r.status !== "running") {
           activeRun = null;
+          // a finished turn needs its photo previews no more (its bubble is replaced by the engine's copy below); a failed or
+          // stopped one keeps them for «إعادة المحاولة»
+          const finished = r.status === "done" ? lastTurn : null;
           if (r.status === "done") lastTurn = null;
           setFailedTurn(r.status !== "done" && lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
           if (r.status === "error") setError("تعذّر إكمال الرد من باشت. أعد المحاولة.");
           if (r.status === "stopped") setError("أُوقف الرد.");
           await finish();
+          if (finished) turnPreviews.release(urlsOf(finished));
           return;
         }
       } catch (e) {
@@ -146,7 +153,10 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const id = images.length ? await bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) : await bashtClient.send(text);
       setError(""); setFailedTurn(null); setFocusId(null);
       setAgentPhase("thinking");
+      const prev = lastTurn;
       lastTurn = { text, images };
+      turnPreviews.adopt(urlsOf(lastTurn));
+      if (prev) turnPreviews.release(urlsOf(prev), urlsOf(lastTurn)); // a newer turn replaced it (a retry keeps the same photos)
       activeRun = { id, prompt: text, at: Date.now(), images: images.map((i) => ({ name: i.name, previewUrl: i.previewUrl })) };
       void poll(activeRun);
     } catch (e) {
@@ -171,7 +181,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     setResetting(true);
     try {
       await bashtClient.newConversation();
-      lastTurn = null; setFailedTurn(null); setOlderRows([]); setOlder(null); setFocusId(null);
+      turnPreviews.release(urlsOf(lastTurn)); lastTurn = null; setFailedTurn(null); setOlderRows([]); setOlder(null); setFocusId(null);
       if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY);
       return null;
     } catch (e) {

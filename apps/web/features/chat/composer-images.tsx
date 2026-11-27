@@ -4,34 +4,24 @@
  * Files). With BASHT on, pictures are prepared here (downscaled, re-encoded: no EXIF/location) and wait as thumbnails until send;
  * other files keep the existing on-device behaviour (Files library) with an honest «قريبًا» note — documents do not reach BASHT yet.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Icon from "@/components/icon";
-import { addImages, ImagePrepError, IMAGE_LIMITS, looksLikeImage, type PreparedImage } from "@/lib/image-prep";
+import { IMAGE_LIMITS, type PreparedImage } from "@/lib/image-prep";
+import { createComposerPhotos } from "@/lib/composer-photos";
 import { formatBytes } from "./message-media";
 
+/** The composer's photos (lib/composer-photos: serialized preparation reconciled with the latest state; previews revoked). */
 export function useComposerImages() {
-  const [images, setImages] = useState<PreparedImage[]>([]);
-  const [preparing, setPreparing] = useState(false);
-  const [error, setError] = useState("");
-  const ref = useRef(images);
-  ref.current = images;
-  useEffect(() => () => { ref.current.forEach((i) => URL.revokeObjectURL(i.previewUrl)); }, []);
-
-  /** Splits picked files: photos are prepared for BASHT, the rest is returned to the caller (kept on the device as before). */
-  const take = useCallback(async (files: File[]): Promise<File[]> => {
-    const pics = files.filter(looksLikeImage);
-    const rest = files.filter((f) => !looksLikeImage(f));
-    if (!pics.length) return rest;
-    setPreparing(true); setError("");
-    try { setImages(await addImages(ref.current, pics)); }
-    catch (e) { setError(e instanceof ImagePrepError ? e.message : "تعذّر تجهيز الصورة."); }
-    finally { setPreparing(false); }
-    return rest;
-  }, []);
-  const remove = useCallback((id: string) => setImages((l) => { const x = l.find((i) => i.id === id); if (x) URL.revokeObjectURL(x.previewUrl); return l.filter((i) => i.id !== id); }), []);
-  /** After a send: the previews stay alive for the live bubble (and a retry); they are released when the page goes away. */
-  const clear = useCallback(() => { setImages([]); setError(""); }, []);
-  return { images, preparing, error, take, remove, clear, setError };
+  const [store] = useState(() => createComposerPhotos());
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  useEffect(() => () => store.dispose(), [store]);
+  /** Splits picked files: photos are queued for BASHT, the rest is returned to the caller (kept on the device as before). */
+  const take = useCallback(async (files: File[]): Promise<File[]> => store.take(files).rest as File[], [store]);
+  const remove = useCallback((id: string) => store.remove(id), [store]);
+  /** After a send: the photos now belong to the turn (use-basht adopts their previews for the live bubble and a retry). */
+  const clear = useCallback(() => { store.handOff(); }, [store]);
+  const setError = useCallback((e: string) => store.setError(e), [store]);
+  return { images: state.images, preparing: state.preparing > 0, error: state.error, take, remove, clear, setError };
 }
 
 export function ComposerImages({ images, preparing, onRemove, modelReads, modelName }: {
