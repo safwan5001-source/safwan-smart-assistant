@@ -134,7 +134,8 @@ describe("the voice player (one playback at a time)", () => {
     blocked.el.play.mockRejectedValueOnce(Object.assign(new Error("x"), { name: "NotAllowedError" }));
     expect(await blocked.p.play("m1", "نص.")).toBe("error");
     expect(blocked.p.getSnapshot()).toMatchObject({ code: "playback_blocked", phase: "error", canResume: true });
-    expect(voiceAvailability.get().speak, "the engine voice works; only this browser blocked playing it").toBe("yes");
+    expect(voiceAvailability.get().speak, "audio arrived but never played: the voice is not proven").toBe("unknown");
+    expect(voiceAvailability.playbackFailure()).toMatchObject({ kind: "playback_blocked" });
     const again = blocked.p.resume(); // the owner's next tap
     expect(blocked.el.play).toHaveBeenCalledTimes(2); // synchronously, inside that tap
     expect(asked).toHaveLength(1); // no second /speak (it may be billed)

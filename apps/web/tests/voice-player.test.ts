@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BashtError } from "@/lib/basht-client";
 import { createVoicePlayer, voiceAvailability, type PlayerPhase } from "@/lib/basht-voice";
+import { readVoice } from "@/lib/status-model";
 import { deferred, FakeEl, flush } from "./voice-fakes";
 
 /** A player on a fake element; `speak` answers from a queue of deferreds the test resolves. */
@@ -218,5 +219,81 @@ describe("a terminated playback can never start or resume behind an error (revie
     r.el.currentTime = 2; r.el.emit("timeupdate"); r.el.emit("playing"); // recovery after the error
     expect(r.p.getSnapshot()).toMatchObject({ phase: "error", code: "stalled" });
     expect(r.el.src).toBe("");
+  });
+});
+
+describe("a voice is TESTED only when its audio really played through (review P2)", () => {
+  const learnedNow = () => { const a = voiceAvailability.get(); return { speak: a.speak, reason: a.reason, at: voiceAvailability.speakCheckedAt(), playbackFailed: voiceAvailability.playbackFailure() }; };
+  const level = () => readVoice(null, learnedNow()).level;
+  it("blob fetched, nothing played yet (and while it is playing): never tested_ok", async () => {
+    const r = rig();
+    const done = r.p.play("m", "مرحبا.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    expect(voiceAvailability.get().speak).toBe("unknown");
+    expect(level()).toBe("unknown");
+    r.el.emit("playing");
+    expect(level(), "playing is not finished").toBe("unknown");
+    r.el.emit("ended");
+    expect(await done).toBe("done");
+  });
+  it("blob fetched and playback completed: tested_ok, with the time of that playback", async () => {
+    vi.setSystemTime(new Date(1_800_000_000_000));
+    const r = rig();
+    const done = r.p.play("m", "مرحبا.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    r.el.emit("playing"); r.el.emit("ended");
+    expect(await done).toBe("done");
+    expect(voiceAvailability.get().speak).toBe("yes");
+    expect(voiceAvailability.speakCheckedAt()).toBe(1_800_000_000_000);
+    expect(readVoice(null, learnedNow())).toMatchObject({ level: "tested_ok", checkedAt: 1_800_000_000_000 });
+  });
+  it("blocked autoplay: audio fetched, play() refused: degraded, not tested_ok; «استمع» stays (the engine voice is fine)", async () => {
+    const r = rig();
+    r.el.play.mockRejectedValueOnce(Object.assign(new Error("x"), { name: "NotAllowedError" }));
+    const done = r.p.play("m", "مرحبا.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    expect(await done).toBe("error");
+    expect(voiceAvailability.get().speak).not.toBe("yes");
+    expect(voiceAvailability.get().speak).not.toBe("no");
+    expect(voiceAvailability.playbackFailure()).toMatchObject({ kind: "playback_blocked" });
+    expect(level()).toBe("degraded");
+  });
+  it("blob fetched, then a decode error: degraded, not tested_ok", async () => {
+    const r = rig();
+    const done = r.p.play("m", "مرحبا.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    r.el.emit("playing"); r.el.error = { code: 3 }; r.el.emit("error");
+    expect(await done).toBe("error");
+    expect(level()).toBe("degraded");
+  });
+  it("a stalled start (never plays) is degraded, and a later completed playback clears the failure", async () => {
+    const r = rig({ startMs: 100 });
+    const done = r.p.play("m", "مرحبا.");
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(await done).toBe("error");
+    expect(level()).toBe("degraded");
+    const ok = rig();
+    const again = ok.p.play("m", "مرحبا.");
+    ok.pending[0].resolve(new Blob(["a"])); await flush();
+    ok.el.emit("playing"); ok.el.emit("ended");
+    expect(await again).toBe("done");
+    expect(voiceAvailability.playbackFailure()).toBeNull();
+    expect(level()).toBe("tested_ok");
+  });
+  it("a multi-chunk reply is tested only after a chunk finished, not when the first blob arrives", async () => {
+    const r = rig();
+    const done = r.p.play("m", "جملة أولى طويلة. ".repeat(120));
+    r.pending[0].resolve(new Blob(["a"])); await flush();
+    expect(voiceAvailability.get().speak).toBe("unknown");
+    r.el.emit("playing"); r.el.emit("ended"); await flush();
+    expect(voiceAvailability.get().speak).toBe("yes");
+    r.p.stop(); await done.catch(() => {});
+  });
+  it("an engine configuration failure still wins and clears a playback failure", async () => {
+    voiceAvailability.setPlaybackFailure("decode");
+    voiceAvailability.set("speak", "no", "identity_mismatch");
+    expect(voiceAvailability.playbackFailure()).toBeNull();
+    expect(level()).toBe("down");
   });
 });
