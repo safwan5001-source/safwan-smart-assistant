@@ -167,22 +167,45 @@ export function createAttachmentStore(factory?: IDBFactory | undefined, dbName: 
 }
 
 /** Which scopes have a database on this device (so sign-out can find them where `indexedDB.databases()` does not exist). Opaque ids only. */
-export type ScopeRegistry = { read(): string[]; add(scope: string): void; clear(): void };
+export type ScopeRegistry = {
+  read(): string[]; add(scope: string): void; clear(): void;
+  /** How many times the registry could not be read or written (full quota, blocked storage, corrupt value). Above 0 it cannot be trusted
+   *  to list every scope this device used. */
+  failures?(): number;
+};
 const REGISTRY_KEY = "basht.attachment.scopes";
 export function localStorageRegistry(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = typeof localStorage === "undefined" ? undefined : (() => { try { return localStorage; } catch { return undefined; } })()): ScopeRegistry {
-  const read = (): string[] => { try { const v = JSON.parse(storage?.getItem(REGISTRY_KEY) ?? "[]"); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && /^[0-9a-f]{16}$/.test(x)) : []; } catch { return []; } };
+  let failed = 0;
+  const read = (): string[] => {
+    try {
+      const raw = storage?.getItem(REGISTRY_KEY);
+      if (raw === null || raw === undefined) return [];
+      const v = JSON.parse(raw);
+      if (!Array.isArray(v)) { failed++; return []; }
+      return v.filter((x): x is string => typeof x === "string" && /^[0-9a-f]{16}$/.test(x));
+    } catch { failed++; return []; }
+  };
   return {
     read,
-    add(scope) { try { const all = new Set(read()); if (!all.has(scope)) { all.add(scope); storage?.setItem(REGISTRY_KEY, JSON.stringify([...all])); } } catch { /* blocked storage: databases() or the next wipe still find it */ } },
-    clear() { try { storage?.removeItem(REGISTRY_KEY); } catch { /* blocked */ } },
+    // a scope that could not be recorded (no storage, a full quota) is counted: the registry can no longer be trusted to find everything
+    add(scope) {
+      try {
+        if (!storage) { failed++; return; }
+        const all = new Set(read());
+        if (!all.has(scope)) { all.add(scope); storage.setItem(REGISTRY_KEY, JSON.stringify([...all])); }
+      } catch { failed++; }
+    },
+    clear() { try { storage?.removeItem(REGISTRY_KEY); } catch { /* the next wipe clears it */ } },
+    failures: () => failed,
   };
 }
 
 /**
- * Wipes EVERY scope's database (and the unscoped one of earlier builds): sign-out. Each database is cleared (its open retried once);
+ * Wipes EVERY scope's database (and the unscoped one of earlier builds): sign-out. The scopes found by `indexedDB.databases()` or the
+ * registry PLUS every scope this page session opened (`liveScopes`). Each database is cleared (its open retried once);
  * any scope that could not be wiped makes the whole wipe fail, so the leftover warning stays honest.
  */
-export async function wipeAllScopes(factory: IDBFactory | undefined, registry: ScopeRegistry): Promise<StoreResult> {
+export async function wipeAllScopes(factory: IDBFactory | undefined, registry: ScopeRegistry, liveScopes: readonly string[] = []): Promise<StoreResult> {
   if (!factory) return fail("absent");
   const names = new Set<string>();
   let listed = false;
@@ -191,6 +214,8 @@ export async function wipeAllScopes(factory: IDBFactory | undefined, registry: S
     if (dbs) { listed = true; for (const d of dbs) if (d.name?.startsWith(ATTACHMENT_DB)) names.add(d.name); }
   } catch { /* fall back to the registry */ }
   if (!listed) { names.add(ATTACHMENT_DB); for (const s of registry.read()) names.add(scopedDbName(s)); }
+  // every scope this page session has opened or written to is wiped, whatever discovery says
+  for (const s of liveScopes) names.add(scopedDbName(s));
   let failed: StoreFailure | null = null;
   for (const name of names) {
     const st = createAttachmentStore(factory, name);
@@ -199,6 +224,9 @@ export async function wipeAllScopes(factory: IDBFactory | undefined, registry: S
     if (!r.ok && r.reason !== "absent") failed = r.reason;
   }
   if (failed) return fail(failed);
+  // Could not be sure: no way to list the databases, and the registry failed to read or record a scope — an earlier session's scope may
+  // exist that nothing here can find. That is NOT proof that no scoped data exists, so the wipe is reported as not complete.
+  if (!listed && (registry.failures?.() ?? 0) > 0) return fail("unavailable");
   registry.clear();
   return { ok: true, value: undefined };
 }
@@ -238,7 +266,7 @@ export function createScopedStore(factory: IDBFactory | undefined, registry: Sco
     remove: via((st, id: string) => st.remove(id)),
     usage: via((st) => st.usage()),
     clear: via((st) => st.clear()),
-    clearAll: () => wipeAllScopes(factory, registry),
+    clearAll: () => wipeAllScopes(factory, registry, [...stores.keys()]),
   };
 }
 
