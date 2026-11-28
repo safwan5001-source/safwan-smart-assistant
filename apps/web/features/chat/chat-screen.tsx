@@ -600,7 +600,7 @@ export default function ChatScreen() {
           {view.kind === "main" && !live && head.executed && (
             <div className="model-exec" role="note" data-differs={head.differs ? "true" : undefined}
               title={head.differs ? `نُفّذ آخر رد بنموذج ${head.executed} بدلًا من المحدَّد ${head.selected}${head.reason ? ` (${head.reason})` : ""}` : `نفّذ آخر رد: ${head.executed}`}>
-              {head.differs ? <>↪ نُفّذ بنموذج آخر: <bdi>{head.executed}</bdi>{head.selected ? <> بدلًا من <bdi>{head.selected}</bdi></> : null}{head.reason ? ` · ${head.reason}` : ""}</> : <>آخر رد نفّذه: <bdi>{head.executed}</bdi></>}
+              {head.differs ? <><span aria-hidden="true">↪ </span>نُفّذ بنموذج آخر: <bdi>{head.executed}</bdi>{head.selected ? <> بدلًا من <bdi>{head.selected}</bdi></> : null}{head.reason ? ` · ${head.reason}` : ""}</> : <>آخر رد نفّذه: <bdi>{head.executed}</bdi></>}
             </div>
           )}
           {view.kind === "main" && bashtOn && basht.gate === "locked" && auth && !auth.owner_auth && (

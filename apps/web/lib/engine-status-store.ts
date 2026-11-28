@@ -20,6 +20,7 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
   let state: EngineSnapshot = NONE;
   let inflight: Promise<EngineSnapshot> | null = null;
   let fetched = false;
+  let epoch = 0; // bumped by reset(): a read that was in flight across a reset must not write into the new state
   const subs = new Set<() => void>();
   return {
     get: () => state,
@@ -28,16 +29,20 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
     refresh({ force = false }: { force?: boolean } = {}): Promise<EngineSnapshot> {
       if (inflight) return inflight;
       if (!force && fetched && now() - state.at < minMs) return Promise.resolve(state);
-      inflight = (async () => {
+      const mine = epoch;
+      const run: Promise<EngineSnapshot> = (async () => {
         let s: EngineStatus | null;
         try { s = await deps.fetch(); } catch { s = null; }
-        state = { status: s, at: now() }; fetched = true;
+        if (mine !== epoch) return state; // a reset happened meanwhile: this answer belongs to the old session
+        state = { status: s, at: now() };
+        fetched = s !== null; // "no data" (signed out) must not block the re-read right after sign-in for 30 s
         subs.forEach((f) => f());
         return state;
-      })().finally(() => { inflight = null; });
-      return inflight;
+      })().finally(() => { if (inflight === run) inflight = null; });
+      inflight = run;
+      return run;
     },
-    reset() { state = NONE; inflight = null; fetched = false; subs.forEach((f) => f()); },
+    reset() { epoch++; state = NONE; inflight = null; fetched = false; subs.forEach((f) => f()); },
   };
 }
 export type EngineStatusStore = ReturnType<typeof createEngineStatusStore>;

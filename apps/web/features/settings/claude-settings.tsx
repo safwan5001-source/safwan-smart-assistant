@@ -93,7 +93,8 @@ export default function ClaudeSettings() {
   };
 
   const configured = aiReady(status);
-  const tone = phase === "ready" && configured ? (probe === "fail" ? "warn" : "ok") : undefined;
+  // green only after a real probe succeeded in this view; configuration alone proves nothing
+  const tone = probe === "ok" ? "ok" : phase === "ready" && configured && probe === "fail" ? "warn" : undefined;
   const label = phase === "off" ? "غير مفعّل" : phase === "locked" ? "مقفل" : probe === "ok" ? "متصل ✓" : probe === "fail" ? "تعذر الاتصال" : configured ? "مهيأ" : "ينتظر التهيئة";
 
   return (

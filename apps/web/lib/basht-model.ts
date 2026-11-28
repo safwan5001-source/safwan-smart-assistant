@@ -121,8 +121,10 @@ const replyId = (provider: string | null | undefined, model: string | null | und
   if (!model || provider === "openclaw") return "";
   return provider && !model.includes("/") ? `${provider}/${model}` : model;
 };
-/** A provider's fast variant (grok-3-fast) is the same selected model running fast, not a different model. */
-const sameModel = (a: string, b: string) => a === b || a === b + "-fast" || b === a + "-fast" || a.endsWith("/" + b) || b.endsWith("/" + a);
+/** Provider prefix and the provider's fast suffix split off: "xai/grok-3-fast" → { p: "xai", name: "grok-3" }; a bare id has p "". */
+const splitId = (id: string) => { const i = id.indexOf("/"); const name = (i >= 0 ? id.slice(i + 1) : id).replace(/-fast$/, ""); return { p: i >= 0 ? id.slice(0, i) : "", name }; };
+/** The same model (a provider's fast variant of it, or a bare id next to a prefixed one, is not a different model). Two prefixed ids must agree on the provider. */
+const sameModel = (a: string, b: string) => { const x = splitId(a), y = splitId(b); return x.name === y.name && (x.p === "" || y.p === "" || x.p === y.p); };
 
 export type HeaderModel = {
   /** Name of the model the owner (or BASHT's default) selected; "" when unknown. */
@@ -139,14 +141,19 @@ export type HeaderModel = {
  * the conversation that carries a model (a fallback when the model state has no `last_reply` yet). Unknown stays unknown.
  */
 export function headerModel(state: BashtModelState | null, models: BashtModel[] | null | undefined,
-  lastMessage?: { provider?: string | null; model?: string | null; fallback?: { reason?: string | null } | null } | null): HeaderModel {
-  const selectedId = state?.model.id ?? "";
+  lastMessage?: { provider?: string | null; model?: string | null; fallback?: { reason?: string | null } | null; at?: number | null } | null): HeaderModel {
+  // While the engine says the conversation is on its automatic fallback, `model.id` is the model switched TO; what was selected is `fallback.from`.
+  const selectedId = (state?.model.source === "fallback" && state.fallback?.from ? state.fallback.from : state?.model.id) ?? "";
   const lr = state?.last_reply ?? null;
-  const executedId = replyId(lr?.provider, lr?.model) || replyId(null, state?.fallback?.to) || replyId(lastMessage?.provider, lastMessage?.model);
+  const lrId = replyId(lr?.provider, lr?.model);
+  const msgId = replyId(lastMessage?.provider, lastMessage?.model);
+  // the newer of the engine's last_reply and the newest reply row wins (right after a reply the row arrives before the model state reloads)
+  const useMsg = !!msgId && (!lrId || (lastMessage?.at != null && lastMessage.at > (lr?.at ?? 0)));
+  const executedId = useMsg ? msgId : lrId || replyId(null, state?.fallback?.to) || msgId;
   const selected = selectedId ? modelName(selectedId, models) : "";
   if (!executedId) return { selected, executed: "", differs: false, reason: "" };
   const executed = replyModelName(null, executedId, models);
   const differs = !!selectedId && !sameModel(selectedId, executedId);
-  const rawReason = state?.fallback?.reason ?? lr?.fallback?.reason ?? lastMessage?.fallback?.reason ?? null;
+  const rawReason = useMsg ? lastMessage?.fallback?.reason ?? null : state?.fallback?.reason ?? lr?.fallback?.reason ?? lastMessage?.fallback?.reason ?? null;
   return { selected, executed, differs, reason: differs ? reasonLabel(rawReason) : "" };
 }

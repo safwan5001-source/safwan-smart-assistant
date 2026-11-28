@@ -208,8 +208,9 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a), opts
     async engineStatus(): Promise<EngineStatus | null> {
       try {
         const res = await fetchImpl("/api/basht/engine-status", { credentials: "same-origin", cache: "no-store" });
-        if (res.status === 401 || res.status === 403) return null;
-        if (!res.ok) { const b = await res.json().catch(() => null) as { error?: unknown } | null; return b?.error === "disabled" ? null : unknownEngineStatus(); }
+        // no data (not asked successfully): signed out, BASHT off, a rate limit, an outage of the door, or a route an older deploy lacks
+        if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 429 || res.status === 503) return null;
+        if (!res.ok) return unknownEngineStatus();
         return parseEngineStatus(await res.json());
       } catch { return unknownEngineStatus(); }
     },
