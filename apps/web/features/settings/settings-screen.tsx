@@ -2,10 +2,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import Icon, { type IconName } from "@/components/icon";
-import { Badge, BrandMark, Notice, PageHeader } from "@/components/ui";
+import { BrandMark, Notice, PageHeader } from "@/components/ui";
 import { BRAND, BRAND_ASSETS } from "@/lib/brand";
 import { useDialogs } from "@/components/dialogs";
-import { aiReady, useAssistant } from "@/components/assistant-context";
 import { useStore } from "@/lib/hooks";
 import { compactStore, taskModePrefStore, tasksStore, themeStore, threadsStore, DEFAULT_ASSISTANT_MODE, type Theme, type TaskModePref } from "@/lib/stores";
 import { MODE_LABEL } from "@/lib/permissions";
@@ -17,12 +16,12 @@ import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
 import ClaudeSettings from "./claude-settings";
 import SecuritySettings from "./security-settings";
+import SystemStatus from "./system-status";
 
 const THEMES: { id: Theme; label: string; icon: IconName }[] = [{ id: "system", label: "تلقائي", icon: "auto" }, { id: "light", label: "فاتح", icon: "sun" }, { id: "dark", label: "داكن", icon: "moon" }];
 
 export default function SettingsScreen() {
   const { confirm, toast } = useDialogs();
-  const { status, refresh } = useAssistant();
   const theme = useStore(themeStore), compact = useStore(compactStore), pref = useStore(taskModePrefStore);
   const [files, setFiles] = useState<{ count: number; bytes: number } | null>(null);
   useEffect(() => { let live = true; listFiles().then((f) => live && setFiles({ count: f.length, bytes: f.reduce((n, x) => n + x.size, 0) })).catch(() => undefined); return () => { live = false; }; }, []);
@@ -70,19 +69,8 @@ export default function SettingsScreen() {
       </section>
 
       <SecuritySettings />
-      <ClaudeSettings />
 
-      <section className="card card-pad" aria-labelledby="sys-h">
-        <div className="section-head"><h2 id="sys-h">حالة النظام</h2><button className="btn btn-sm" onClick={refresh}>إعادة الفحص</button></div>
-        <div style={{ marginBlockStart: 6 }}>
-          <div className="status-line"><span><strong>الخادم</strong><small>{status.server === "online" ? `الإصدار ${status.version}` : status.server === "checking" ? "جارٍ الفحص…" : "لا استجابة من /api/health"}</small></span>
-            <Badge tone={status.server === "online" ? "ok" : status.server === "offline" ? "warn" : undefined}>{status.server === "online" ? "متصل" : status.server === "offline" ? "غير متصل" : "…"}</Badge></div>
-          <div className="status-line"><span><strong>Claude (الذكاء الاصطناعي)</strong><small>يتطلب مزوّد نماذج ومفاتيح على الخادم</small></span><Badge tone={aiReady(status) ? "ok" : undefined}>{aiReady(status) ? "مفعّل" : "غير مفعّل"}</Badge></div>
-          <div className="status-line"><span><strong>الحساب والمصادقة</strong><small>لا حساب ولا مزامنة بعد</small></span><Badge>غير مهيأ</Badge></div>
-          <div className="status-line"><span><strong>Windows السحابي</strong><small>التنفيذ على الكمبيوتر السحابي</small></span><Badge>غير متصل</Badge></div>
-          <div className="status-line"><span><strong>الصوت المباشر</strong><small>الإملاء متاح حسب دعم المتصفح؛ الرد الصوتي غير مفعّل</small></span><Badge>جزئي</Badge></div>
-        </div>
-      </section>
+      <SystemStatus />
 
       <section className="card card-pad stack" aria-labelledby="data-h">
         <div><h2 id="data-h">بياناتك على هذا الجهاز</h2>
@@ -104,6 +92,11 @@ export default function SettingsScreen() {
           <small>إن ثبّتّ التطبيق على الشاشة الرئيسية قبل التحديث، احذفه وأضِفه من جديد ليظهر اسم «باشت» وأيقونته الجديدة.</small>
         </span>
       </section>
+      {/* The old direct-Claude path is no indicator of anything BASHT does: it lives here, labelled legacy, and feeds no badge anywhere else. */}
+      <details className="ctl-details legacy-integrations">
+        <summary><strong>حول ← التكاملات القديمة</strong></summary>
+        <ClaudeSettings />
+      </details>
       <Notice>الأسرار ومفاتيح الواجهات البرمجية لا توضع في هذا التطبيق أبداً؛ تُحفظ في بيئة الخادم فقط.</Notice>
     </div>
   );

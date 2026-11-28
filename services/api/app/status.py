@@ -23,8 +23,12 @@ def health_payload(settings: Settings) -> dict[str, Any]:
         "service": "orchestrator-foundation",
         "version": SERVICE_VERSION,
         "features": {
+            # LEGACY (R11): "a direct-provider key is CONFIGURED", never "it works" and never "BASHT is ready". The app UI no longer draws
+            # a badge from it (only the legacy direct-Claude chat path reads it); BASHT's readiness is `basht` below plus the engine's own
+            # /status read through GET /internal/v1/basht/engine-status. Kept (additive-only contract) so a web build from before this
+            # change, deployed on its own, still accepts this answer.
             "assistant": bool(provider_status(settings)["configured"]),
-            "connected_integrations": integration_summary()["connected"],
+            "connected_integrations": integration_summary()["connected"],  # LEGACY: counts the old env-driven catalogue; the UI shows none of it
             "task_execution": False,
             # BASHT Core Integration C1: coarse engine state (unconfigured / connected / starting / offline), cached 60 s
             "basht": core_state(os.environ),

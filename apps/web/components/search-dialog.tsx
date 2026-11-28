@@ -3,14 +3,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Modal from "./modal";
 import Icon, { type IconName } from "./icon";
-import IntegrationLogo from "./integration-logo";
 import { NAV } from "@/lib/nav";
-import { INTEGRATIONS, type IntegrationDef } from "@/lib/integrations";
 import { matches } from "@/lib/search";
 import { listFiles } from "@/lib/files-db";
 import { tasksStore, threadsStore } from "@/lib/stores";
 
-type Result = { key: string; group: string; title: string; sub?: string; icon: IconName; href: string; integration?: IntegrationDef };
+type Result = { key: string; group: string; title: string; sub?: string; icon: IconName; href: string };
 const LIMIT = 6;
 
 export default function SearchDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -38,8 +36,6 @@ export default function SearchDialog({ open, onClose }: { open: boolean; onClose
     out.push(...threadsStore.getSnapshot().filter((t) => matches(t.title + " " + t.messages.map((m) => m.text).join(" "), q)).slice(0, LIMIT)
       .map((t) => ({ key: "c" + t.id, group: "المحادثات", title: t.title, sub: t.messages.length + " رسالة", icon: "chat" as IconName, href: "/chat?t=" + t.id })));
     out.push(...fileNames.filter((n) => matches(n, q)).slice(0, LIMIT).map((n, i) => ({ key: "f" + i + n, group: "الملفات", title: n, icon: "file" as IconName, href: "/files?q=" + encodeURIComponent(n) })));
-    out.push(...INTEGRATIONS.filter((i) => matches(i.name + " " + i.description, q)).slice(0, LIMIT)
-      .map((i) => ({ key: "i" + i.id, group: "التكاملات", title: i.name, sub: i.description, icon: "integrations" as IconName, integration: i, href: "/integrations?q=" + encodeURIComponent(i.name) })));
     return out;
   }, [open, q, fileNames]);
 
@@ -57,7 +53,7 @@ export default function SearchDialog({ open, onClose }: { open: boolean; onClose
       <div className="dialog-card" style={{ width: "100%", padding: 14 }} onKeyDown={onKey}>
         <div className="search">
           <Icon name="search" size={20} />
-          <input className="input" autoFocus type="search" enterKeyHint="search" placeholder="ابحث في المهام والمحادثات والملفات والتكاملات…" aria-label="بحث شامل"
+          <input className="input" autoFocus type="search" enterKeyHint="search" placeholder="ابحث في المهام والمحادثات والملفات…" aria-label="بحث شامل"
             role="combobox" aria-expanded="true" aria-controls="search-results" aria-activedescendant={results[active] ? "sr-" + results[active].key : undefined}
             value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
@@ -69,7 +65,7 @@ export default function SearchDialog({ open, onClose }: { open: boolean; onClose
               <div key={r.key} role="presentation">
                 {header}
                 <button id={"sr-" + r.key} role="option" aria-selected={i === active} className="search-result" onMouseEnter={() => setActive(i)} onClick={() => go(r)}>
-                  {r.integration ? <IntegrationLogo integration={r.integration} size="sm" /> : <span className="file-ico" style={{ width: 36, height: 36 }}><Icon name={r.icon} size={18} /></span>}
+                  <span className="file-ico" style={{ width: 36, height: 36 }}><Icon name={r.icon} size={18} /></span>
                   <span style={{ minWidth: 0 }}><strong style={{ display: "block", overflowWrap: "anywhere" }}>{r.title}</strong>{r.sub && <small className="muted">{r.sub}</small>}</span>
                 </button>
               </div>

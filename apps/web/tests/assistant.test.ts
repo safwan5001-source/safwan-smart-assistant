@@ -101,7 +101,8 @@ describe("assistant streaming client", () => {
 });
 
 describe("integrations catalogue", () => {
-  it("ships every integration as planned (nothing is claimed connected)", () => {
-    expect(INTEGRATIONS.every((i) => i.status === "planned")).toBe(true);
+  it("carries no status at all (R11: nothing is claimed planned, connected or missing; the engine's capabilities are the only source)", () => {
+    expect(INTEGRATIONS.length).toBeGreaterThan(0);
+    expect(INTEGRATIONS.some((i) => "status" in i)).toBe(false);
   });
 });

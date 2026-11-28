@@ -79,7 +79,7 @@ _lock = threading.Lock()
 _sends: list[float] = []
 _speaks: list[float] = []
 _transcribes: list[float] = []
-_voice_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_status_cache: dict[str, tuple[float, Any, bool, float]] = {}  # engine /status, raw: (expires, json, failed, read-at) — one read serves voice-status AND engine-status
 
 
 class EngineError(Exception):
@@ -227,7 +227,8 @@ def reset_limits() -> None:
         _sends.clear()
         _speaks.clear()
         _transcribes.clear()
-        _voice_status_cache.clear()
+        _status_cache.clear()
+        _status_flights.clear()
 
 
 def _run_view(j: dict) -> dict:
@@ -496,24 +497,140 @@ def _voice_status_view(j: Any) -> dict[str, Any]:
     return out
 
 
-@router.get("/voice-status")
-def voice_status(_: ServiceCall = Depends(require_service_call)):
-    """Never an error to the UI: any failure, an unconfigured or an older engine answers 200 `{speak: "unknown"}`."""
+class _Flight:
+    """One real engine read in progress: concurrent cache misses wait for it instead of each reading the engine."""
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: tuple[Any, bool, float] | None = None  # (json, failed, read-at)
+
+
+_status_flights: dict[str, _Flight] = {}
+FLIGHT_WAIT = VOICE_STATUS_TIMEOUT + 2.0  # a follower never waits longer than the read's own timeout (plus slack): no stuck request
+
+
+def _engine_status_raw() -> tuple[Any, bool, bool, int]:
+    """The engine's GET /status as the engine sent it, read at most once per 30 s (a failed read: 5 s), SINGLE-FLIGHT: concurrent cache
+    misses share one read (the lock is never held across the network call). -> (json | None, failed, fresh, age_ms): `age_ms` is how
+    long ago the engine really answered, so a cached answer is never presented as newer than it is. `fresh` is True only for the
+    caller that performed the read, which also writes the single audit line of that read."""
     cfg = _config()
     key = cfg[0] if cfg else ""
     now = time.monotonic()
     with _lock:
-        hit = _voice_status_cache.get(key)
+        hit = _status_cache.get(key)
         if hit and now < hit[0]:
-            return hit[1]
+            return hit[1], hit[2], False, max(0, int((now - hit[3]) * 1000))
+        flight = _status_flights.get(key)
+        leader = flight is None
+        if leader:
+            flight = _status_flights[key] = _Flight()
+    assert flight is not None
+    if not leader:
+        if flight.done.wait(FLIGHT_WAIT) and flight.result is not None:
+            raw, failed, at = flight.result
+            return raw, failed, False, max(0, int((time.monotonic() - at) * 1000))
+        return None, True, False, 0  # the leader never finished in time: an honest non-answer, not a second read storm
     failed = False
+    raw: Any = None
     try:
-        view = _voice_status_view(_call("GET", "/status", timeout=VOICE_STATUS_TIMEOUT))
-    except Exception:  # noqa: BLE001 - the status read must never break the app
-        view, failed = {"speak": "unknown"}, True
-    audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
-    with _lock:
-        _voice_status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), view)
+        try:
+            raw = _call("GET", "/status", timeout=VOICE_STATUS_TIMEOUT)
+        except Exception:  # noqa: BLE001 - the status read must never break the app
+            failed = True
+        with _lock:
+            _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed, now)
+        flight.result = (raw, failed, now)
+        # exactly ONE audit line per real engine read performed (the leader's), whichever route triggered it; never per cached or shared answer
+        view = {"speak": "unknown"} if failed else _voice_status_view(raw)
+        audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
+    finally:
+        with _lock:
+            _status_flights.pop(key, None)
+        flight.done.set()
+    return raw, failed, True, 0
+
+
+@router.get("/voice-status")
+def voice_status(_: ServiceCall = Depends(require_service_call)):
+    """Never an error to the UI: any failure, an unconfigured or an older engine answers 200 `{speak: "unknown"}`."""
+    raw, failed, _fresh, _age = _engine_status_raw()
+    return {"speak": "unknown"} if failed else _voice_status_view(raw)
+
+
+# ── Engine status: version, build, capabilities, limits, link (the same cached engine read) ──
+ENGINE_FEATURES = VOICE_FEATURES + ("history.images.v1", "media.inline.v1", "media.guard.v1", "runs.runId.v1", "errorCode.rate_limited.v1")  # allow-list
+ATTACHMENT_KEYS = ("maxImages", "maxImageBytes", "maxTotalImageBytes", "maxFileBytes", "maxInlineBytes")
+LINK_STATES = ("off", "connecting", "up", "down")
+SIGNING_MODES = ("off", "optional", "required")
+_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,31}")
+_COMMIT_RE = re.compile(r"[0-9a-f]{7,12}")
+MAX_COUNT = 1_000_000
+MAX_ATTACH_BYTES = 1024 * 1024 * 1024
+MAX_ATTACH_COUNT = 1000
+MAX_AGE_MS = 10 * 60 * 1000
+
+
+def _bounded(v: Any, cap: int) -> int | None:
+    """A non-negative int within `cap`; a bool, a float, a string, a negative or a huge number is dropped (None)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= cap else None
+
+
+def _engine_status_view(j: Any) -> dict[str, Any]:
+    """The engine's status -> the one fixed, validated shape the BFF may pass on. Every field is checked on its own; whatever is missing,
+    mistyped, out of range or not on an allow-list is DROPPED (never repaired). No path, hostname, id, log line or error text can pass:
+    only fixed tokens, short ids and counts. A non-object answer is `{"ok": False}`."""
+    if not isinstance(j, dict) or j.get("ok") is False:
+        return {"ok": False}
+    out: dict[str, Any] = {"ok": True}
+    eng = j.get("engine")
+    if isinstance(eng, dict) and isinstance(eng.get("version"), str) and _VERSION_RE.fullmatch(eng["version"]):
+        out["engine"] = {"version": eng["version"]}
+    wr = j.get("wrapper")
+    out["wrapper"] = {"commit": wr["commit"] if isinstance(wr, dict) and isinstance(wr.get("commit"), str) and _COMMIT_RE.fullmatch(wr["commit"]) else None}
+    feats = j.get("features")
+    if isinstance(feats, list):
+        have = {f for f in feats[:64] if isinstance(f, str) and len(f) <= 40}
+        out["features"] = [f for f in ENGINE_FEATURES if f in have]
+    att = j.get("attachments")
+    if isinstance(att, dict):
+        out["attachments"] = {k: v for k in ATTACHMENT_KEYS
+                              if (v := _bounded(att.get(k), MAX_ATTACH_COUNT if k == "maxImages" else MAX_ATTACH_BYTES)) is not None}
+    link = j.get("link")
+    if isinstance(link, dict):
+        lk: dict[str, Any] = {}
+        if link.get("state") in LINK_STATES:
+            lk["state"] = link["state"]
+        if (n := _bounded(link.get("pendingApprovals"), MAX_COUNT)) is not None:
+            lk["pendingApprovals"] = n
+        out["link"] = lk
+    voice = j.get("voice")
+    if isinstance(voice, dict) and voice.get("speak") in VOICE_SPEAK_STATES:
+        vv: dict[str, Any] = {"speak": voice["speak"]}
+        if voice.get("reason") in VOICE_REASONS:
+            vv["reason"] = voice["reason"]
+        out["voice"] = vv
+    runs = j.get("runs")
+    if isinstance(runs, dict):
+        out["runs"] = {"active": _bounded(runs.get("active"), MAX_COUNT), "total": _bounded(runs.get("total"), MAX_COUNT),
+                       "approvalsPending": _bounded(runs.get("approvalsPending"), MAX_COUNT), "complete": runs.get("complete") is True}
+    sg = j.get("signing")
+    if isinstance(sg, dict):
+        sv: dict[str, Any] = {}
+        if sg.get("mode") in SIGNING_MODES:
+            sv["mode"] = sg["mode"]
+        if isinstance(sg.get("active"), bool):
+            sv["active"] = sg["active"]
+        out["signing"] = sv
+    return out
+
+
+@router.get("/engine-status")
+def engine_status(_: ServiceCall = Depends(require_service_call)):
+    """Never an error to the UI: an unconfigured, unreachable or older engine answers 200 `{"ok": false}` (= no answer, nothing guessed)."""
+    raw, failed, _fresh, age_ms = _engine_status_raw()
+    view = {"ok": False} if failed else _engine_status_view(raw)
+    if view.get("ok"):
+        view["ageMs"] = min(age_ms, MAX_AGE_MS)  # how old this answer is (0 = read just now): the app orders evidence by it, never by the fetch time
     return view
 
 

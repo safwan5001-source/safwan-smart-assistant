@@ -51,7 +51,7 @@ describe("voice reasons: the browser allowlist IS the shared contract", () => {
       void p.play("m", "نص."); // the owner's «أعد المحاولة»
       await new Promise((r) => setTimeout(r, 0));
       expect(p.getSnapshot().phase).toBe("preparing");
-      expect(voiceAvailability.get().speak).toBe("yes");
+      expect(voiceAvailability.get().speak, "a fetched blob is not a proven voice").toBe("unknown");
       p.stop();
     }
   });

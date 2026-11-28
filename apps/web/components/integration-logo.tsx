@@ -2,10 +2,10 @@
 import { useState } from "react";
 import Icon from "@/components/icon";
 import { brandFor, NEUTRAL_ICONS } from "@/lib/integration-brands";
-import type { IntegrationDef, IntegrationStatus } from "@/lib/integrations";
+import type { IntegrationDef } from "@/lib/integrations";
 
 type Props = {
-  integration: Pick<IntegrationDef, "id" | "name"> & { status?: IntegrationStatus };
+  integration: Pick<IntegrationDef, "id" | "name">;
   size?: "sm" | "md";
 };
 
@@ -18,10 +18,9 @@ export default function IntegrationLogo({ integration, size = "md" }: Props) {
   const neutral = NEUTRAL_ICONS[integration.id];
   const showImage = mark?.kind === "image" && !broken;
   const kind = mark?.kind === "glyph" ? "glyph" : showImage ? "image" : "fallback";
-  const statusDot = integration.status === "connected" ? "ok" : integration.status === "configured_unverified" ? "warn" : undefined;
 
   return (
-    <span className="int-logo" data-kind={kind} data-size={size} data-status={statusDot} aria-hidden="true"
+    <span className="int-logo" data-kind={kind} data-size={size} aria-hidden="true"
       style={mark?.kind === "glyph" ? ({ "--brand-fg": mark.color.light, "--brand-fg-dark": mark.color.dark } as React.CSSProperties) : undefined}>
       {mark?.kind === "glyph" ? (
         <svg viewBox={mark.viewBox} focusable="false"><path d={mark.path} /></svg>

@@ -24,6 +24,7 @@ import { MEDIA_CODES, handleBashtExtras } from "./basht-extras";
 import { handleBashtControl } from "./basht-control";
 import { MIN_CODE_CHARS, MIN_DISTINCT_CHARS, COOKIE_TTL_S, codeMatches, issueCookieValue, readCookie, verifyCookieValue, type Env, type Gate } from "./assistant-chat-gate";
 import { clientIp } from "./client-ip";
+import { engineStatusWire, parseEngineStatus, unknownEngineStatus } from "@/lib/engine-status";
 
 export const BASHT_COOKIE = "safwan_basht";
 export const BASHT_COOKIE_PATH = "/api/basht";
@@ -192,6 +193,12 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     // can BASHT speak right now? Same owner session as every read; any failure on the way reads as "unknown", never as an error
     const r = await deps.callBackend({ path: "/internal/v1/basht/voice-status", method: "GET", env: deps.env, timeoutMs: 8_000 });
     return json(r.kind === "ok" && r.status === 200 ? voiceStatusView(r.json) : { speak: "unknown" });
+  }
+  if (req.method === "GET" && route === "engine-status") {
+    // the engine's version/build/capabilities/limits/link: re-validated here (the API already did), so nothing unexpected can reach the
+    // browser even from a newer or older API. Any failure is `{ ok: false }` with 200: "no answer", never an error and never a guess.
+    const r = await deps.callBackend({ path: "/internal/v1/basht/engine-status", method: "GET", env: deps.env, timeoutMs: 8_000 });
+    return json(engineStatusWire(r.kind === "ok" && r.status === 200 ? parseEngineStatus(r.json) : unknownEngineStatus()));
   }
   if (req.method === "GET" && route === "sessions") return relay("/internal/v1/basht/sessions", "GET", undefined, (j) => ({ sessions: Array.isArray(j.sessions) ? j.sessions : [] }));
   if (req.method === "GET" && route === "history") {

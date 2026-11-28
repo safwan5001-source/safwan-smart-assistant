@@ -11,7 +11,6 @@ import { activityStore, noticesStore, remindersStore, tasksStore, threadsStore }
 import { alertAt, describeSchedule, type Reminder } from "@/lib/reminders";
 import { remindersDueToday } from "@/lib/command-center";
 import { unreadCount } from "@/lib/notifications";
-import { INTEGRATIONS } from "@/lib/integrations";
 import { listFiles } from "@/lib/files-db";
 import { commandTitle } from "@/lib/commands";
 import { dueState, formatDay, formatTime, formatToday, localDateKey } from "@/lib/format";
@@ -19,8 +18,10 @@ import { AGENT_STATE_TEXT, agentState, useAgentActivity } from "@/lib/agent-acti
 import { BRAND } from "@/lib/brand";
 import type { Task } from "@/lib/domain";
 import { HQ_ENABLED } from "@/lib/hq/flag";
-import { CORE_LINK_AR } from "@/lib/hq/source";
 import HqEntryCard from "@/features/hq/hq-entry-card";
+import { StatusBadge, useReadings } from "@/features/settings/system-status";
+import { checkedText, type StatusReading } from "@/lib/status-model";
+import { relative } from "@/lib/basht-control";
 
 const greeting = (h: number) => (h < 12 ? "صباح الخير" : "مساء الخير");
 const QUICK: { href?: string; search?: true; icon: IconName; label: string; tone?: "ai" | "gold" }[] = [
@@ -39,11 +40,24 @@ const ACTIVITY: Record<string, { s: RunStatus; label: string }> = {
 
 type Next = { icon: IconName; title: string; sub: string; href?: string; action?: () => void };
 
+/** One row of «الاتصالات»: a real reading, its one-line reason and when it was last checked. */
+function ConnRow({ icon, title, r, now, href }: { icon: IconName; title: string; r: StatusReading; now: number; href?: string }) {
+  const body = (
+    <>
+      <span className="ico"><Icon name={icon} size={18} /></span>
+      <span className="grow"><strong>{title}</strong><small>{[r.detail, checkedText(r.checkedAt, now, relative)].filter(Boolean).join(" · ")}</small></span>
+      <StatusBadge r={r} />
+    </>
+  );
+  return href ? <Link href={href} className="conn-row" style={{ minHeight: 44 }}>{body}</Link> : <div className="conn-row">{body}</div>;
+}
+
 export default function DashboardScreen() {
   const hydrated = useHydrated();
   const router = useRouter();
   const reminders = useStore(remindersStore), tasks = useStore(tasksStore), threads = useStore(threadsStore), activity = useStore(activityStore), notices = useStore(noticesStore);
   const { status, refresh } = useAssistant();
+  const readings = useReadings();
   const state = agentState(status, useAgentActivity());
   const st = AGENT_STATE_TEXT[state];
   const [fileCount, setFileCount] = useState<number | null>(null);
@@ -61,8 +75,6 @@ export default function DashboardScreen() {
   const upcomingTasks = [...pending].filter((t) => dueState(t.due, today) !== "overdue")
     .sort((a, b) => (a.due ?? "9999").localeCompare(b.due ?? "9999") || b.created - a.created).slice(0, 4);
   const upcomingReminders = reminders.filter((r: Reminder) => r.status === "active").sort((a, b) => (alertAt(a) ?? a.dueAt) - (alertAt(b) ?? b.dueAt)).slice(0, 3);
-  const plannedIntegrations = INTEGRATIONS.length;
-  const connectedIntegrations = INTEGRATIONS.filter((i) => i.status === "connected").length;
 
   // One suggested next step, derived only from what is on this device and the live connection status.
   const next: Next = fired[0] ? { icon: "bell", title: fired[0].title, sub: "تذكير وصل وينتظر إجراءك", href: "/reminders" }
@@ -190,17 +202,13 @@ export default function DashboardScreen() {
         </section>
 
         <section className="card card-pad" aria-labelledby="conn-h">
-          <div className="section-head"><h2 id="conn-h"><Icon name="link" size={18} />الاتصالات</h2><button className="btn-link" onClick={refresh} aria-label="إعادة فحص الخادم">إعادة الفحص</button></div>
+          <div className="section-head"><h2 id="conn-h"><Icon name="link" size={18} />الاتصالات</h2><button className="btn-link" onClick={readings.recheck} aria-label="إعادة فحص الاتصالات" style={{ minHeight: 44 }}>إعادة الفحص</button></div>
+          {/* every badge is a reading of a real source (lib/status-model.ts); no data reads «غير معروف», never a success colour */}
           <div className="conn" style={{ marginBlockStart: 4 }}>
-            <div className="conn-row"><span className="ico"><Icon name="server" size={18} /></span><span className="grow"><strong>الخادم</strong><small className="num">{status.server === "online" ? `الإصدار ${status.version}` : "فحص /api/health"}</small></span>
-              {status.server === "checking" ? <StatusPill status="running" label="يفحص" /> : status.server === "online" ? <StatusPill status="verified" label="متصل" /> : <StatusPill status="failed" label="غير متصل" />}</div>
-            <div className="conn-row"><span className="ico"><Icon name="spark" size={18} /></span><span className="grow"><strong>Claude</strong><small>{status.server === "online" && status.assistant ? "مُهيّأ على الخادم" : "لا يوجد مزوّد نماذج مفعّل"}</small></span>
-              {status.server === "online" && status.assistant ? <StatusPill status="verified" label="مفعّل" /> : <StatusPill status="draft" label="غير مفعّل" />}</div>
-            {status.server === "online" && status.bashtChat ? <Link href="/chat" className="conn-row"><span className="ico"><Icon name="hq" size={18} /></span><span className="grow"><strong>محرك باشت</strong><small>{status.server === "online" ? CORE_LINK_AR[status.basht] : "يُفحص عبر الخادم"}</small></span>
-              {status.server !== "online" ? <StatusPill status="running" label="يفحص" /> : status.basht === "connected" ? <StatusPill status="verified" label="متصل" /> : status.basht === "starting" ? <StatusPill status="running" label="يبدأ" /> : status.basht === "offline" ? <StatusPill status="failed" label="تعذّر" /> : <StatusPill status="draft" label="غير مربوط" />}</Link> : <div className="conn-row"><span className="ico"><Icon name="hq" size={18} /></span><span className="grow"><strong>محرك باشت</strong><small>{status.server === "online" ? CORE_LINK_AR[status.basht] : "يُفحص عبر الخادم"}</small></span>
-              {status.server !== "online" ? <StatusPill status="running" label="يفحص" /> : status.basht === "connected" ? <StatusPill status="verified" label="متصل" /> : status.basht === "starting" ? <StatusPill status="running" label="يبدأ" /> : status.basht === "offline" ? <StatusPill status="failed" label="تعذّر" /> : <StatusPill status="draft" label="غير مربوط" />}</div>}
-            <Link href="/integrations" className="conn-row"><span className="ico"><Icon name="integrations" size={18} /></span><span className="grow"><strong>التكاملات</strong><small className="num">{connectedIntegrations} متصلة من {plannedIntegrations} مخطط لها</small></span><span className="badge">قيد التخطيط</span></Link>
-            <div className="conn-row"><span className="ico"><Icon name="repeat" size={18} /></span><span className="grow"><strong>المزامنة</strong><small>بين الأجهزة</small></span><span className="badge">غير متاحة</span></div>
+            <ConnRow icon="server" title="الخادم" r={readings.server} now={readings.now} />
+            <ConnRow icon="hq" title="جاهزية باشت" r={readings.engine} now={readings.now} href={status.server === "online" && status.bashtChat ? "/chat" : undefined} />
+            <ConnRow icon="wave" title="الصوت" r={readings.voice} now={readings.now} />
+            <Link href="/integrations" className="conn-row" style={{ minHeight: 44 }}><span className="ico"><Icon name="integrations" size={18} /></span><span className="grow"><strong>ما يستطيعه باشت</strong><small>المهارات والقنوات والأدوات كما يقرؤها المحرك</small></span><Icon name="forward" size={18} style={{ color: "var(--muted)" }} /></Link>
           </div>
         </section>
       </div>

@@ -1,8 +1,9 @@
 "use client";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Store } from "./storage";
 import { assistantService, type AssistantStatus } from "./assistant";
+import { createLatestReader } from "./status-refresh";
 
 export const useStore = <T,>(s: Store<T>): T => useSyncExternalStore(s.subscribe, s.getSnapshot, s.getServerSnapshot);
 
@@ -23,18 +24,19 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
-export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void } {
-  const [status, setStatus] = useState<AssistantStatus>({ server: "checking" });
+/** `checkedAt`: epoch ms when the request behind the current `status` STARTED (null while checking), for the "last check" line of the status indicators. */
+export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void; refreshQuiet: () => void; checkedAt: number | null } {
+  const [state, setState] = useState<{ status: AssistantStatus; checkedAt: number | null }>({ status: { server: "checking" }, checkedAt: null });
+  const reader = useRef(createLatestReader(() => assistantService.status())).current;
+  const deliver = useCallback((status: AssistantStatus, startedAt: number) => setState({ status, checkedAt: startedAt }), []);
   const refresh = useCallback(() => {
-    setStatus({ server: "checking" });
-    void assistantService.status().then(setStatus);
-  }, []);
-  useEffect(() => {
-    let live = true;
-    void assistantService.status().then((s) => live && setStatus(s));
-    return () => { live = false; };
-  }, []);
-  return { status, refresh };
+    setState({ status: { server: "checking" }, checkedAt: null });
+    reader.start(deliver);
+  }, [reader, deliver]);
+  /** Re-reads the health WITHOUT flipping every indicator to «checking» (used on focus, throttled by the caller). */
+  const refreshQuiet = useCallback(() => reader.start(deliver), [reader, deliver]);
+  useEffect(() => { reader.start(deliver); return () => reader.cancel(); }, [reader, deliver]);
+  return { status: state.status, refresh, refreshQuiet, checkedAt: state.checkedAt };
 }
 
 /** Keeps a local search box in sync when global search navigates to the same page with a new ?q=. */

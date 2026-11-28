@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installBrowser } from "./setup";
-import { detectCaps, disablePush, enablePush, eraseRemoteDevice, getPushState, mergeReminders, pushUnavailableReason, resumeSync, sendTestPush, suspendSync, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
+import { subscribePushChange, watchPushState, detectCaps, disablePush, enablePush, eraseRemoteDevice, getPushState, mergeReminders, pushUnavailableReason, resumeSync, sendTestPush, suspendSync, syncReminders, urlBase64ToUint8Array } from "@/lib/push-client";
 import { parsePushDevice, prefsStore, pushDeviceStore, remindersStore, tombstonesStore } from "@/lib/stores";
 import { handleNotify } from "@/server/notify/api";
 import { dispatchTick } from "@/server/notify/dispatch";
 import { runCommand } from "@/lib/commands";
+import { readPush } from "@/lib/status-model";
 import { clearPrivateData } from "@/lib/sign-out";
 import { fire } from "@/lib/reminders";
 import { fakeSender, makeRuntime, makeSubscription, mkReminder, riyadh, vapid } from "./notify-helpers";
@@ -93,6 +94,93 @@ describe("client ⇄ server flow (real handlers, in-process transport, fake brow
     expect(await enablePush()).toBe("on"); // idempotent: re-uses the browser subscription
     expect(subscribeCalls).toBe(1);
   });
+  describe("the status row follows the registration (review P2)", () => {
+    const watch = () => {
+      const seen: PushStateLike[] = [];
+      const stop = watchPushState((state) => seen.push(state));
+      return { seen, stop, last: () => seen.at(-1) };
+    };
+    type PushStateLike = Awaited<ReturnType<typeof getPushState>>;
+    const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 5)); };
+
+    it("enable, then disable, then enable again in one session: every change reaches the row without a re-check", async () => {
+      const w = watch(); await settle();
+      expect(w.last()).toBe("off");
+      expect(await enablePush()).toBe("on"); await settle();
+      expect(w.last()).toBe("on");
+      expect(readPush(w.last()!, 1).level).toBe("configured");
+      expect(await disablePush()).toBe("off"); await settle();
+      expect(w.last()).toBe("off");
+      expect(readPush(w.last()!, 1)).toMatchObject({ level: "unknown", label: "غير مفعّلة" });
+      expect(await enablePush()).toBe("on"); await settle();
+      expect(w.last()).toBe("on");
+      w.stop();
+    });
+    it("a refused permission changes the state without any store write, and still reaches the row", async () => {
+      const w = watch(); await settle();
+      perm = "denied";
+      expect(await enablePush()).toBe("denied"); await settle();
+      expect(w.last()).toBe("denied");
+      expect(readPush(w.last()!, 1).level).toBe("down");
+      w.stop();
+    });
+    it("a store update from outside the component (another writer, a reset) updates the row", async () => {
+      await enablePush();
+      const w = watch(); await settle();
+      expect(w.last()).toBe("on");
+      pushDeviceStore.set((d) => (d ? { ...d, subscribed: false } : d)); await settle();
+      expect(w.last()).toBe("off");
+      pushDeviceStore.reset(); await settle();
+      expect(w.last()).toBe("off");
+      w.stop();
+    });
+    it("stop() unsubscribes: no leak, no delivery after unmount, and a read still in flight is dropped", async () => {
+      const w = watch(); await settle();
+      const n = w.seen.length;
+      w.stop();
+      await enablePush(); await disablePush(); pushDeviceStore.reset(); await settle();
+      expect(w.seen.length).toBe(n);
+      // a read that is still pending when the component unmounts never calls back
+      let release!: (s: PushStateLike) => void;
+      const delivered: string[] = [];
+      let cb: () => void = () => {};
+      const off = vi.fn();
+      const stop = watchPushState((s) => delivered.push(s), { get: () => new Promise<PushStateLike>((r) => { release = r; }), subscribe: (c) => { cb = c; return off; }, now: () => 1 });
+      stop();
+      expect(off).toHaveBeenCalledTimes(1);
+      release("on"); await settle();
+      expect(delivered).toEqual([]);
+      cb(); await settle();
+      expect(delivered).toEqual([]);
+    });
+    it("subscribePushChange unsubscribes from both sources", async () => {
+      const cb = vi.fn();
+      const off = subscribePushChange(cb);
+      pushDeviceStore.set({ deviceId: "d", token: "t", subscribed: false, registeredAt: 1 } as never);
+      expect(cb).toHaveBeenCalled();
+      cb.mockClear(); off();
+      pushDeviceStore.reset(); await enablePush();
+      expect(cb).not.toHaveBeenCalled();
+    });
+    it("an older, slower read never overwrites a newer one", async () => {
+      const reads: ((s: PushStateLike) => void)[] = [];
+      let cb: () => void = () => {};
+      const out: string[] = [];
+      const stop = watchPushState((s) => out.push(s), { get: () => new Promise<PushStateLike>((r) => reads.push(r)), subscribe: (c) => { cb = c; return () => {}; }, now: () => 1 });
+      cb(); // a second read starts while the first is pending
+      reads[1]("on"); await settle();
+      reads[0]("off"); await settle(); // the older answer arrives last
+      expect(out).toEqual(["on"]);
+      stop();
+    });
+    it("a failing read reports «error», never a stale success", async () => {
+      const out: string[] = [];
+      watchPushState((s) => out.push(s), { get: () => Promise.reject(new Error("x")), subscribe: () => () => {}, now: () => 1 });
+      await settle();
+      expect(out).toEqual(["error"]);
+    });
+  });
+
   it("permission denied is reported, nothing is registered", async () => {
     perm = "denied";
     expect(await getPushState()).toBe("denied");

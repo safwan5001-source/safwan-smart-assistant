@@ -9,8 +9,8 @@ import { ensureClaudeSession } from "@/lib/claude-session";
 import { threadsStore } from "@/lib/stores";
 import type { Thread } from "@/lib/domain";
 
-type Phase = "checking" | "off" | "locked" | "ready";
-type Probe = "idle" | "testing" | "ok" | "fail";
+export type Phase = "checking" | "off" | "locked" | "ready";
+export type Probe = "idle" | "testing" | "ok" | "fail";
 const usd = (n: number) => "$" + (n < 1 ? n.toFixed(4) : n.toFixed(2));
 
 function Meter({ label, spent, cap }: { label: string; spent: number; cap: number }) {
@@ -21,6 +21,13 @@ function Meter({ label, spent, cap }: { label: string; spent: number; cap: numbe
       <div className="meter" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><i data-level={pct >= 90 ? "high" : pct >= 70 ? "mid" : "low"} style={{ inlineSize: pct + "%" }} /></div>
     </div>
   );
+}
+
+/** The legacy section's badge. Green ONLY after a real probe succeeded in this view; configuration alone proves nothing. */
+export function claudeBadge(phase: Phase, configured: boolean, probe: Probe): { tone: "ok" | "warn" | undefined; label: string } {
+  const tone = probe === "ok" ? "ok" : phase === "ready" && configured && probe === "fail" ? "warn" : undefined;
+  const label = phase === "off" ? "غير مفعّل" : phase === "locked" ? "مقفل" : probe === "ok" ? "متصل ✓" : probe === "fail" ? "تعذر الاتصال" : configured ? "مهيأ" : "ينتظر التهيئة";
+  return { tone, label };
 }
 
 /** Claude management inside the settings screen. It only ever shows configuration state and counters: no key, no account id, no upstream text. */
@@ -92,14 +99,12 @@ export default function ClaudeSettings() {
     } catch (e) { toast(e instanceof Error ? e.message : "تعذر الحذف", "error"); } finally { setBusy(false); }
   };
 
-  const configured = aiReady(status);
-  const tone = phase === "ready" && configured ? (probe === "fail" ? "warn" : "ok") : undefined;
-  const label = phase === "off" ? "غير مفعّل" : phase === "locked" ? "مقفل" : probe === "ok" ? "متصل ✓" : probe === "fail" ? "تعذر الاتصال" : configured ? "مهيأ" : "ينتظر التهيئة";
+  const { tone, label } = claudeBadge(phase, aiReady(status), probe);
 
   return (
     <section className="card card-pad stack" aria-labelledby="claude-h">
-      <div className="section-head"><h2 id="claude-h">Claude (Anthropic)</h2><Badge tone={tone}>{label}</Badge></div>
-      <p className="muted" style={{ fontSize: 14 }}>المزوّد الأساسي لباشت. المفتاح محفوظ على الخادم فقط ولا يظهر هنا ولا يصل إلى الآيفون.</p>
+      <div className="section-head"><h2 id="claude-h">Claude المباشر (قديم)</h2><Badge tone={tone}>{label}</Badge></div>
+      <p className="muted" style={{ fontSize: 14 }}>مسار قديم يتصل بمزوّد النماذج مباشرة من الخادم، وليس هو الذي يجيب في محادثة باشت ولا يدل على جاهزية باشت. المفتاح محفوظ على الخادم فقط ولا يظهر هنا ولا يصل إلى الآيفون.</p>
 
       {phase === "off" && <Notice tone="warn">بوابة Claude غير مفعّلة على الخادم (AI_CHAT_ACCESS_CODE). تفاصيل التهيئة في docs/CHAT-AI-1.md.</Notice>}
       {phase === "locked" && (
