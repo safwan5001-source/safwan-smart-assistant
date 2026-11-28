@@ -115,21 +115,32 @@ describe("double tap / double click", () => {
   });
 });
 
-describe("wheel zoom (desktop)", () => {
-  it("wheel up zooms in at the cursor, wheel down zooms out and snaps back to centre at 1; ctrl+wheel (trackpad pinch) is faster", () => {
+describe("wheel (desktop / trackpad)", () => {
+  it("ctrl+wheel (a trackpad pinch) and meta+wheel zoom at the cursor; ctrl is faster; zooming out returns to 1 and centres", () => {
     const { g, last } = setup();
-    g.wheel({ x: 300, y: 400, deltaY: -300 });
-    expect(last().scale).toBeGreaterThan(1.4);
+    g.wheel({ x: 300, y: 400, deltaY: -30, ctrl: true });
+    expect(last().scale).toBeGreaterThan(1.3);
     expect(last().x).toBeLessThan(0);
-    g.wheel({ x: 300, y: 400, deltaY: 100000 });
+    g.wheel({ x: 300, y: 400, deltaY: 100000, ctrl: true });
     expect(last()).toMatchObject({ scale: 1, x: 0, y: 0 });
     const a = setup(), b = setup();
-    a.g.wheel({ x: 200, y: 400, deltaY: -10 }); b.g.wheel({ x: 200, y: 400, deltaY: -10, ctrl: true });
-    expect(b.last().scale).toBeGreaterThan(a.last().scale);
+    a.g.wheel({ x: 200, y: 400, deltaY: -100, meta: true }); b.g.wheel({ x: 200, y: 400, deltaY: -100, ctrl: true });
+    expect(a.last().scale).toBeGreaterThan(1); expect(b.last().scale).toBeGreaterThan(a.last().scale);
+  });
+  it("a PLAIN wheel / two-finger scroll never zooms: it pans the zoomed picture (clamped) and does nothing at scale 1", () => {
+    const { g, last } = setup();
+    g.wheel({ x: 200, y: 400, deltaY: -400 });
+    expect(last()).toMatchObject({ scale: 1, x: 0, y: 0 }); // not zoomed by a plain wheel
+    g.zoomBy(3); // 1200×900 on a 400×800 stage: max x 400, max y 50
+    g.wheel({ x: 200, y: 400, deltaX: 120, deltaY: 30 });
+    near(last().x, -120); near(last().y, -30);
+    g.wheel({ x: 200, y: 400, deltaX: -9000, deltaY: -9000 });
+    near(last().x, 400); near(last().y, 50);
+    near(last().scale, 3);
   });
   it("clamped to the maximum", () => {
     const { g, last } = setup({ maxScale: 3 });
-    for (let i = 0; i < 40; i++) g.wheel({ x: 10, y: 10, deltaY: -400 });
+    for (let i = 0; i < 40; i++) g.wheel({ x: 10, y: 10, deltaY: -40, ctrl: true });
     expect(last().scale).toBe(3);
     expect(Math.abs(last().x)).toBeLessThanOrEqual(400 * 3 / 2 - 200 + 1e-9);
   });

@@ -28,6 +28,14 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
   const changed = () => { snapshot = [...entries.values()]; listeners.forEach((l) => l()); };
   const chain = (id: string, f: () => Promise<unknown>) => { const p = (chains.get(id) ?? Promise.resolve()).then(f, f); chains.set(id, p); return p; };
   let loaded: Promise<void> | null = null;
+  /** Bumped by clear(): a save that was already in flight when the owner signed out must not bring its record back. */
+  let generation = 0;
+  const patchEntry = (id: string, fields: Partial<LocalEntry>, persist: Parameters<AttachmentStore["patch"]>[1]) => {
+    const cur = entries.get(id); if (!cur) return;
+    entries.set(id, { ...cur, ...fields }); changed();
+    const gen = generation;
+    void chain(id, () => (gen === generation && entries.get(id)?.persisted ? store.patch(id, persist) : Promise.resolve()));
+  };
 
   const api = {
     newId: opts.newId ?? (() => crypto.randomUUID()),
@@ -35,8 +43,9 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     getSnapshot: () => snapshot,
     /** Reads what earlier sessions kept (once). Records created meanwhile in this session are not overwritten. */
     load(): Promise<void> {
+      const gen = generation;
       return (loaded ??= store.list().then((r) => {
-        if (!r.ok) return;
+        if (!r.ok || gen !== generation) return;
         let any = false;
         for (const m of r.value) if (!entries.has(m.clientMsgId)) { entries.set(m.clientMsgId, { ...m, persisted: true }); any = true; }
         if (any) changed();
@@ -49,24 +58,33 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
       entries.set(n.clientMsgId, meta);
       memory.set(n.clientMsgId, n.images);
       changed();
+      const gen = generation;
       void chain(n.clientMsgId, async () => {
+        if (gen !== generation) return; // signed out meanwhile
         const r = await store.put({ clientMsgId: n.clientMsgId, text: n.text, sentAt: n.sentAt, images: n.images });
+        if (gen !== generation) { if (r.ok) await store.remove(n.clientMsgId); return; } // the wipe ran while this save was in flight
         const cur = entries.get(n.clientMsgId);
         if (r.ok && cur) { memory.delete(n.clientMsgId); entries.set(n.clientMsgId, { ...cur, persisted: true }); changed(); }
         // not saved (private mode, quota, …): the bytes stay in memory for this session
       });
     },
     /** The engine accepted the turn: remember its run id (the strongest match). */
-    attachRun(id: string, runId: string): void {
-      const cur = entries.get(id); if (!cur) return;
-      entries.set(id, { ...cur, runId }); changed();
-      void chain(id, () => (entries.get(id)?.persisted ? store.patch(id, { runId }) : Promise.resolve()));
+    attachRun(id: string, runId: string): void { patchEntry(id, { runId }, { runId }); },
+    /** The turn of this run reached a terminal state: a text match for it may now be persisted. */
+    markDone(runId: string): void {
+      for (const e of entries.values()) if (e.runId === runId && !e.runDone) patchEntry(e.clientMsgId, { runDone: true }, { runDone: true });
     },
+    /** The owner retried this turn: it no longer stands as a separate pending bubble (a row it already has still shows its photo). */
+    supersede(id: string): void { const cur = entries.get(id); if (cur && !cur.superseded) patchEntry(id, { superseded: true }, { superseded: true }); },
     /** The row this record was matched to (persisted so it survives reloads). */
-    bind(id: string, rowId: string): void {
-      const cur = entries.get(id); if (!cur || cur.matchedRowId === rowId) return;
-      entries.set(id, { ...cur, matchedRowId: rowId }); changed();
-      void chain(id, () => (entries.get(id)?.persisted ? store.patch(id, { matchedRowId: rowId }) : Promise.resolve()));
+    bind(id: string, rowId: string): void { const cur = entries.get(id); if (cur && cur.matchedRowId !== rowId) patchEntry(id, { matchedRowId: rowId }, { matchedRowId: rowId }); },
+    /** The bound row no longer stands for the record (its text changed, or another record holds it): clear the binding. */
+    unbind(id: string): void {
+      const cur = entries.get(id); if (!cur?.matchedRowId) return;
+      const { matchedRowId: _m, ...rest } = cur;
+      entries.set(id, rest); changed();
+      const gen = generation;
+      void chain(id, () => (gen === generation && entries.get(id)?.persisted ? store.patch(id, { matchedRowId: null }) : Promise.resolve()));
     },
     /** The send was refused: nothing was sent, so no copy is kept. */
     discard(id: string): void {
@@ -85,7 +103,8 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     async usage(): Promise<AttachmentUsage | null> { const r = await store.usage(); return r.ok ? r.value : null; },
     /** Explicit owner action / sign-out: forget everything this device kept. */
     async clear(): Promise<boolean> {
-      entries.clear(); memory.clear(); changed();
+      generation++; loaded = null;
+      entries.clear(); memory.clear(); chains.clear(); changed();
       const r = await store.clear();
       return r.ok || r.reason === "unavailable";
     },
@@ -96,3 +115,20 @@ export type LocalAttachments = ReturnType<typeof createLocalAttachments>;
 
 let shared: LocalAttachments | null = null;
 export const localAttachments = (): LocalAttachments => (shared ??= createLocalAttachments(attachmentStore()));
+
+/**
+ * One owner turn WITH photos: the device copy is registered before the request (a page killed mid-send may still have reached the
+ * engine), tied to the run once the engine accepted it, forgotten if the engine refused it, and the failed attempt it replaces
+ * (`supersedes`, a retry) stops standing as a pending bubble of its own.
+ */
+export async function sendWithLocalCopy(mgr: LocalAttachments, a: { text: string; images: StoredImage[]; post: () => Promise<string>; supersedes?: string | null; now?: () => number }):
+  Promise<{ runId: string; clientMsgId: string }> {
+  const clientMsgId = mgr.newId();
+  mgr.register({ clientMsgId, text: a.text, sentAt: (a.now ?? Date.now)(), images: a.images });
+  try {
+    const runId = await a.post();
+    mgr.attachRun(clientMsgId, runId);
+    if (a.supersedes) mgr.supersede(a.supersedes);
+    return { runId, clientMsgId };
+  } catch (e) { mgr.discard(clientMsgId); throw e; }
+}

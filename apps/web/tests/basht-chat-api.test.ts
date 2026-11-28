@@ -71,6 +71,16 @@ describe("BASHT chat door: relay", () => {
     const busy = await call("POST", "send", { ...authed, body: { message: "ثانية" } });
     expect(busy.status).toBe(409); expect(await busy.json()).toEqual({ error: "busy" });
   });
+  it("history rows pass a valid owner runId through and drop anything malformed (absent, not null)", async () => {
+    const good = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+    backend.mockResolvedValueOnce(ok(200, { key: "agent:main:app:owner", messages: [
+      { role: "user", text: "a", at: 1, id: "msg-1", runId: good }, { role: "user", text: "b", at: 2, runId: "../x" },
+      { role: "user", text: "c", at: 3, runId: 7 }, { role: "assistant", text: "d", at: 4, runId: good }, { role: "user", text: "e", at: 5 }] }));
+    const rows = (await (await call("GET", "history?key=agent:main:app:owner", authed)).json()).messages;
+    expect(rows[0]).toEqual({ role: "user", text: "a", at: 1, id: "msg-1", runId: good });
+    for (const r of rows.slice(1)) expect(r).not.toHaveProperty("runId");
+    expect(rows[1]).toEqual({ role: "user", text: "b", at: 2 });
+  });
   it("history: only well-formed keys; run view is whitelisted", async () => {
     expect((await call("GET", "history?key=../setup", authed)).status).toBe(400);
     backend.mockResolvedValueOnce(ok(200, { key: "agent:main:app:owner", messages: [{ role: "user", text: "مرحبا", at: 1 }] }));

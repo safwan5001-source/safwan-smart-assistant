@@ -37,6 +37,18 @@ describe("attachment store (IndexedDB, own database)", () => {
     expect((await store.list() as { value: unknown[] }).value).toHaveLength(1);
   });
 
+  it("patch can mark a record's turn done / superseded and clear a binding (matchedRowId: null)", async () => {
+    const { store } = make();
+    await store.put(rec("m1"));
+    await store.patch("m1", { matchedRowId: "row-1" }); await store.patch("m1", { runDone: true, superseded: true });
+    let l = await store.list();
+    expect(l.ok && l.value[0]).toMatchObject({ matchedRowId: "row-1", runDone: true, superseded: true });
+    await store.patch("m1", { matchedRowId: null });
+    l = await store.list();
+    expect(l.ok && l.value[0]).toMatchObject({ runDone: true, superseded: true });
+    expect(l.ok && "matchedRowId" in l.value[0]).toBe(false);
+  });
+
   it("remove deletes one record and its bytes, nothing else; usage reports count and bytes; clear empties", async () => {
     const { f, store } = make();
     await store.put(rec("m1")); await store.put(rec("m2", { images: [img("c", 5)] }));
@@ -89,19 +101,37 @@ describe("attachment store (IndexedDB, own database)", () => {
       expect(l.ok && l.value.map((m) => m.clientMsgId)).toEqual(["keep"]); // atomic: the failed record left nothing behind, and nothing was evicted
       expect((await store.put(rec("next"))).ok).toBe(true);
     });
-    it("another failure is reported as error (not quota); a dropped connection is reopened", async () => {
+    it("another failure is reported as error (not quota) once the single retry fails too; a dropped connection is reopened", async () => {
       const { f, store } = make();
       await store.put(rec("m1"));
-      f.failNext("UnknownError");
+      f.failNext("DataError", 2); // not a lost-connection error: no retry
       expect(await store.put(rec("m2"))).toEqual({ ok: false, reason: "error" });
+      f.failNext("UnknownError", 2); // lost connection, and still failing after the one retry
+      expect(await store.put(rec("m3"))).toEqual({ ok: false, reason: "error" });
       f.dropConnections();
       const l = await store.list();
       expect(l.ok && l.value.map((m) => m.clientMsgId)).toEqual(["m1"]);
     });
+    it("iOS «connection lost»: a transaction on a silently closed connection reopens the database and retries once", async () => {
+      const { f, store } = make();
+      await store.put(rec("m1"));
+      f.silentDrop(); // no close event reached the app
+      const l = await store.list();
+      expect(l.ok && l.value.map((m) => m.clientMsgId)).toEqual(["m1"]);
+      f.failNext("UnknownError"); // a write that aborts once with UnknownError succeeds on the retry
+      expect((await store.put(rec("m2"))).ok).toBe(true);
+      expect((await store.usage())).toEqual({ ok: true, value: { count: 2, bytes: 60 } });
+    });
+    it("a full disk is NEVER retried", async () => {
+      const { f, store } = make();
+      f.failNext("QuotaExceededError", 2);
+      expect(await store.put(rec("m1"))).toEqual({ ok: false, reason: "quota" });
+      expect(f.failures).toHaveLength(1); // the second queued failure was not consumed by a retry
+    });
     it("clearAttachments reports false when the wipe itself failed", async () => {
       const { f, store } = make();
       await store.put(rec("m1"));
-      f.failNext("UnknownError");
+      f.failNext("DataError"); // not a lost connection: no retry
       expect(await clearAttachments(store)).toBe(false);
       expect(await clearAttachments(store)).toBe(true);
     });

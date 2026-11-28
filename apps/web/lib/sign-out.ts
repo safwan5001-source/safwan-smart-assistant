@@ -11,6 +11,13 @@ import { localAttachments } from "./local-attachments";
 import { authClient } from "./owner-auth";
 
 /** `attachmentsCleared`: the device-local copies of the photos sent to BASHT (lib/attachment-store). */
+/** IndexedDB can hang (a blocked connection, storage pressure): signing out must not wait for it forever. A wipe that did not finish
+ *  in time is reported as NOT cleared (never as done). */
+export const ATTACHMENT_WIPE_MS = 3000;
+const withTimeout = (p: Promise<boolean>, ms: number): Promise<boolean> => new Promise((resolve) => {
+  const t = setTimeout(() => resolve(false), ms);
+  p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(false); });
+});
 export type WipeResult = { filesCleared: boolean; serverErased: boolean; attachmentsCleared?: boolean };
 /** What could not be removed, in Arabic — empty when the wipe was complete. */
 export function wipeLeftovers(r: WipeResult): string[] {
@@ -32,7 +39,7 @@ async function wipe(): Promise<WipeResult> {
   remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset();
   const filesCleared = await clearFiles().then(() => true, () => false);
   // the photos sent to BASHT are kept on this device too (a cache only the owner clears: this is that explicit moment)
-  const attachmentsCleared = await localAttachments().clear().catch(() => false);
+  const attachmentsCleared = await withTimeout(localAttachments().clear(), ATTACHMENT_WIPE_MS);
   // then the push server (it needs the device credentials, so they go last); an unreachable server is reported, never hidden
   const serverErased = await eraseRemoteDevice().catch(() => false);
   if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried

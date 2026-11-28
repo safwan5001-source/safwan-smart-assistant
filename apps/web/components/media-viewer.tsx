@@ -22,16 +22,19 @@ export const VIEWER_TEXT = {
 } as const;
 
 type Bytes = { status: "loading" | "ready" | "error"; blob: Blob | null; url: string | null };
+type Tagged = Bytes & { key: string };
+const LOADING: Bytes = { status: "loading", blob: null, url: null };
 
 /** The bytes of one item: a local copy is ready at once; a server item is fetched once (through the owner session) and shown from a blob URL. */
 function useItemBytes(item: ViewerItem, attempt: number): Bytes {
-  const [s, setS] = useState<Bytes>({ status: "loading", blob: null, url: null });
+  // tagged with the item+attempt it belongs to: after next/prev the previous picture's bytes are never shown for one frame
+  const key = `${item.id}:${attempt}`;
+  const [s, setS] = useState<Tagged>({ key: "", ...LOADING });
   useEffect(() => {
     const ctl = new AbortController();
     let made: string | null = null;
-    const ready = (blob: Blob) => { made = URL.createObjectURL(blob); setS({ status: "ready", blob, url: made }); };
+    const ready = (blob: Blob) => { made = URL.createObjectURL(blob); setS({ key, status: "ready", blob, url: made }); };
     if (item.blob) { ready(item.blob); return () => { if (made) URL.revokeObjectURL(made); }; }
-    setS({ status: "loading", blob: null, url: null });
     void (async () => {
       try {
         const r = await fetch(bustUrl(item.src, attempt), { credentials: "same-origin", cache: "no-store", signal: ctl.signal });
@@ -39,11 +42,11 @@ function useItemBytes(item: ViewerItem, attempt: number): Bytes {
         let blob = await r.blob();
         if (item.kind === "pdf" && blob.type !== "application/pdf") blob = new Blob([blob], { type: "application/pdf" });
         if (!ctl.signal.aborted) ready(blob);
-      } catch { if (!ctl.signal.aborted) setS({ status: "error", blob: null, url: null }); }
+      } catch { if (!ctl.signal.aborted) setS({ key, status: "error", blob: null, url: null }); }
     })();
     return () => { ctl.abort(); if (made) URL.revokeObjectURL(made); };
-  }, [item, attempt]);
-  return s;
+  }, [item, attempt, key]);
+  return s.key === key ? s : LOADING;
 }
 
 const fit = (nw: number, nh: number, vw: number, vh: number) => {
@@ -74,7 +77,12 @@ function ImageStage({ item, bytes, canNav, onNav, onClose, onRetry }: {
   // the wheel must be a non-passive native listener to stop the page zooming on ctrl+wheel / trackpad pinch
   useEffect(() => {
     const el = stage.current; if (!el) return;
-    const h = (e: WheelEvent) => { e.preventDefault(); const r = el.getBoundingClientRect(); g.wheel({ x: e.clientX - r.left, y: e.clientY - r.top, deltaY: e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY, ctrl: e.ctrlKey }); };
+    // zoom only with ctrl/meta (a trackpad pinch arrives as ctrl+wheel); a plain wheel / two-finger scroll pans the zoomed picture
+    const h = (e: WheelEvent) => {
+      e.preventDefault();
+      const r = el.getBoundingClientRect(); const k = e.deltaMode === 1 ? 16 : 1;
+      g.wheel({ x: e.clientX - r.left, y: e.clientY - r.top, deltaX: e.deltaX * k, deltaY: e.deltaY * k, ctrl: e.ctrlKey, meta: e.metaKey });
+    };
     el.addEventListener("wheel", h, { passive: false });
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => g.refit()) : null;
     ro?.observe(el);
@@ -131,7 +139,9 @@ function PdfStage({ item, bytes, onRetry }: { item: ViewerItem; bytes: Bytes; on
 
 function ViewerBody({ items, index, onIndex, onClose }: { items: ViewerItem[]; index: number; onIndex: (i: number) => void; onClose: () => void }) {
   const item = items[index];
-  const [attempt, setAttempt] = useState(0);
+  // the retry counter belongs to the item it was pressed for (the body itself stays mounted across next/prev, so focus stays on the arrow)
+  const [retry, setRetry] = useState({ id: item.id, n: 0 });
+  const attempt = retry.id === item.id ? retry.n : 0;
   const bytes = useItemBytes(item, attempt);
   const [status, setStatus] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -170,8 +180,8 @@ function ViewerBody({ items, index, onIndex, onClose }: { items: ViewerItem[]; i
       </div>
       <div className="vw-body">
         {item.kind === "image"
-          ? <ImageStage key={item.id + ":" + attempt} item={item} bytes={bytes} canNav={many} onNav={go} onClose={onClose} onRetry={() => setAttempt((n) => n + 1)} />
-          : <PdfStage key={item.id + ":" + attempt} item={item} bytes={bytes} onRetry={() => setAttempt((n) => n + 1)} />}
+          ? <ImageStage key={item.id + ":" + attempt} item={item} bytes={bytes} canNav={many} onNav={go} onClose={onClose} onRetry={() => setRetry({ id: item.id, n: attempt + 1 })} />
+          : <PdfStage key={item.id + ":" + attempt} item={item} bytes={bytes} onRetry={() => setRetry({ id: item.id, n: attempt + 1 })} />}
         {many && <button type="button" className="vw-btn vw-nav prev" onClick={() => go(-1)} disabled={index === 0} aria-label={VIEWER_TEXT.prev}><Icon name="back" size={26} /></button>}
         {many && <button type="button" className="vw-btn vw-nav next" onClick={() => go(1)} disabled={index === items.length - 1} aria-label={VIEWER_TEXT.next}><Icon name="forward" size={26} /></button>}
       </div>
@@ -198,7 +208,7 @@ export default function MediaViewer({ items, index, onIndex, onClose }: { items:
   }, [open]);
   return (
     <Modal open={open} onClose={onClose} label={VIEWER_TEXT.label} variant="viewer">
-      {open && <ViewerBody key={items[index!].id} items={items} index={index!} onIndex={onIndex} onClose={onClose} />}
+      {open && <ViewerBody items={items} index={index!} onIndex={onIndex} onClose={onClose} />}
     </Modal>
   );
 }

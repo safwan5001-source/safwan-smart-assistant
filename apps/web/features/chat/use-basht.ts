@@ -10,8 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
 import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
-import { localAttachments, toStoredImage } from "@/lib/local-attachments";
-import { RATE_LIMIT_TEXT, runErrorRetryable, runErrorText } from "@/lib/run-error";
+import { localAttachments, sendWithLocalCopy, toStoredImage } from "@/lib/local-attachments";
+import { turnOutcome } from "@/lib/turn-outcome";
 
 const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
@@ -34,7 +34,7 @@ const settle = (id: string, r: RunEnd) => {
   ended.set(id, r); while (ended.size > 5) ended.delete(ended.keys().next().value!);
 };
 /** B1 Retry: the last owner turn that failed or was stopped (text + its photos, in memory only). */
-let lastTurn: { text: string; images: PreparedImage[] } | null = null;
+let lastTurn: { text: string; images: PreparedImage[]; clientMsgId?: string } | null = null;
 
 export type BashtGate = "checking" | "disabled" | "locked" | "open";
 /** `blob`: the same bytes that were sent (the viewer shares/downloads them without fetching a blob: URL). */
@@ -147,16 +147,15 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         if (r.status !== "running") {
           activeRun = null;
           // a finished turn needs its photo previews no more (its bubble is replaced by the engine's copy below); a failed or
-          // stopped one keeps them for «إعادة المحاولة»
-          // (a rate limit is a subscription quota: a one-tap resend would only hit it again, so nothing is kept for a retry either)
-          const limited = r.status === "error" && !runErrorRetryable(r);
-          const finished = r.status === "done" || limited ? lastTurn : null;
-          if (r.status === "done" || limited) lastTurn = null;
-          setFailedTurn(r.status !== "done" && lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
-          settle(run.id, { status: r.status, text: limited ? RATE_LIMIT_TEXT : r.text });
+          // stopped one keeps them for «إعادة المحاولة»; a rate limit keeps nothing (a resend would only hit the limit again)
+          const out = turnOutcome(r, lastTurn);
+          const finished = out.finished;
+          lastTurn = out.nextLastTurn;
+          setFailedTurn(out.failed ? { text: out.failed.text, images: out.failed.images.length } : null);
+          localAttachments().markDone(run.id); // from now on a text match for this turn's photo may be persisted
+          settle(run.id, { status: r.status, text: out.endText });
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
-          if (r.status === "error") setError(runErrorText(r));
-          if (r.status === "stopped") setError("أُوقف الرد.");
+          if (out.error) setError(out.error);
           await finish();
           if (finished) turnPreviews.release(urlsOf(finished));
           return;
@@ -206,28 +205,28 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
 
   /** Starts one owner turn and returns its run id. Throws BashtError (Arabic message) if the engine did not accept it — the caller
    *  keeps the draft. B2: `images` (already downscaled, EXIF-free) ride on the same turn. */
-  const send = useCallback(async (text: string, images: PreparedImage[] = []) => {
+  const send = useCallback(async (text: string, images: PreparedImage[] = [], opts: { supersedes?: string | null } = {}) => {
     // R5: the photos stay on this device too (IndexedDB; memory-only where that is unavailable) so the message keeps its picture
-    // after the history reloads. Registered before the request (a page killed mid-send may still have reached the engine) and
-    // forgotten if the engine refuses the turn.
-    const mgr = images.length ? localAttachments() : null;
-    const clientMsgId = mgr ? mgr.newId() : null;
-    const stored = mgr ? images.map(toStoredImage) : [];
-    if (mgr && clientMsgId) mgr.register({ clientMsgId, text, sentAt: Date.now(), images: stored });
+    // after the history reloads (lib/local-attachments: registered before the request, forgotten if the engine refuses the turn).
+    const stored = images.map(toStoredImage);
+    let clientMsgId: string | undefined;
     try {
-      const id = images.length ? await bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) : await bashtClient.send(text);
-      if (mgr && clientMsgId) mgr.attachRun(clientMsgId, id);
+      let id: string;
+      if (images.length) {
+        const sent = await sendWithLocalCopy(localAttachments(), { text, images: stored, supersedes: opts.supersedes,
+          post: () => bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) });
+        id = sent.runId; clientMsgId = sent.clientMsgId;
+      } else id = await bashtClient.send(text);
       setError(""); setFailedTurn(null); setFocusId(null);
       setAgentPhase("thinking");
       const prev = lastTurn;
-      lastTurn = { text, images };
+      lastTurn = { text, images, clientMsgId };
       turnPreviews.adopt(urlsOf(lastTurn));
       if (prev) turnPreviews.release(urlsOf(prev), urlsOf(lastTurn)); // a newer turn replaced it (a retry keeps the same photos)
       activeRun = { id, prompt: text, at: Date.now(), images: images.map((i, k) => ({ name: i.name, previewUrl: i.previewUrl, blob: stored[k]?.blob })) };
       void poll(activeRun);
       return id;
     } catch (e) {
-      if (mgr && clientMsgId) mgr.discard(clientMsgId);
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       throw e instanceof BashtError ? e : new BashtError("unavailable");
     }
@@ -250,7 +249,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const retry = useCallback(async () => {
     const t = lastTurn;
     if (!t || activeRun) return;
-    try { await send(t.text, t.images); } catch (e) { setError(errText(e)); }
+    try { await send(t.text, t.images, { supersedes: t.clientMsgId }); } catch (e) { setError(errText(e)); }
   }, [send]);
 
   /** B1 «محادثة جديدة»: the engine starts a fresh context for the app conversation; every earlier message stays readable. */

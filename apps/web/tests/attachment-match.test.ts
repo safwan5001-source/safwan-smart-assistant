@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPlaceholderOnly, matchAttachments, MATCH_WINDOW_MS, normalizeText, pendingRecords, type MatchRecord, type MatchRow } from "@/lib/attachment-match";
+import { EARLY_UNKNOWN_MS, isPlaceholderOnly, matchAttachments, MATCH_WINDOW_MS, normalizeText, pendingRecords, type MatchRecord, type MatchRow } from "@/lib/attachment-match";
 
 const T0 = 1_700_000_000_000;
 const min = 60_000;
@@ -29,11 +29,13 @@ describe("text normalisation", () => {
   });
 });
 
+const unbindIs = (r: { unbind: string[] }, ids: string[]) => expect(r.unbind).toEqual(ids);
+
 describe("matching a local photo copy to its history row", () => {
   it("one row, one record, same text and time → matched (and reported as fresh, to be persisted)", () => {
     const r = matchAttachments([row("r1", "شوف الصورة", T0 + 5_000)], [rec("c1", "شوف الصورة", T0)]);
     expect([...r.matches]).toEqual([["r1", "c1"]]);
-    expect(r.fresh).toEqual([{ rowKey: "r1", clientMsgId: "c1" }]);
+    expect(r.fresh).toEqual([{ rowKey: "r1", clientMsgId: "c1", via: "text", persist: false }]); // not persisted before the record's own turn finished
   });
   it("a photo with no text matches the engine's empty row and its placeholder-only row alike", () => {
     expect(m([row("r1", "", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" });
@@ -42,15 +44,74 @@ describe("matching a local photo copy to its history row", () => {
     expect(m([row("r1", "User sent image(s) with no text.", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" }); // older engine
     expect(m([row("r1", "", T0 + 1000, { hasServerMedia: false })], [rec("c1", "", T0)])).toEqual({ r1: "c1" }); // current engine: "" + an unavailable media entry
   });
-  it("the row's time must be within ±3 minutes of the send (inclusive), otherwise nothing is guessed", () => {
+  it("the fallback window: the row may be up to 3 minutes AFTER the send and (skew unknown) at most 60 s BEFORE it; otherwise nothing is guessed", () => {
     expect(m([row("r1", "x", T0 + MATCH_WINDOW_MS)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" });
-    expect(m([row("r1", "x", T0 - MATCH_WINDOW_MS)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" });
     expect(m([row("r1", "x", T0 + MATCH_WINDOW_MS + 1)], [rec("c1", "x", T0)])).toEqual({});
-    expect(m([row("r1", "x", T0 - MATCH_WINDOW_MS - 1)], [rec("c1", "x", T0)])).toEqual({});
+    expect(m([row("r1", "x", T0 - EARLY_UNKNOWN_MS)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" });
+    expect(m([row("r1", "x", T0 - EARLY_UNKNOWN_MS - 1)], [rec("c1", "x", T0)])).toEqual({});
   });
-  it("clock skew: a phone clock 2 minutes off still matches; 10 minutes off shows nothing (never a guess)", () => {
+  it("clock skew: a phone clock a little BEHIND the engine's still matches; a phone AHEAD by minutes shows nothing (never a guess)", () => {
     expect(m([row("r1", "x", T0 + 2 * min)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" });
+    expect(m([row("r1", "x", T0 - 2 * min)], [rec("c1", "x", T0)])).toEqual({});
     expect(m([row("r1", "x", T0 + 10 * min)], [rec("c1", "x", T0)])).toEqual({});
+  });
+
+  describe("wrong-photo repros (review): clock skew and another device's identical message", () => {
+    it("two image-only sends 4 min apart from a phone whose clock is 3.5 min FAST: nothing matches (rowB must not get recA), and recA is not shown twice", () => {
+      const rows = [row("rowA", "", T0), row("rowB", "", T0 + 4 * min)];
+      const recs = [rec("recA", "", T0 + 3.5 * min, { runId: "run-a" }), rec("recB", "", T0 + 7.5 * min, { runId: "run-b" })];
+      const r = matchAttachments(rows, recs);
+      expect(r.matches.size).toBe(0);
+      expect(r.ambiguous).toContain("recA");
+      // recA has a row candidate near it (not a second, pending bubble); recB's row is not there yet → it alone is pending
+      expect(pendingRecords(rows, recs, r.matches, { now: T0 + 8 * min }).map((c) => c.clientMsgId)).toEqual(["recB"]);
+    });
+    it("this device's own row missing: the laptop's row with the same text 90 s EARLIER than the send is not this record's", () => {
+      expect(m([row("laptop", "شوف", T0)], [rec("phone", "شوف", T0 + 90_000, { runId: "run-p" })])).toEqual({});
+    });
+    it("…and a laptop row near the record next to the phone's own row: two rows, one record → ambiguous, nothing shown", () => {
+      expect(m([row("laptop", "شوف", T0), row("own", "شوف", T0 + 20_000)], [rec("phone", "شوف", T0 + 10_000)])).toEqual({});
+    });
+    it("a same-text row ANYWHERE near blocks a 1:1 match: another unclaimed row within 2× the window, with or without server media", () => {
+      expect(m([row("r1", "x", T0 + 1000), row("r2", "x", T0 + 5 * min)], [rec("c1", "x", T0)])).toEqual({});
+      expect(m([row("r1", "x", T0 + 1000), row("r2", "x", T0 + 5 * min, { hasServerMedia: true })], [rec("c1", "x", T0)])).toEqual({});
+      expect(m([row("r1", "x", T0 + 1000), row("r2", "x", T0 + 7 * min)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" }); // beyond 2× the window: not a rival
+    });
+    it("another unclaimed RECORD with the same text near the pair blocks it too", () => {
+      expect(m([row("r1", "x", T0 + 1000)], [rec("c1", "x", T0), rec("c2", "x", T0 + 5 * min)])).toEqual({});
+    });
+    it("a row already claimed by a runId match (somebody's confirmed message) is not a rival", () => {
+      const rows = [row("r1", "x", T0 + 1000), row("r2", "x", T0 + 2 * min, { runId: "run-2" })];
+      expect(m(rows, [rec("c1", "x", T0), rec("c2", "x", T0 + 2 * min, { runId: "run-2" })])).toEqual({ r1: "c1", r2: "c2" });
+    });
+    it("a row stamped with a DIFFERENT run id than the record is another message, and is not a rival for it either", () => {
+      expect(m([row("r1", "x", T0 + 1000), row("r2", "x", T0 + 2 * min, { runId: "other" })], [rec("c1", "x", T0, { runId: "run-1" })])).toEqual({ r1: "c1" });
+    });
+    it("a fallback pairing that would CROSS a known pair matches nothing (records by send time must map monotonically onto rows by time)", () => {
+      const known = [row("k", "نص", T0 + 10 * min, { runId: "run-k" })];
+      const knownRec = rec("ck", "نص", T0 + 10 * min, { runId: "run-k" });
+      // fallback row after the known one, but its record was sent BEFORE it: the two pairs cross
+      const crossing = matchAttachments([...known, row("f", "ب", T0 + 11 * min)], [knownRec, rec("cf", "ب", T0 + 9 * min)]);
+      expect([...crossing.matches]).toEqual([["k", "ck"]]);
+      const fine = matchAttachments([...known, row("f", "ب", T0 + 11 * min)], [knownRec, rec("cf", "ب", T0 + 10.5 * min)]);
+      expect([...fine.matches].sort()).toEqual([["f", "cf"], ["k", "ck"]]);
+    });
+    it("clock skew is estimated from a runId match and applied to the fallback (a fast phone's later messages then match); otherwise it stays strict", () => {
+      const rows = [row("k", "أ", T0, { runId: "run-k" }), row("f", "ب", T0 + 4 * min)];
+      const recs = [rec("ck", "أ", T0 + 3.5 * min, { runId: "run-k" }), rec("cf", "ب", T0 + 7.5 * min)];
+      const r = matchAttachments(rows, recs);
+      expect(r.skewMs).toBe(-3.5 * min);
+      expect([...r.matches].sort()).toEqual([["f", "cf"], ["k", "ck"]]);
+      // without the runId pair the same fallback row/record is 3.5 min apart in the wrong direction: refused
+      expect(m([row("f", "ب", T0 + 4 * min)], [rec("cf", "ب", T0 + 7.5 * min)])).toEqual({});
+      expect(matchAttachments([row("f", "ب", T0)], [rec("cf", "ب", T0)]).skewMs).toBeNull();
+    });
+    it("a fallback match is persisted only once the record's own turn has finished", () => {
+      const rows = [row("r1", "x", T0 + 1000)];
+      expect(matchAttachments(rows, [rec("c1", "x", T0, { runId: "run-1" })]).fresh[0]).toMatchObject({ via: "text", persist: false });
+      expect(matchAttachments(rows, [rec("c1", "x", T0, { runId: "run-1", runDone: true })]).fresh[0]).toMatchObject({ via: "text", persist: true });
+      expect(matchAttachments([row("r1", "y", T0, { runId: "run-1" })], [rec("c1", "x", T0, { runId: "run-1" })]).fresh[0]).toMatchObject({ via: "runId", persist: true });
+    });
   });
   it("different text never matches; assistant and system rows never match", () => {
     expect(m([row("r1", "شيء آخر", T0)], [rec("c1", "x", T0)])).toEqual({});
@@ -117,10 +178,29 @@ describe("matching a local photo copy to its history row", () => {
   });
 
   describe("persisted matches survive reloads", () => {
-    it("a record bound to a row stays on it, even when the text no longer compares equal", () => {
-      const r = matchAttachments([row("r1", "نص عدّله المحرك", T0 + 30 * min)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
+    it("a record bound to a row stays on it while the row still stands for it: equal text, whatever the time", () => {
+      const r = matchAttachments([row("r1", "x", T0 + 30 * min)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
       expect([...r.matches]).toEqual([["r1", "c1"]]);
-      expect(r.fresh).toEqual([]); // already persisted
+      expect(r.fresh).toEqual([]); unbindIs(r, []); // already persisted
+    });
+    it("…and the binding is DROPPED when the row's text is no longer equal (it was another message), unless the row carries the record's run id", () => {
+      const changed = matchAttachments([row("r1", "نص آخر", T0)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
+      expect(changed.matches.size).toBe(0); unbindIs(changed, ["c1"]);
+      const exact = matchAttachments([row("r1", "نص آخر", T0, { runId: "run-1" })], [rec("c1", "x", T0, { runId: "run-1", matchedRowId: "r1" })]);
+      expect([...exact.matches]).toEqual([["r1", "c1"]]); unbindIs(exact, []);
+      const clash = matchAttachments([row("r1", "x", T0, { runId: "other" })], [rec("c1", "x", T0, { runId: "run-1", matchedRowId: "r1" })]);
+      expect(clash.matches.size).toBe(0); unbindIs(clash, ["c1"]);
+      const assistant = matchAttachments([row("r1", "x", T0, { role: "assistant" })], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
+      unbindIs(assistant, ["c1"]);
+    });
+    it("a freed record (its binding dropped) is matched afresh in the same pass", () => {
+      const r = matchAttachments([row("r1", "نص آخر", T0), row("r2", "x", T0 + 1000)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
+      unbindIs(r, ["c1"]);
+      expect([...r.matches]).toEqual([["r2", "c1"]]);
+    });
+    it("a bound record whose row is merely not loaded keeps its binding (nothing is unbound)", () => {
+      const r = matchAttachments([row("r9", "x", T0)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
+      unbindIs(r, []);
     });
     it("a bound record is never matched to a second row; its row is not offered to another record", () => {
       const rows = [row("r1", "x", T0), row("r2", "x", T0 + min)];

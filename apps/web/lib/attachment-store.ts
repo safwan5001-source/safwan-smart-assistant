@@ -14,7 +14,9 @@
  */
 export type StoredImage = { id: string; name: string; mime: string; size: number; width: number; height: number; blob: Blob };
 export type StoredImageMeta = Omit<StoredImage, "blob">;
-export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string; images: StoredImage[] };
+/** `runDone`: the record's turn reached a terminal state (a text match may be persisted from then on). `superseded`: the owner retried
+ *  this turn, so it no longer stands as a pending bubble of its own. */
+export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string; runDone?: boolean; superseded?: boolean; images: StoredImage[] };
 export type AttachmentMeta = Omit<AttachmentRecord, "images"> & { images: StoredImageMeta[] };
 export type StoreFailure = "unavailable" | "quota" | "error";
 export type StoreResult<T = void> = { ok: true; value: T } | { ok: false; reason: StoreFailure };
@@ -25,8 +27,8 @@ export type AttachmentStore = {
   list(): Promise<StoreResult<AttachmentMeta[]>>;
   /** One record with its photo bytes. */
   get(id: string): Promise<StoreResult<AttachmentRecord | null>>;
-  /** Fills `runId` / `matchedRowId` into an existing record (a missing record is not an error). */
-  patch(id: string, fields: { runId?: string; matchedRowId?: string }): Promise<StoreResult>;
+  /** Fills fields into an existing record (a missing record is not an error); `matchedRowId: null` clears the binding. */
+  patch(id: string, fields: { runId?: string; matchedRowId?: string | null; runDone?: boolean; superseded?: boolean }): Promise<StoreResult>;
   remove(id: string): Promise<StoreResult>;
   usage(): Promise<StoreResult<AttachmentUsage>>;
   /** Deletes everything (sign-out, or the owner's explicit «clear»). */
@@ -73,28 +75,37 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
     return p;
   };
 
-  /** One transaction over both stores. `run` queues requests; the result is read when the transaction has committed. */
-  async function tx<T>(mode: IDBTransactionMode, run: (meta: IDBObjectStore, blobs: IDBObjectStore) => () => T): Promise<StoreResult<T>> {
+  /** Reasons the browser gives when it has silently dropped the connection (iOS under storage pressure / backgrounding). */
+  const lost = (e: unknown) => ["InvalidStateError", "UnknownError", "TransactionInactiveError", "AbortError"].includes((e as { name?: string } | null)?.name ?? "");
+
+  /** One transaction over both stores. `run` queues requests; the result is read when the transaction has committed. A lost
+   *  connection (InvalidStateError / UnknownError) reopens the database and retries ONCE; a full disk never retries. */
+  async function tx<T>(mode: IDBTransactionMode, run: (meta: IDBObjectStore, blobs: IDBObjectStore) => () => T, retried = false): Promise<StoreResult<T>> {
     if (!factory) return fail("unavailable");
     let db: IDBDatabase;
     try { db = await open(); } catch { return fail("unavailable"); }
-    try {
-      return await new Promise<StoreResult<T>>((resolve) => {
-        let t: IDBTransaction;
-        try { t = db.transaction([META, BLOBS], mode); } catch (e) { opening = null; resolve(fail(failure(e))); return; }
-        let read: () => T;
-        try { read = run(t.objectStore(META), t.objectStore(BLOBS)); } catch (e) { try { t.abort(); } catch { /* done */ } resolve(fail(failure(e))); return; }
-        t.oncomplete = () => { try { resolve({ ok: true, value: read() }); } catch (e) { resolve(fail(failure(e))); } };
-        t.onerror = () => resolve(fail(failure(t.error)));
-        t.onabort = () => resolve(fail(failure(t.error)));
-      });
-    } catch (e) { return fail(failure(e)); }
+    let lastError: unknown = null;
+    const r = await new Promise<StoreResult<T>>((resolve) => {
+      let t: IDBTransaction;
+      try { t = db.transaction([META, BLOBS], mode); } catch (e) { lastError = e; resolve(fail(failure(e))); return; }
+      let read: () => T;
+      try { read = run(t.objectStore(META), t.objectStore(BLOBS)); } catch (e) { lastError = e; try { t.abort(); } catch { /* done */ } resolve(fail(failure(e))); return; }
+      t.oncomplete = () => { try { resolve({ ok: true, value: read() }); } catch (e) { lastError = e; resolve(fail(failure(e))); } };
+      t.onerror = () => { lastError = t.error; resolve(fail(failure(t.error))); };
+      t.onabort = () => { lastError = t.error; resolve(fail(failure(t.error))); };
+    });
+    if (!r.ok && !retried && r.reason === "error" && lost(lastError)) {
+      opening = null; try { db.close(); } catch { /* already closed */ }
+      return tx(mode, run, true);
+    }
+    return r;
   }
 
   return {
     put: (rec) => tx("readwrite", (meta, blobs) => {
       const m: AttachmentMeta = { clientMsgId: rec.clientMsgId, text: rec.text, sentAt: rec.sentAt,
         ...(rec.runId ? { runId: rec.runId } : {}), ...(rec.matchedRowId ? { matchedRowId: rec.matchedRowId } : {}),
+        ...(rec.runDone ? { runDone: true } : {}), ...(rec.superseded ? { superseded: true } : {}),
         images: rec.images.map(({ blob: _b, ...i }) => i) };
       meta.put(m);
       for (const i of rec.images) blobs.put({ key: blobKey(rec.clientMsgId, i.id), blob: i.blob });
@@ -118,7 +129,12 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
       r.onsuccess = () => {
         const m = r.result as AttachmentMeta | undefined;
         if (!m) return;
-        meta.put({ ...m, ...(fields.runId ? { runId: fields.runId } : {}), ...(fields.matchedRowId ? { matchedRowId: fields.matchedRowId } : {}) });
+        const next: AttachmentMeta = { ...m };
+        if (fields.runId) next.runId = fields.runId;
+        if (fields.matchedRowId) next.matchedRowId = fields.matchedRowId; else if (fields.matchedRowId === null) delete next.matchedRowId;
+        if (fields.runDone) next.runDone = true;
+        if (fields.superseded) next.superseded = true;
+        meta.put(next);
       };
       return () => undefined;
     }),

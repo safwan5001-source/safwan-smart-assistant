@@ -51,3 +51,11 @@
 .media-thumb .thumb-state { display: grid; justify-items: center; gap: 6px; padding: 8px; text-align: center; font-size: 12.5px; line-height: 1.4; }
 @keyframes media-shimmer { to { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .media-thumb.loading { animation: none; } .media-thumb img { transition: none; } }
+
+/* «غير متاحة · إعادة المحاولة»: the retry button is a 44px touch target; in the 2- and 3-picture grids (cells ~100-150px wide at 390px)
+   the icon is dropped so label + button fit without clipping. */
+.media-thumb .thumb-state .btn { min-block-size: 44px; min-inline-size: 44px; padding-inline: 10px; white-space: nowrap; }
+.media-thumb.unavailable { min-inline-size: 0; overflow: hidden; }
+.media-grid.n2 .thumb-state svg, .media-grid.n3 .thumb-state svg { display: none; }
+.media-grid.n3 .thumb-state { font-size: 12px; padding: 4px; gap: 4px; }
+.media-grid.n3 .thumb-state .btn { font-size: 12px; padding-inline: 6px; }

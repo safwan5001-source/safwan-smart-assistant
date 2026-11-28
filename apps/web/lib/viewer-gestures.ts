@@ -6,7 +6,8 @@
  * - one finger while zoomed: pan, clamped so the picture never leaves the stage; never past the picture's own edge
  * - one finger at scale 1: a mostly vertical downward drag follows the finger and, past a distance (or fast enough), closes;
  *   a mostly horizontal drag moves to the next / previous picture (RTL-aware: dragging to the right shows the next one)
- * - double tap / double click: zoom in at that point, or back to 1; mouse wheel and trackpad pinch (ctrl+wheel) zoom at the cursor
+ * - double tap / double click: zoom in at that point, or back to 1; ctrl/meta + wheel (trackpad pinch) zooms at the cursor, a plain
+ *   wheel / two-finger scroll pans the zoomed picture
  * Scale is kept within [1, maxScale]; a result near 1 snaps to exactly 1 and centres.
  */
 export type Bounds = { vw: number; vh: number; cw: number; ch: number };
@@ -142,11 +143,15 @@ export function createGestures(opts: GestureOptions) {
       fix(); emit();
     },
     pointerCancel(e: PointerIn) { this.pointerUp(e, true); },
-    /** Mouse wheel / trackpad pinch (`ctrl`) at a stage point. */
-    wheel(e: { x: number; y: number; deltaY: number; ctrl?: boolean }) {
+    /**
+     * Wheel at a stage point. Zoom ONLY with ctrl/meta (a trackpad pinch arrives as ctrl+wheel, a mouse wheel with the key held);
+     * a plain wheel / two-finger scroll pans the zoomed picture (clamped) and does nothing at scale 1.
+     */
+    wheel(e: { x: number; y: number; deltaX?: number; deltaY: number; ctrl?: boolean; meta?: boolean }) {
       if (ptrs.size) return;
-      const f = Math.exp(-e.deltaY * (e.ctrl ? 0.01 : 0.0015));
-      zoomAt(scale * f, centre(e.x, e.y)); emit();
+      if (e.ctrl || e.meta) { zoomAt(scale * Math.exp(-e.deltaY * (e.ctrl ? 0.01 : 0.0015)), centre(e.x, e.y)); emit(); return; }
+      if (scale <= SNAP) return;
+      x -= e.deltaX ?? 0; y -= e.deltaY; fix(); emit();
     },
     /** Toolbar / keyboard zoom, around the stage centre. */
     zoomBy(factor: number) { zoomAt(scale * factor, { x: 0, y: 0 }); emit(); },

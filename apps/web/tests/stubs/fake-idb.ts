@@ -33,7 +33,7 @@ class Tx {
   }
   private commit() {
     if (this.done) return;
-    if (this.mode === "readwrite" && this.db.factory.pendingFailure) { const f = this.db.factory.pendingFailure; this.db.factory.pendingFailure = null; this.abortWith(new DOMException("full", f)); return; }
+    if (this.mode === "readwrite" && this.db.factory.failures.length) { const f = this.db.factory.failures.shift()!; this.abortWith(new DOMException("full", f)); return; }
     this.done = true;
     if (this.mode === "readwrite") for (const [n, m] of this.work) this.db.stores.get(n)!.data = m;
     this.oncomplete?.();
@@ -69,12 +69,12 @@ class Db {
 }
 export class FakeIDB {
   dbs = new Map<string, Db>();
-  /** The next write transaction aborts with this DOMException name (e.g. "QuotaExceededError"). */
-  pendingFailure: string | null = null;
+  /** The next write transactions abort with these DOMException names (e.g. "QuotaExceededError"), one each. */
+  failures: string[] = [];
   /** `open` itself fails (private mode / blocked): "throw" throws synchronously, "error" fires onerror. */
   openFails: "throw" | "error" | null = null;
   opens = 0;
-  failNext(name = "QuotaExceededError") { this.pendingFailure = name; }
+  failNext(name = "QuotaExceededError", times = 1) { for (let i = 0; i < times; i++) this.failures.push(name); }
   open(name: string, version = 1) {
     this.opens++;
     if (this.openFails === "throw") throw new DOMException("denied", "SecurityError");
@@ -92,6 +92,8 @@ export class FakeIDB {
     }, 0);
     return req;
   }
+  /** The browser closed the connection WITHOUT telling the app (no close event): the next transaction() throws InvalidStateError. */
+  silentDrop() { for (const d of this.dbs.values()) d.closed = true; }
   /** Simulates the browser closing the connection under the app (storage eviction, another tab upgrading). */
   dropConnections() { for (const d of this.dbs.values()) { d.closed = true; d.onclose?.(); } }
 }

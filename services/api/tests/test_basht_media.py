@@ -211,6 +211,22 @@ def test_search_shapes_results_and_never_audits_the_query(client, engine):
     assert call(client, "POST", "/internal/v1/basht/search", {"q": "x" * 201}).status_code == 422
 
 
+def test_history_user_rows_carry_a_valid_run_id_and_nothing_else_of_the_kind(client, engine):
+    _, replies = engine
+    good = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    replies["/history"] = {"ok": True, "messages": [
+        {"id": "msg-app-01", "role": "user", "text": "a", "at": 1, "runId": good},
+        {"id": "msg-app-02", "role": "user", "text": "b", "at": 2, "runId": "not-a-run"},
+        {"id": "msg-app-03", "role": "user", "text": "c", "at": 3, "runId": good.upper()},
+        {"id": "msg-app-04", "role": "user", "text": "d", "at": 4, "runId": {"x": 1}},
+        {"id": "msg-app-05", "role": "user", "text": "e", "at": 5},
+        {"id": "msg-app-06", "role": "assistant", "text": "f", "at": 6, "runId": good},
+    ], "hasMore": False}
+    rows = call(client, "POST", "/internal/v1/basht/history", {"key": KEY}).json()["messages"]
+    assert [r.get("runId") for r in rows] == [good, None, None, None, None, None]  # owner rows only; malformed values are dropped
+    assert all("runId" not in r for r in rows[1:])  # absent, not null
+
+
 def test_history_rows_carry_ids_media_and_reset_boundaries(client, engine):
     calls, replies = engine
     replies["/history"] = {"ok": True, "messages": [

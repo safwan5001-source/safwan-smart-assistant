@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAttachmentStore } from "@/lib/attachment-store";
-import { base64ToBlob, createLocalAttachments } from "@/lib/local-attachments";
+import { base64ToBlob, createLocalAttachments, sendWithLocalCopy } from "@/lib/local-attachments";
 import { fakeIDB } from "./stubs/fake-idb";
 
 const img = (id: string) => ({ id, name: id + ".jpg", mime: "image/jpeg", size: 3, width: 10, height: 20, blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }) });
@@ -97,5 +97,71 @@ describe("local attachments (in-memory index over the device store)", () => {
     mgr.attachRun("c1", "r");
     expect(n).toBeGreaterThan(afterRegister);
     off();
+  });
+
+  it("markDone / supersede / unbind are remembered (memory and device)", async () => {
+    const { store, mgr } = setup();
+    mgr.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+    mgr.attachRun("c1", "run-1"); mgr.bind("c1", "row-1");
+    await settle();
+    mgr.markDone("run-1"); mgr.supersede("c1");
+    await settle();
+    expect(mgr.getSnapshot()[0]).toMatchObject({ runDone: true, superseded: true, matchedRowId: "row-1" });
+    mgr.unbind("c1");
+    await settle();
+    expect("matchedRowId" in mgr.getSnapshot()[0]).toBe(false);
+    const l = await store.list();
+    expect(l.ok && l.value[0]).toMatchObject({ runDone: true, superseded: true });
+    expect(l.ok && "matchedRowId" in l.value[0]).toBe(false);
+    mgr.markDone("no-such-run"); // harmless
+  });
+
+  it("a save that completes AFTER sign-out's clear never resurrects its record (memory or device)", async () => {
+    const { store, mgr } = setup();
+    mgr.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+    const cleared = mgr.clear(); // the owner signs out while the save is still in flight
+    await cleared; await settle();
+    expect(mgr.getSnapshot()).toEqual([]);
+    expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
+    mgr.register({ clientMsgId: "c2", text: "y", sentAt: 2, images: [img("b")] }); // a new session's record is kept
+    await settle();
+    expect(await store.usage()).toEqual({ ok: true, value: { count: 1, bytes: 3 } });
+  });
+
+  it("a load that finishes after the clear does not bring old records back", async () => {
+    const { idb, store } = setup();
+    await store.put({ clientMsgId: "old", text: "o", sentAt: 1, images: [img("a")] });
+    const mgr = createLocalAttachments(createAttachmentStore(idb as unknown as IDBFactory));
+    const loading = mgr.load();
+    await mgr.clear();
+    await loading; await settle();
+    expect(mgr.getSnapshot()).toEqual([]);
+  });
+});
+
+describe("sendWithLocalCopy: one owner turn with photos", () => {
+  it("registers before the request, ties the copy to the run once accepted, and a retry supersedes the failed attempt it replaces", async () => {
+    const { mgr } = setup();
+    let seenDuringPost: string[] = [];
+    const first = await sendWithLocalCopy(mgr, { text: "شوف", images: [img("a")], now: () => 111, post: async () => { seenDuringPost = mgr.getSnapshot().map((e) => e.clientMsgId); return "run-1"; } });
+    expect(seenDuringPost).toEqual([first.clientMsgId]); // known before the request returns
+    expect(mgr.getSnapshot()[0]).toMatchObject({ runId: "run-1", sentAt: 111, text: "شوف" });
+    const retry = await sendWithLocalCopy(mgr, { text: "شوف", images: [img("a")], supersedes: first.clientMsgId, post: async () => "run-2" });
+    const by = Object.fromEntries(mgr.getSnapshot().map((e) => [e.clientMsgId, e]));
+    expect(by[first.clientMsgId].superseded).toBe(true);
+    expect(by[retry.clientMsgId].superseded).toBeFalsy();
+  });
+  it("the engine REFUSING the turn discards the device copy (nothing was sent) and rethrows the error", async () => {
+    const { store, mgr } = setup();
+    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], post: async () => { throw new Error("busy"); } })).rejects.toThrow("busy");
+    await settle();
+    expect(mgr.getSnapshot()).toEqual([]);
+    expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
+  });
+  it("a refused RETRY leaves the failed attempt it would have replaced exactly as it was", async () => {
+    const { mgr } = setup();
+    const first = await sendWithLocalCopy(mgr, { text: "x", images: [img("a")], post: async () => "run-1" });
+    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], supersedes: first.clientMsgId, post: async () => { throw new Error("no"); } })).rejects.toThrow();
+    expect(mgr.getSnapshot().map((e) => [e.clientMsgId, !!e.superseded])).toEqual([[first.clientMsgId, false]]);
   });
 });

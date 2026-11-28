@@ -38,8 +38,8 @@ import MessageMedia, { LiveImages } from "./message-media";
 import MediaViewer from "@/components/media-viewer";
 import { localRowKey, useLocalAttachments, type PendingLocal } from "./use-local-attachments";
 import { viewerItems, type ViewerItem } from "@/lib/viewer-items";
-import { isPlaceholderOnly } from "@/lib/attachment-match";
-import { isProviderLimitNotice, RATE_LIMIT_TEXT } from "@/lib/run-error";
+import { engineRowView } from "@/lib/engine-row";
+import { buildTimeline, type TimelineItem } from "@/lib/timeline-items";
 import { ComposerImages, useComposerImages } from "./composer-images";
 import { BashtSearchResults, EarlierButton, ResetDivider, RetryBar, RunSteps, WindowBanner } from "./chat-extras";
 import { modelReadsImages } from "@/lib/image-prep";
@@ -71,7 +71,7 @@ const STARTERS: { label: string; text: string }[] = [
 
 type Preview = { name: string; url: string; kind: "image" | "pdf" };
 type View = { kind: "main" } | { kind: "engine"; key: string } | { kind: "archive"; id: string };
-type Item = { kind: "local"; at: number; m: Message } | { kind: "engine"; at: number; m: BashtMessage; i: number } | { kind: "pending"; at: number; p: PendingLocal };
+type Item = TimelineItem<Message, BashtMessage, PendingLocal>;
 
 export default function ChatScreen() {
   const hydrated = useHydrated();
@@ -189,10 +189,7 @@ export default function ChatScreen() {
   // One timeline: engine messages (server) + this device's events (local), ordered by time.
   const items: Item[] = useMemo(() => {
     if (view.kind !== "main") return [];
-    const local: Item[] = (mainThread?.messages ?? []).map((m) => ({ kind: "local", at: m.created, m }));
-    const remote: Item[] = bashtOn ? (basht.messages ?? []).map((m, i) => ({ kind: "engine", at: m.at, m, i })) : [];
-    const pending: Item[] = bashtOn ? localMedia.pending.map((p) => ({ kind: "pending", at: p.sentAt, p })) : [];
-    return [...local, ...remote, ...pending].sort((a, b) => a.at - b.at);
+    return buildTimeline({ local: mainThread?.messages ?? [], engine: bashtOn ? basht.messages ?? [] : [], pending: bashtOn ? localMedia.pending : [] });
   }, [view.kind, mainThread, bashtOn, basht.messages, localMedia.pending]);
 
   // The full-screen viewer walks through every picture of the conversation on screen (a live photo opens alone).
@@ -479,8 +476,8 @@ export default function ChatScreen() {
     return (
       <article key={"p-" + p.clientMsgId} className="bubble user">
         {parsed.text}
-        {!p.images.length && <span className="media-thumb loading" aria-busy="true" aria-label="جارٍ تحميل الصورة" />}
-        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} onOpen={openViewer} onRetry={basht.reload} localOnly />
+        {p.status === "loading" && <span className="media-thumb loading" aria-busy="true" aria-label="جارٍ تحميل الصورة" />}
+        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} ownerNoText={p.status === "failed"} onOpen={openViewer} onRetry={basht.reload} localOnly />
         <div className="meta"><time className="num" dateTime={new Date(p.sentAt).toISOString()}>{formatTime(p.sentAt)}</time></div>
       </article>
     );
@@ -488,17 +485,16 @@ export default function ChatScreen() {
   /** A message from BASHT's own record (the engine): read here, kept there. */
   const engineBubble = (m: BashtMessage, key: string, sk: string | null = engineKey, idx = -1) => {
     if (m.kind === "reset") return <ResetDivider key={key} at={m.at} />;
-    const parsed = m.role === "user" ? parseVoiceNote(m.text) : { voice: false, text: m.text };
-    // the engine records an image-only message as a bare placeholder («[image]»): not a caption, so no text is shown for it
-    const note = m.role === "user" && isPlaceholderOnly(parsed.text) ? { ...parsed, text: "" } : parsed;
-    const noText = m.role === "user" && !note.text.trim() && !note.voice && !(idx >= 0 && localMedia.loadingRows.has(localRowKey(m, idx)));
+    const loadingLocal = idx >= 0 && localMedia.loadingRows.has(localRowKey(m, idx));
+    const view = engineRowView(m, parseVoiceNote, loadingLocal); // placeholder-only text is no caption; the provider's quota notice reads in clear Arabic
+    const note = { voice: view.voice, text: view.text };
+    const noText = view.noText || (idx >= 0 && localMedia.failedRows.has(localRowKey(m, idx)) && m.role === "user" && !view.text.trim());
     const localImgs = idx >= 0 ? localMedia.byRow.get(localRowKey(m, idx)) : undefined;
-    const shownText = m.role === "assistant" && isProviderLimitNotice(m.text) ? RATE_LIMIT_TEXT : m.text; // the provider's quota notice, in clear Arabic
     return (
     <article key={key} id={m.id ? "m-" + m.id : undefined} className={"bubble " + m.role + (m.id && m.id === basht.focusId ? " focused" : "")}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
       {note.voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}
-      {m.role === "assistant" ? <MessageBody text={shownText} /> : note.text}
+      {m.role === "assistant" ? <MessageBody text={view.assistantText} /> : note.text}
       {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} onOpen={openViewer} onRetry={basht.reload} />}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>

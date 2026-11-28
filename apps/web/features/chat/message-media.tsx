@@ -58,7 +58,9 @@ export function ImageTile({ item, ratio, onOpen }: { item: ViewerItem; ratio?: n
       onClick={onOpen} aria-label={"عرض الصورة " + item.name}>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img key={st.attempt} src={st.src} alt={item.name} loading="lazy" decoding="async"
-        ref={(el) => { if (el && el.complete && st.status === "loading") dispatch({ type: el.naturalWidth > 0 ? "load" : "error" }); }}
+        // an image already decoded before React attached its handlers counts as loaded; «error» only ever comes from a real error
+        // event (a lazy image that has not started loading is also `complete` with no width: that is not a failure)
+        ref={(el) => { if (el && el.complete && el.naturalWidth > 0 && st.status === "loading") dispatch({ type: "load" }); }}
         onLoad={() => dispatch({ type: "load" })} onError={() => dispatch({ type: "error" })} />
     </button>
   );
