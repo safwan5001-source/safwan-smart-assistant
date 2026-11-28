@@ -87,30 +87,38 @@ export function createSilenceGate({ threshold = 0.02, silenceMs = 1400, noSpeech
 
 // ── what the engine offers (learned from its answers, kept for this page session) ───────────────────────────────────────
 export type Avail = "unknown" | "yes" | "no";
-export type VoiceAvail = { speak: Avail; transcribe: Avail; reason: VoiceReason | "" };
-let avail: VoiceAvail = { speak: "unknown", transcribe: "unknown", reason: "" };
-/** When the engine last answered a real speak call either way (epoch ms), for the status indicator; null = never in this page session. */
-let speakAt: number | null = null;
-/** The last playback that did NOT complete (blocked autoplay, stall, decode error, interruption), cleared by the next completed one. */
-let playFail: { kind: string; at: number } | null = null;
+/**
+ * `speakAt`: when a real speak attempt last PROVED or DISPROVED the voice (epoch ms), null = never in this page session.
+ * `fail`: the newest real attempt that did not play through, with its time: a playback failure (blocked autoplay, stall, decode,
+ * interruption) or a transient engine failure (provider_error, link_down, …). It is cleared only by a newer success or by a durable
+ * "no", and it never hides «استمع» (that is what `speak: "no"` is for). Every change of ANY field publishes a NEW snapshot.
+ */
+export type VoiceFail = { kind: string; reason: VoiceReason | ""; at: number };
+export type VoiceAvail = { speak: Avail; transcribe: Avail; reason: VoiceReason | ""; speakAt: number | null; fail: VoiceFail | null };
+const FRESH_AVAIL: VoiceAvail = { speak: "unknown", transcribe: "unknown", reason: "", speakAt: null, fail: null };
+let avail: VoiceAvail = FRESH_AVAIL;
 const availSubs = new Set<() => void>();
+const sameFail = (a: VoiceFail | null, b: VoiceFail | null) => a === b || (!!a && !!b && a.kind === b.kind && a.reason === b.reason && a.at === b.at);
+const publish = (next: VoiceAvail) => {
+  if (next.speak === avail.speak && next.transcribe === avail.transcribe && next.reason === avail.reason && next.speakAt === avail.speakAt && sameFail(next.fail, avail.fail)) return;
+  avail = next; availSubs.forEach((f) => f());
+};
 export const voiceAvailability = {
   get: () => avail,
-  speakCheckedAt: () => speakAt,
-  playbackFailure: () => playFail,
-  /** A reply's audio was fetched but its playback failed: the voice is NOT proven (and «استمع» stays: the engine voice itself may be fine). */
-  setPlaybackFailure(kind: string) { playFail = { kind, at: Date.now() }; avail = { ...avail }; availSubs.forEach((f) => f()); },
+  speakCheckedAt: () => avail.speakAt,
+  playbackFailure: () => avail.fail,
+  /** A real speak attempt failed without proving the voice missing (playback failed, or a transient engine reason): degraded, never tested. */
+  setFailure(kind: string, reason?: VoiceReason | "") { publish({ ...avail, fail: { kind, reason: reason ?? "", at: Date.now() } }); },
   /** `reason`: why the engine voice is unavailable (with "no"), shown by the voice sheet and the dictation fallback. */
   set(kind: "speak" | "transcribe", v: Avail, reason?: VoiceReason) {
     const r = v === "no" ? reason ?? avail.reason : avail.reason;
-    if (kind === "speak" && v !== "unknown") { speakAt = Date.now(); playFail = null; }
-    if (avail[kind] !== v || avail.reason !== r) { avail = { ...avail, [kind]: v, reason: r }; availSubs.forEach((f) => f()); }
+    if (kind === "speak" && v !== "unknown") publish({ ...avail, speak: v, reason: r, speakAt: Date.now(), fail: null }); // a real answer either way settles the older failure
+    else publish({ ...avail, [kind]: v, reason: r });
   },
   subscribe(f: () => void) { availSubs.add(f); return () => { availSubs.delete(f); }; },
-  reset() { avail = { speak: "unknown", transcribe: "unknown", reason: "" }; speakAt = null; playFail = null; availSubs.forEach((f) => f()); },
+  reset() { avail = FRESH_AVAIL; availSubs.forEach((f) => f()); },
 };
-const SERVER_AVAIL: VoiceAvail = { speak: "unknown", transcribe: "unknown", reason: "" };
-export const useVoiceAvailability = () => useSyncExternalStore(voiceAvailability.subscribe, voiceAvailability.get, () => SERVER_AVAIL);
+export const useVoiceAvailability = () => useSyncExternalStore(voiceAvailability.subscribe, voiceAvailability.get, () => FRESH_AVAIL);
 
 // ── playback: one at a time, phases from the media element's own events ──────────────────────────────────────────────────
 /**
@@ -322,7 +330,7 @@ export function createVoicePlayer(deps: PlayerDeps) {
       if (resumable) suspended = { job: j, next }; // keep the audio (and the prefetch): a fresh tap continues without a new request
       else { silence(a, true); j.ctl.abort(); urls.forEach((x) => url.revoke(x)); urls = []; job = null; setProgress(0); }
       if (f.kind === "unavailable") { if (isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.set("speak", "no", f.reason); }
-      else voiceAvailability.setPlaybackFailure(f.kind); // a fetch or a playback that failed: never reported as a working voice
+      if (f.kind !== "unavailable" || !isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.setFailure(f.kind, f.reason ?? ""); // a playback or a transient engine failure: never reported as a working voice
       const message = f.kind === "unavailable"
         ? (f.reason ? `صوت باشت غير متاح الآن. ${voiceReasonText(f.reason)}` : PLAYER_ERRORS.voice_unavailable)
         : PLAYER_ERRORS[f.code] ?? bashtErrorText(f.code);
