@@ -157,6 +157,8 @@ describe("viewer safety and robustness (source contract)", () => {
     expect(chat).toContain("<MediaViewer");
     expect(chat).toContain("useLocalAttachments(");
     expect(chat).toContain("ownerNoText={noText}");
+    expect(chat).toMatch(/const retryMedia = useCallback\(\(\) => \{ localMedia\.retry\(\); basht\.reload\(\); \}/); // the tile's retry re-reads failed device photos too
+    expect(chat).not.toContain("onRetry={basht.reload}");
     expect(chat).toMatch(/live && \(/);
   });
 });
