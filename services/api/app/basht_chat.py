@@ -10,6 +10,8 @@
 - Voice (V2/V3): /speak returns the reply spoken in BASHT's own voice (the engine's agent `tts` config: voice, model, instructions);
   /transcribe takes a raw voice note and returns the engine's transcript (its own audio config, as for WhatsApp). The app holds no
   voice-provider key and cannot choose a voice. Audio is never stored here; audits carry sizes and durations only, never content.
+  A failed voice call may carry an allowlisted `reason` (VOICE_REASONS); GET /voice-status reports whether BASHT can speak (cached).
+- Every engine call is signed by app/basht_signing.py when BASHT_BRIDGE_SIGNING_SECRET is set (optional, see that module).
 """
 from __future__ import annotations
 
@@ -26,11 +28,12 @@ from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi import Request as HttpRequest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.concurrency import run_in_threadpool
 
 from .audit import audit_log
 from .basht_core import ENV_VAR as URL_VAR
+from .basht_signing import engine_request, ensure_signed
 from .service_auth import MAX_AUDIO_BODY_BYTES, ServiceCall, require_service_call, require_service_call_audio
 
 TOKEN_VAR = "BASHT_APP_TOKEN"
@@ -67,7 +70,7 @@ _opener = urllib_request.build_opener(urllib_request.ProxyHandler({}), _NoRedire
 
 def urlopen(req: Request, timeout: float):
     """Single seam for tests (monkeypatched). Never follows redirects, never uses an environment proxy."""
-    return _opener.open(req, timeout=timeout)
+    return _opener.open(ensure_signed(req), timeout=timeout)  # ensure_signed: a request to the bridge can never leave unsigned by mistake
 
 
 router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
@@ -76,12 +79,18 @@ _lock = threading.Lock()
 _sends: list[float] = []
 _speaks: list[float] = []
 _transcribes: list[float] = []
+_voice_status_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 class EngineError(Exception):
-    def __init__(self, status: int, code: str):
+    def __init__(self, status: int, code: str, reason: str | None = None):
         super().__init__(code)
-        self.status, self.code = status, code
+        self.status, self.code, self.reason = status, code, reason
+
+    @property
+    def detail(self) -> dict[str, str]:
+        """The error body the BFF sees: always `code`, plus an allowlisted `reason` when the engine gave one (voice only)."""
+        return {"code": self.code, **({"reason": self.reason} if self.reason else {})}
 
 
 def _config(env=os.environ) -> tuple[str, str] | None:
@@ -103,9 +112,9 @@ def _call(method: str, path: str, body: dict | None = None, env=os.environ, time
         raise EngineError(503, "basht_unconfigured")
     base, token = cfg
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(f"{base}/app/v1{path}", data=data, method=method,
-                  headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
-                           **({"Content-Type": "application/json"} if data is not None else {})})
+    req = engine_request(base, path, method=method, data=data, env=env,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "application/json", "User-Agent": "basht-app/1",
+                                  **({"Content-Type": "application/json"} if data is not None else {})})
     try:
         with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(MAX_BYTES + 1)
@@ -218,6 +227,7 @@ def reset_limits() -> None:
         _sends.clear()
         _speaks.clear()
         _transcribes.clear()
+        _voice_status_cache.clear()
 
 
 def _run_view(j: dict) -> dict:
@@ -420,6 +430,10 @@ def set_fast(body: FastBody, _: ServiceCall = Depends(require_service_call)):
 # ── Voice (V2 speak · V3 voice notes): BASHT's own voice and transcription, both configured in the engine ──
 # "Voice is not set up / not allowed on the engine" (bridge 503 voice_unavailable, or an older bridge: 404) is a domain answer,
 # 400 voice_unavailable, like model_control_unavailable: the app explains it and falls back to browser dictation.
+# Why the engine's voice failed, from a fixed list (anything else is dropped; engine text is never passed on). Additive to the codes.
+VOICE_REASONS = ("identity_mismatch", "tool_denied", "unconfigured", "provider_error", "link_down", "timeout", "bad_audio", "engine_error",
+                 "in_flight", "per_minute", "text_rejected", "tool_path_only", "tool_path_unavailable", "no_tts_config", "config_unreadable")
+# must equal tests/fixtures/voice-contract.json (shared with the engine; tests compare)
 _VOICE_ERRORS = {400: (400, "bad_request"), 413: (413, "too_large"), 415: (415, "unsupported_audio"), 422: (422, "no_speech"),
                  429: (429, "rate_limited")}
 
@@ -430,9 +444,9 @@ def _voice_call(path: str, data: bytes, content_type: str, *, timeout: float, ma
     if cfg is None:
         raise EngineError(503, "basht_unconfigured")
     base, token = cfg
-    req = Request(f"{base}/app/v1{path}", data=data, method="POST",
-                  headers={"Authorization": f"Bearer {token}", "Accept": "audio/*, application/json", "User-Agent": "basht-app/1",
-                           "Content-Type": content_type})
+    req = engine_request(base, path, method="POST", data=data, env=env,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "audio/*, application/json", "User-Agent": "basht-app/1",
+                                  "Content-Type": content_type})
     try:
         with urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(max_bytes + 1)
@@ -440,20 +454,79 @@ def _voice_call(path: str, data: bytes, content_type: str, *, timeout: float, ma
                 raise EngineError(502, "basht_unavailable")
             return raw, (res.headers.get("Content-Type") or "").split(";")[0].strip().lower()
     except HTTPError as e:
+        code = reason = None
         try:
-            code = json.loads(e.read(4096)).get("error")
+            j = json.loads(e.read(4096))
+            if isinstance(j, dict):
+                code = j.get("error")
+                reason = j.get("reason") if isinstance(j.get("reason"), str) and j.get("reason") in VOICE_REASONS else None
         except Exception:  # noqa: BLE001 - an unreadable body keeps the status mapping
-            code = None
-        if (e.code == 503 and code == "voice_unavailable") or e.code == 404:
-            raise EngineError(400, "voice_unavailable") from None
+            pass
+        if (e.code >= 500 and code == "voice_unavailable") or e.code == 404:  # 404: an older engine without the voice routes
+            raise EngineError(400, "voice_unavailable", reason) from None
         status, mapped = _VOICE_ERRORS.get(e.code, (502, "basht_unavailable"))
-        raise EngineError(status, mapped) from None
+        raise EngineError(status, mapped, reason) from None
     except (URLError, TimeoutError, OSError, ValueError):
         raise EngineError(502, "basht_unavailable") from None
 
 
+# ── Voice status: can BASHT speak right now? (engine GET /app/v1/status -> voice.speak) ──
+VOICE_SPEAK_STATES = ("ready", "degraded", "unconfigured", "mismatch", "unknown")
+VOICE_FEATURES = ("voice.speak.v2", "voice.transcribe.v1", "voice.status.v1", "signing.v1")  # fixed allowlist: nothing else is passed on
+VOICE_STATUS_TTL = 30.0        # one engine read per 30 s however often the app asks
+VOICE_STATUS_FAIL_TTL = 5.0    # a failed read is remembered briefly (no hammering), not for 30 s
+VOICE_STATUS_TIMEOUT = 5.0
+
+
+def _voice_status_view(j: Any) -> dict[str, Any]:
+    """The engine's status -> the one fixed shape. An older engine (no `voice` field) or anything unexpected reads as exactly `{speak: "unknown"}`."""
+    voice = j.get("voice") if isinstance(j, dict) and isinstance(j.get("voice"), dict) else None
+    speak = voice.get("speak") if voice else None
+    if speak not in VOICE_SPEAK_STATES:
+        return {"speak": "unknown"}
+    out: dict[str, Any] = {"speak": speak}
+    if voice.get("reason") in VOICE_REASONS:
+        out["reason"] = voice["reason"]
+    feats = j.get("features") if isinstance(j.get("features"), list) else []
+    out["features"] = [f for f in VOICE_FEATURES if f in feats]
+    return out
+
+
+@router.get("/voice-status")
+def voice_status(_: ServiceCall = Depends(require_service_call)):
+    """Never an error to the UI: any failure, an unconfigured or an older engine answers 200 `{speak: "unknown"}`."""
+    cfg = _config()
+    key = cfg[0] if cfg else ""
+    now = time.monotonic()
+    with _lock:
+        hit = _voice_status_cache.get(key)
+        if hit and now < hit[0]:
+            return hit[1]
+    failed = False
+    try:
+        view = _voice_status_view(_call("GET", "/status", timeout=VOICE_STATUS_TIMEOUT))
+    except Exception:  # noqa: BLE001 - the status read must never break the app
+        view, failed = {"speak": "unknown"}, True
+    audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
+    with _lock:
+        _voice_status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), view)
+    return view
+
+
+def utf16_len(text: str) -> int:
+    """Length in UTF-16 code units, the unit the engine (JavaScript) and the BFF count: an emoji is 2, not 1."""
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
 class SpeakBody(BaseModel):
-    text: str = Field(min_length=1, max_length=MAX_SPEAK)
+    text: str = Field(min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def _within_cap(cls, v: str) -> str:
+        if utf16_len(v) > MAX_SPEAK:
+            raise ValueError("text too long")
+        return v
 
 
 @router.post("/speak")
@@ -470,8 +543,8 @@ def speak(body: SpeakBody, _: ServiceCall = Depends(require_service_call)):
         raw, ctype = _voice_call("/speak", json.dumps({"text": text}).encode(), "application/json",
                                  timeout=SPEAK_TIMEOUT, max_bytes=MAX_SPEECH_BYTES)
     except EngineError as e:
-        audit_log.record("basht.speak", status=e.code, chars=len(text))
-        raise HTTPException(status_code=e.status, detail={"code": e.code}) from None
+        audit_log.record("basht.speak", status=e.code, chars=len(text), **({"reason": e.reason} if e.reason else {}))
+        raise HTTPException(status_code=e.status, detail=e.detail) from None
     if ctype not in SPEECH_TYPES or not raw:
         audit_log.record("basht.speak", status="basht_unavailable", chars=len(text))
         raise HTTPException(status_code=502, detail={"code": "basht_unavailable"})
@@ -498,8 +571,9 @@ async def transcribe(request: HttpRequest, _: ServiceCall = Depends(require_serv
         raw, _ctype = await run_in_threadpool(_voice_call, "/transcribe", audio, ctype, timeout=TRANSCRIBE_TIMEOUT, max_bytes=64 * 1024)
         j = json.loads(raw)
     except EngineError as e:
-        audit_log.record("basht.transcribe", status=e.code, bytes=len(audio), ms=int((time.monotonic() - started) * 1000))
-        raise HTTPException(status_code=e.status, detail={"code": e.code}) from None
+        audit_log.record("basht.transcribe", status=e.code, bytes=len(audio), ms=int((time.monotonic() - started) * 1000),
+                         **({"reason": e.reason} if e.reason else {}))
+        raise HTTPException(status_code=e.status, detail=e.detail) from None
     except ValueError:
         audit_log.record("basht.transcribe", status="basht_unavailable", bytes=len(audio))
         raise HTTPException(status_code=502, detail={"code": "basht_unavailable"}) from None

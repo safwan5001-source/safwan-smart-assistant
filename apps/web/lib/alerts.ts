@@ -4,7 +4,7 @@
  *  - Honest about preferences: sound off → silent; quiet hours → no sound / speech (item still lands in the inbox);
  *    autoplay blocked → reported as "blocked" so the UI can show a "tap to enable sound" prompt.
  */
-import { audioPlayer, type AudioPlayer, type PlayResult } from "./audio";
+import { audioPlayer, voiceSessionActive, type AudioPlayer, type PlayResult } from "./audio";
 import { createSpeaker, type SpeakResult } from "./speak";
 import { insertNotice, type Notice, type NoticePriority, type NoticeType } from "./notifications";
 import { shouldHold } from "./quiet-hours";
@@ -20,14 +20,17 @@ export type AlertInput = {
 export type AlertOutcome = {
   duplicate: boolean;
   notice: Notice | null;
-  sound: PlayResult | "off" | "quiet" | "duplicate";
-  speech: SpeakResult | "off" | "quiet" | "duplicate" | "hidden";
+  /** "voice": BASHT's voice conversation/reply owns the audio — the alert lands in the inbox silently (no tone into the mic) */
+  sound: PlayResult | "off" | "quiet" | "duplicate" | "voice";
+  speech: SpeakResult | "off" | "quiet" | "duplicate" | "hidden" | "voice";
 };
 export type AlertDeps = {
   now?: () => number;
   audio?: Pick<AudioPlayer, "play">;
   speak?: Pick<ReturnType<typeof createSpeaker>, "speak">;
   visible?: () => boolean;
+  /** a voice experience owns the audio session right now */
+  voiceActive?: () => boolean;
   emit?: (o: AlertOutcome) => void;
   uid?: () => string;
 };
@@ -59,6 +62,7 @@ export async function deliverAlert(input: AlertInput, deps: AlertDeps = {}): Pro
   const held = shouldHold(now, prefs.quiet, prefs.tz, input.priority);
   let sound: AlertOutcome["sound"] = "off", speech: AlertOutcome["speech"] = "off";
   if (held) { sound = "quiet"; speech = "quiet"; }
+  else if ((deps.voiceActive ?? voiceSessionActive)()) { if (prefs.soundEnabled) sound = "voice"; if (prefs.speak && input.spoken) speech = "voice"; }
   else {
     if (prefs.soundEnabled) {
       sound = await (deps.audio ?? audioPlayer()).play(prefs.tones[input.category] ?? DEFAULT_TONES[input.category], { volume: prefs.volume });

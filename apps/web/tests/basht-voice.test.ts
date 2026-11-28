@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { BashtError } from "@/lib/basht-client";
+import { FakeEl } from "./voice-fakes";
+import { MANUAL_TURN_MS, MAX_NOTE_MS, STOP_GUARD_MS } from "@/lib/basht-voice";
 import { clock, createLiveSession, createVoiceNotes, createSilenceGate, createVoicePlayer, MAX_SPEAK_CHARS, parseVoiceNote, pickRecorderType, splitForSpeech, startRecording, voiceAvailability, voiceNoteText, type LiveDeps, type RecordResult, type RecorderEnv } from "@/lib/basht-voice";
 
 const WEB = resolve(__dirname, "..");
@@ -61,9 +63,8 @@ describe("voice notes in the conversation", () => {
   });
 });
 
-type FakeAudio = { src: string; play: ReturnType<typeof vi.fn>; pause: ReturnType<typeof vi.fn>; onended: (() => void) | null; onerror: (() => void) | null };
 function rig(speak: (t: string, s: AbortSignal) => Promise<Blob>) {
-  const el: FakeAudio = { src: "", play: vi.fn(async () => {}), pause: vi.fn(), onended: null, onerror: null };
+  const el = new FakeEl();
   const made: string[] = [], revoked: string[] = [];
   const p = createVoicePlayer({ speak, audio: () => el, url: { create: () => { const u = "blob:" + made.length; made.push(u); return u; }, revoke: (u) => revoked.push(u) } });
   const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -72,42 +73,47 @@ function rig(speak: (t: string, s: AbortSignal) => Promise<Blob>) {
 const reply = Array.from({ length: 3 }, (_, i) => `فقرة ${i} ` + "س".repeat(1300) + ".").join(" ");
 
 describe("the voice player (one playback at a time)", () => {
-  it("plays chunk 1 as soon as it arrives and asks for chunk 2 only then — sequential, in order", async () => {
+  it("plays chunk 1 as soon as it arrives, says «playing» only on the element's `playing`, and asks for chunk 2 only then", async () => {
     const asked: string[] = [];
     const resolvers: ((b: Blob) => void)[] = [];
     const { p, el, tick } = rig((t) => { asked.push(t); return new Promise<Blob>((r) => resolvers.push(r)); });
     const done = p.play("m1", reply);
     await tick();
     expect(asked).toHaveLength(1);
-    expect(p.getSnapshot()).toMatchObject({ id: "m1", phase: "loading" });
+    expect(p.getSnapshot()).toMatchObject({ id: "m1", phase: "preparing" });
     resolvers[0](new Blob(["a"]));
     await tick();
     expect(el.play).toHaveBeenCalledTimes(1);
     expect(el.src).toBe("blob:0");
+    expect(p.getSnapshot().phase, "play() was called, but nothing is audible yet").toBe("preparing");
+    expect(asked).toHaveLength(1); // nothing more is requested (or billed) before the first chunk really plays
+    el.emit("playing");
     expect(p.getSnapshot().phase).toBe("playing");
     expect(asked).toHaveLength(2); // the next chunk is fetched while the first plays
     resolvers[1](new Blob(["b"]));
-    el.onended?.(); await tick();
+    el.emit("pause"); el.emit("ended"); await tick(); // the browser's own pause-before-ended is not an interruption
     expect(el.src).toBe("blob:1");
+    expect(p.getSnapshot().phase).toBe("preparing");
+    el.emit("playing");
     resolvers[2](new Blob(["c"]));
-    el.onended?.(); await tick();
-    el.onended?.();
+    el.emit("ended"); await tick();
+    el.emit("playing"); el.emit("ended");
     expect(await done).toBe("done");
     expect(asked.map((t) => t.length)).toEqual(splitForSpeech(reply).map((t) => t.length));
-    expect(p.getSnapshot()).toMatchObject({ id: null, phase: "idle" });
+    expect(p.getSnapshot()).toMatchObject({ id: null, phase: "idle", error: "" });
   });
 
   it("starting another reply stops the first (aborts its fetch); stop() is immediate and frees the audio", async () => {
     const signals: AbortSignal[] = [];
     const { p, el, revoked, tick } = rig((_t, s) => { signals.push(s); return Promise.resolve(new Blob(["a"])); });
     const first = p.play("m1", "أولى.");
-    await tick();
+    await tick(); el.emit("playing");
     expect(p.getSnapshot()).toMatchObject({ id: "m1", phase: "playing" });
     const second = p.play("m2", "ثانية.");
     expect(await first).toBe("stopped");
     expect(signals[0].aborted).toBe(true);
     expect(el.pause).toHaveBeenCalled();
-    await tick();
+    await tick(); el.emit("playing");
     expect(p.getSnapshot()).toMatchObject({ id: "m2", phase: "playing" });
     p.stop();
     expect(await second).toBe("stopped");
@@ -115,19 +121,25 @@ describe("the voice player (one playback at a time)", () => {
     expect(revoked.length).toBe(2);
   });
 
-  it("an engine without voice is said plainly and remembered; a blocked autoplay asks for another tap", async () => {
+  it("an engine without voice is said plainly and remembered; a blocked autoplay asks for a tap that continues the SAME audio", async () => {
     voiceAvailability.reset();
     const { p } = rig(() => Promise.reject(new BashtError("voice_unavailable")));
     expect(await p.play("m1", "نص.")).toBe("error");
-    expect(p.getSnapshot()).toMatchObject({ id: null, phase: "idle", code: "voice_unavailable" });
+    expect(p.getSnapshot()).toMatchObject({ id: "m1", phase: "error", code: "voice_unavailable", errorKind: "unavailable", canResume: false });
     expect(p.getSnapshot().error).toMatch(/غير مفعّل في المحرك/);
     expect(voiceAvailability.get().speak).toBe("no");
     voiceAvailability.reset();
-    const blocked = rig(() => Promise.resolve(new Blob(["a"])));
+    const asked: string[] = [];
+    const blocked = rig((t) => { asked.push(t); return Promise.resolve(new Blob(["a"])); });
     blocked.el.play.mockRejectedValueOnce(Object.assign(new Error("x"), { name: "NotAllowedError" }));
     expect(await blocked.p.play("m1", "نص.")).toBe("error");
-    expect(blocked.p.getSnapshot().code).toBe("playback_blocked");
+    expect(blocked.p.getSnapshot()).toMatchObject({ code: "playback_blocked", phase: "error", canResume: true });
     expect(voiceAvailability.get().speak, "the engine voice works; only this browser blocked playing it").toBe("yes");
+    const again = blocked.p.resume(); // the owner's next tap
+    expect(blocked.el.play).toHaveBeenCalledTimes(2); // synchronously, inside that tap
+    expect(asked).toHaveLength(1); // no second /speak (it may be billed)
+    blocked.el.emit("playing"); blocked.el.emit("ended");
+    expect(await again).toBe("done");
   });
 });
 
@@ -146,14 +158,16 @@ describe("one conversation, one mic", () => {
     expect(lib).toMatch(/if \(!d\.canSend\(\)\) \{ d\.setDraft\(text\);/);
   });
   it("«استمع» is on BASHT's replies only, and the live session speaks in the same conversation", () => {
-    expect(chat).toMatch(/\{m\.role === "assistant" && <ListenButton id=\{key\} text=\{m\.text\} \/>\}/);
+    // the stable engine row id (a reply being played keeps its state when earlier rows load above it)
+    expect(chat).toMatch(/\{m\.role === "assistant" && <ListenButton id=\{m\.id \|\| key\} text=\{m\.text\} \/>\}/);
+    expect(chat).toMatch(/engineBubble\(it\.m, it\.m\.id \? `e-\$\{it\.m\.id\}` : `e-\$\{it\.i\}-\$\{it\.at\}`\)/);
     // self-contained: the button reads the shared player and the engine's availability itself (safe inside a memoized timeline)
     const btn = src("features/chat/listen-button.tsx");
-    expect(btn).toMatch(/usePlayer\(\)/); expect(btn).toMatch(/avail\.speak === "no"/);
+    expect(btn).toMatch(/usePlayer\(\)/); expect(btn).toMatch(/speakGate\(avail, status\)\.show/);
     expect(chat).toMatch(/const id = await basht\.send\(text\);\s*const end = await basht\.waitRun\(id\);/);
     const panel = src("features/calls/calls-screen.tsx");
     expect(panel).toMatch(/ask: \(text\) => latest\.current\.live\.ask\(text\)/);
-    expect(panel).toMatch(/play: \(text\) => voicePlayer\(\)\.play\("live", text\)/);
+    expect(panel).toMatch(/play: \(text, onPlayer\) => voicePlayer\(\)\.play\("live", text, \{ onPhase: onPlayer \}\)/);
     expect(src("lib/basht-voice.ts")).toMatch(/await d\.ask\(voiceNoteText\(text\)\)/);
     expect(panel).not.toMatch(/RTCPeerConnection|talk\.client|getVoices/); // no parallel voice system (no WebRTC, no browser TTS)
   });
@@ -207,6 +221,28 @@ describe("recording lifecycle (permission prompt)", () => {
   });
 });
 
+describe("recording: a recorder whose onstop never comes", () => {
+  it("the turn still ends after STOP_GUARD_MS: tracks released, nothing kept (the 60 s manual cap is guaranteed)", async () => {
+    vi.useFakeTimers();
+    try {
+      const track = { stop: vi.fn() };
+      let now = 0;
+      const rec = { state: "inactive", mimeType: "audio/webm", ondataavailable: null as null | ((e: { data: Blob }) => void), onstop: null as null | (() => void),
+        start: vi.fn(() => { rec.state = "recording"; }), stop: vi.fn(() => { /* never fires onstop */ }) };
+      const env: RecorderEnv = { getUserMedia: async () => ({ getTracks: () => [track] }), pickType: () => "audio/webm", createRecorder: () => rec,
+        levelProbe: () => null, onPhase: vi.fn(), onElapsed: vi.fn(), onError: vi.fn(), now: () => now };
+      const { result } = startRecording(env, { silence: true, maxMs: MAX_NOTE_MS });
+      await vi.advanceTimersByTimeAsync(0);
+      now = MANUAL_TURN_MS; await vi.advanceTimersByTimeAsync(200); // the manual cap fires
+      expect(rec.stop).toHaveBeenCalled();
+      expect(track.stop).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(STOP_GUARD_MS);
+      expect(await result).toMatchObject({ audio: null, ended: "limit", handsFree: false });
+      expect(track.stop).toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+});
+
 describe("live voice session (restart race)", () => {
   function rig() {
     const records: ReturnType<typeof deferred<RecordResult>>[] = [];
@@ -214,7 +250,7 @@ describe("live voice session (restart race)", () => {
     const replies: ReturnType<typeof deferred<string>>[] = [];
     const calls = { ask: [] as string[], play: [] as string[], errors: [] as string[], phases: [] as string[] };
     const d: LiveDeps = {
-      record: () => { const x = deferred<RecordResult>(); records.push(x); return x.promise; },
+      record: (onStarted) => { const x = deferred<RecordResult>(); records.push(x); onStarted(true); return x.promise; },
       cancelRecord: vi.fn(), stopPlay: vi.fn(),
       transcribe: () => { const x = deferred<string>(); transcripts.push(x); return x.promise; },
       ask: (t) => { calls.ask.push(t); const x = deferred<string>(); replies.push(x); return x.promise; },
@@ -286,7 +322,7 @@ describe("one microphone owner (composer note vs live panel)", () => {
   });
   it("opening the voice panel cancels a composer recording", () => {
     const chat = src("features/chat/chat-screen.tsx");
-    expect(chat).toMatch(/const openVoice = \(\) => \{ recorder\.cancel\(\); setVoice\(true\); \};/);
+    expect(chat).toMatch(/const openVoice = \(autostart = false\) => \{ recorder\.cancel\(\); setVoiceAuto\(autostart\); setVoice\(true\); \};/);
     expect(chat).not.toMatch(/setVoice\(true\)(?!; \};)/);
   });
 });

@@ -16,7 +16,6 @@ import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -24,6 +23,7 @@ from pydantic import BaseModel, Field
 
 from . import basht_chat as bc
 from .audit import audit_log
+from .basht_signing import engine_request
 from .service_auth import ServiceCall, require_service_call, require_service_call_media
 
 router = APIRouter(prefix="/internal/v1/basht", include_in_schema=False)
@@ -59,9 +59,9 @@ def _engine(method: str, path: str, body: dict | None = None, timeout: float = b
         raise bc.EngineError(503, "basht_unconfigured")
     base, token = cfg
     data = json.dumps(body).encode() if body is not None else None
-    req = Request(f"{base}/app/v1{path}", data=data, method=method,
-                  headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "basht-app/1",
-                           **({"Content-Type": "application/json"} if data is not None else {})})
+    req = engine_request(base, path, method=method, data=data,
+                         headers={"Authorization": f"Bearer {token}", "Accept": "*/*", "User-Agent": "basht-app/1",
+                                  **({"Content-Type": "application/json"} if data is not None else {})})
     try:
         with bc.urlopen(req, timeout=timeout) as res:  # noqa: S310 - https only, checked in _config
             raw = res.read(max_bytes + 1)
