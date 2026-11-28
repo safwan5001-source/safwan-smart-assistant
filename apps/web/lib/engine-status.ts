@@ -28,7 +28,16 @@ export const MAX_BYTES = 1024 * 1024 * 1024; // 1 GiB
 export const MAX_COUNT_ATTACH = 1000;
 
 export type EngineRuns = { active: number | null; total: number | null; approvalsPending: number | null; complete: boolean };
+/** An answer older than this is not an answer this stack would give (the API caches for 30 s): its age is treated as unknown. */
+export const MAX_AGE_MS = 10 * 60 * 1000;
+
 export type EngineStatus = {
+  /**
+   * How long ago the engine REALLY answered, when the API says so (0 = read just now; a cache hit says how old the cached answer is).
+   * null = unknown (an older API): such an answer is never evidence that beats a newer real event. An age, not a timestamp, so the
+   * phone's clock and the server's never have to agree.
+   */
+  ageMs: number | null;
   /** The engine's /status answered through the signed bridge. false = no answer (or none validated): everything else is empty. */
   reachable: boolean;
   /** Engine (OpenClaw) version, 1-32 characters of [A-Za-z0-9._+-]; null when absent. */
@@ -44,7 +53,7 @@ export type EngineStatus = {
 };
 
 export const UNKNOWN_ENGINE_STATUS: EngineStatus = {
-  reachable: false, version: null, commit: null, features: [], attachments: {},
+  reachable: false, ageMs: null, version: null, commit: null, features: [], attachments: {},
   link: { state: "unknown", pendingApprovals: null }, voice: { speak: "unknown" }, runs: null, signing: { mode: "unknown", active: null },
 };
 export const unknownEngineStatus = (): EngineStatus => ({ ...UNKNOWN_ENGINE_STATUS, attachments: {}, features: [], link: { ...UNKNOWN_ENGINE_STATUS.link }, voice: { speak: "unknown" }, signing: { ...UNKNOWN_ENGINE_STATUS.signing } });
@@ -66,6 +75,7 @@ export function parseEngineStatus(j: unknown): EngineStatus {
   if (!o || o.ok === false) return unknownEngineStatus();
   const out = unknownEngineStatus();
   out.reachable = true;
+  out.ageMs = boundedInt(o.ageMs, MAX_AGE_MS);
 
   const eng = obj(o.engine);
   if (eng && typeof eng.version === "string" && VERSION_RE.test(eng.version)) out.version = eng.version;
@@ -118,6 +128,7 @@ export function engineStatusWire(s: EngineStatus): Record<string, unknown> {
   if (!s.reachable) return { ok: false };
   return {
     ok: true,
+    ...(s.ageMs !== null ? { ageMs: s.ageMs } : {}),
     ...(s.version ? { engine: { version: s.version } } : {}),
     wrapper: { commit: s.commit },
     features: s.features,

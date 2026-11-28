@@ -79,7 +79,7 @@ _lock = threading.Lock()
 _sends: list[float] = []
 _speaks: list[float] = []
 _transcribes: list[float] = []
-_status_cache: dict[str, tuple[float, Any, bool]] = {}  # engine /status, raw: (expires, json, failed) — one read serves voice-status AND engine-status
+_status_cache: dict[str, tuple[float, Any, bool, float]] = {}  # engine /status, raw: (expires, json, failed, read-at) — one read serves voice-status AND engine-status
 
 
 class EngineError(Exception):
@@ -496,15 +496,17 @@ def _voice_status_view(j: Any) -> dict[str, Any]:
     return out
 
 
-def _engine_status_raw() -> tuple[Any, bool, bool]:
-    """The engine's GET /status as the engine sent it, read at most once per 30 s (a failed read: 5 s). -> (json | None, failed, fresh)."""
+def _engine_status_raw() -> tuple[Any, bool, bool, int]:
+    """The engine's GET /status as the engine sent it, read at most once per 30 s (a failed read: 5 s).
+    -> (json | None, failed, fresh, age_ms): `age_ms` is how long ago the engine really answered (0 for a fresh read), so a cached
+    answer is never presented as newer than it is."""
     cfg = _config()
     key = cfg[0] if cfg else ""
     now = time.monotonic()
     with _lock:
         hit = _status_cache.get(key)
         if hit and now < hit[0]:
-            return hit[1], hit[2], False
+            return hit[1], hit[2], False, max(0, int((now - hit[3]) * 1000))
     failed = False
     raw: Any = None
     try:
@@ -512,17 +514,17 @@ def _engine_status_raw() -> tuple[Any, bool, bool]:
     except Exception:  # noqa: BLE001 - the status read must never break the app
         failed = True
     with _lock:
-        _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed)
+        _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed, now)
     # exactly ONE audit line per real engine read, whichever route triggered it (never per cached answer, never none)
     view = {"speak": "unknown"} if failed else _voice_status_view(raw)
     audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
-    return raw, failed, True
+    return raw, failed, True, 0
 
 
 @router.get("/voice-status")
 def voice_status(_: ServiceCall = Depends(require_service_call)):
     """Never an error to the UI: any failure, an unconfigured or an older engine answers 200 `{speak: "unknown"}`."""
-    raw, failed, _fresh = _engine_status_raw()
+    raw, failed, _fresh, _age = _engine_status_raw()
     return {"speak": "unknown"} if failed else _voice_status_view(raw)
 
 
@@ -536,6 +538,7 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{7,12}")
 MAX_COUNT = 1_000_000
 MAX_ATTACH_BYTES = 1024 * 1024 * 1024
 MAX_ATTACH_COUNT = 1000
+MAX_AGE_MS = 10 * 60 * 1000
 
 
 def _bounded(v: Any, cap: int) -> int | None:
@@ -595,8 +598,11 @@ def _engine_status_view(j: Any) -> dict[str, Any]:
 @router.get("/engine-status")
 def engine_status(_: ServiceCall = Depends(require_service_call)):
     """Never an error to the UI: an unconfigured, unreachable or older engine answers 200 `{"ok": false}` (= no answer, nothing guessed)."""
-    raw, failed, _fresh = _engine_status_raw()
-    return {"ok": False} if failed else _engine_status_view(raw)
+    raw, failed, _fresh, age_ms = _engine_status_raw()
+    view = {"ok": False} if failed else _engine_status_view(raw)
+    if view.get("ok"):
+        view["ageMs"] = min(age_ms, MAX_AGE_MS)  # how old this answer is (0 = read just now): the app orders evidence by it, never by the fetch time
+    return view
 
 
 def utf16_len(text: str) -> int:

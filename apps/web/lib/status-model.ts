@@ -64,7 +64,15 @@ export function readServer(app: AssistantStatus, checkedAt: number | null): Stat
 }
 
 /** What the app has of the engine: its own status read (null = not read: signed out / not asked yet) and when. */
-export type EngineSnapshot = { status: EngineStatus | null; at: number };
+export type EngineSnapshot = {
+  status: EngineStatus | null;
+  /** When this app asked (fetch time): drives the display and the 30 s throttle only. */
+  at: number;
+  /** When the engine really answered (fetch time minus the API's reported age); null = unknown. The ONLY time evidence is ordered by. */
+  observedAt?: number | null;
+};
+/** The time to SHOW for an engine reading: the observation when known, else when it was asked. */
+const shownAt = (s: EngineSnapshot): number => s.observedAt ?? s.at;
 
 /**
  * «جاهزية باشت»: the ENGINE's readiness, from the signed /status the engine answers (link state) and the public gateway check.
