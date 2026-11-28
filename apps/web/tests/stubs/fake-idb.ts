@@ -73,14 +73,18 @@ export class FakeIDB {
   failures: string[] = [];
   /** `open` itself fails (private mode / blocked): "throw" throws synchronously, "error" fires onerror. */
   openFails: "throw" | "error" | null = null;
+  /** The next N opens fail (then the database opens normally again): a TEMPORARY failure. */
+  failOpens = 0;
   opens = 0;
   failNext(name = "QuotaExceededError", times = 1) { for (let i = 0; i < times; i++) this.failures.push(name); }
   open(name: string, version = 1) {
     this.opens++;
     if (this.openFails === "throw") throw new DOMException("denied", "SecurityError");
+    const transient = this.failOpens > 0; if (transient) this.failOpens--;
     const req = { result: undefined as unknown as Db, error: null as unknown, onsuccess: null as (() => void) | null, onerror: null as (() => void) | null,
       onupgradeneeded: null as (() => void) | null, onblocked: null as (() => void) | null };
     setTimeout(() => {
+      if (transient) { req.error = new DOMException("busy", "UnknownError"); req.onerror?.(); return; }
       if (this.openFails === "error") { req.error = new DOMException("denied", "SecurityError"); req.onerror?.(); return; }
       let db = this.dbs.get(name);
       const fresh = !db;

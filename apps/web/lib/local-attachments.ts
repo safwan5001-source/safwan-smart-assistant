@@ -105,8 +105,11 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     async clear(): Promise<boolean> {
       generation++; loaded = null;
       entries.clear(); memory.clear(); chains.clear(); changed();
-      const r = await store.clear();
-      return r.ok || r.reason === "unavailable";
+      // true only when nothing is left on the device: wiped, or no IndexedDB at all. A database that failed to OPEN may still hold
+      // photos (the open is retried once); that is reported as NOT cleared so sign-out names the leftovers.
+      let r = await store.clear();
+      if (!r.ok && r.reason !== "absent") r = await store.clear();
+      return r.ok || r.reason === "absent";
     },
   };
   return api;

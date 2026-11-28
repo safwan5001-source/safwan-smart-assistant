@@ -76,11 +76,32 @@ describe("attachment store (IndexedDB, own database)", () => {
   });
 
   describe("failure modes (the app keeps working: every call resolves)", () => {
-    it("no IndexedDB at all → unavailable, never a throw", async () => {
+    it("no IndexedDB at all → absent, never a throw; the wipe counts as done (nothing could have been stored)", async () => {
       const s = createAttachmentStore(undefined);
       for (const r of [await s.put(rec("m1")), await s.list(), await s.get("m1"), await s.patch("m1", { runId: "r" }), await s.remove("m1"), await s.usage(), await s.clear()])
-        expect(r).toEqual({ ok: false, reason: "unavailable" });
-      expect(await clearAttachments(s)).toBe(true); // nothing to wipe where there is no store
+        expect(r).toEqual({ ok: false, reason: "absent" });
+      expect(await clearAttachments(s)).toBe(true);
+    });
+    it("a database that FAILS TO OPEN after photos were saved: the wipe is NOT done (they are still there once opening recovers)", async () => {
+      const { f, store } = make();
+      await store.put(rec("m1"));
+      f.openFails = "error"; f.dropConnections();
+      expect(await clearAttachments(store)).toBe(false); // both attempts fail: not cleared
+      f.openFails = null;
+      const l = await store.list();
+      expect(l.ok && l.value.map((m) => m.clientMsgId)).toEqual(["m1"]); // nothing was deleted
+    });
+    it("…a TEMPORARY open failure is retried once inside the wipe: recovery wipes everything and reports done", async () => {
+      const { f, store } = make();
+      await store.put(rec("m1"));
+      f.dropConnections(); f.failOpens = 1;
+      expect(await clearAttachments(store)).toBe(true);
+      expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
+    });
+    it("open failures are reported as unavailable (unknown contents), never as absent", async () => {
+      const { f, store } = make();
+      f.openFails = "throw";
+      expect(await store.clear()).toEqual({ ok: false, reason: "unavailable" });
     });
     it("open throws (private mode) or errors → unavailable; a later call retries the open", async () => {
       const { f, store } = make();

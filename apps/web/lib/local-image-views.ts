@@ -23,25 +23,39 @@ export function createImageViews(source: ImageSource, deps: { createUrl?: (b: Bl
     if (s?.status === "ready") s.images.forEach((i) => revokeUrl(i.url));
     into.delete(id); claims.delete(id);
   };
+  let wanted: string[] = [];
+  const start = (id: string) => {
+    const claim = Symbol(id);
+    claims.set(id, claim);
+    const land = (s: ImageViewState) => { if (claims.get(id) !== claim) { if (s.status === "ready") s.images.forEach((i) => revokeUrl(i.url)); return; } const n = new Map(state); n.set(id, s); publish(n); };
+    source.images(id).then((imgs) => {
+      if (claims.get(id) !== claim) return;
+      if (!imgs?.length) return land({ status: "failed" });
+      land({ status: "ready", images: imgs.map((i) => ({ id: `${id}:${i.id}`, name: i.name, mime: i.mime, size: i.size, width: i.width, height: i.height, blob: i.blob, url: createUrl(i.blob) })) });
+    }, () => land({ status: "failed" }));
+  };
   return {
     subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     getSnapshot: (): ImageViewSnapshot => state,
     /** The records on screen now: loads the new ones, releases the ones that left. */
     want(ids: readonly string[]) {
+      wanted = [...ids];
       const next = new Map(state); let changed = false;
       for (const id of [...claims.keys()]) if (!ids.includes(id)) { release(id, next); changed = true; }
       if (changed) publish(next);
-      for (const id of ids) {
-        if (claims.has(id)) continue;
-        const claim = Symbol(id);
-        claims.set(id, claim);
-        const land = (s: ImageViewState) => { if (claims.get(id) !== claim) { if (s.status === "ready") s.images.forEach((i) => revokeUrl(i.url)); return; } const n = new Map(state); n.set(id, s); publish(n); };
-        source.images(id).then((imgs) => {
-          if (claims.get(id) !== claim) return;
-          if (!imgs?.length) return land({ status: "failed" });
-          land({ status: "ready", images: imgs.map((i) => ({ id: `${id}:${i.id}`, name: i.name, mime: i.mime, size: i.size, width: i.width, height: i.height, blob: i.blob, url: createUrl(i.blob) })) });
-        }, () => land({ status: "failed" }));
-      }
+      for (const id of ids) if (!claims.has(id)) start(id);
+    },
+    /**
+     * The owner pressed «إعادة المحاولة»: every record on screen whose read FAILED is read again (once per press, so there is no loop;
+     * only those records go back to «loading» meanwhile). A transient device failure can recover this way.
+     */
+    retryFailed() {
+      const failed = wanted.filter((id) => state.get(id)?.status === "failed");
+      if (!failed.length) return;
+      const next = new Map(state);
+      for (const id of failed) { next.delete(id); claims.delete(id); }
+      publish(next);
+      for (const id of failed) start(id);
     },
     dispose() { const next = new Map(state); for (const id of [...claims.keys()]) release(id, next); state = new Map(); listeners.forEach((l) => l()); },
   };

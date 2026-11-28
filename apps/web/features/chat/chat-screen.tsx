@@ -199,6 +199,8 @@ export default function ChatScreen() {
     return items.flatMap((it) => it.kind === "engine" ? viewerItems({ sessionKey: engineKey, messageId: it.m.id, media: it.m.media, local: localMedia.byRow.get(localRowKey(it.m, it.i)) })
       : it.kind === "pending" ? viewerItems({ sessionKey: null, messageId: null, media: [], local: it.p.images }) : []);
   }, [view, items, basht.messages, engineKey, localMedia.byRow]);
+  // «إعادة المحاولة» on an unavailable picture: re-read the failed device photos AND the history (a server copy may be available now)
+  const retryMedia = useCallback(() => { localMedia.retry(); basht.reload(); }, [localMedia.retry, basht.reload]); // eslint-disable-line react-hooks/exhaustive-deps
   const galleryRef = useRef(gallery);
   galleryRef.current = gallery;
   const openViewer = useCallback((item: ViewerItem) => {
@@ -477,7 +479,7 @@ export default function ChatScreen() {
       <article key={"p-" + p.clientMsgId} className="bubble user">
         {parsed.text}
         {p.status === "loading" && <span className="media-thumb loading" aria-busy="true" aria-label="جارٍ تحميل الصورة" />}
-        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} ownerNoText={p.status === "failed"} onOpen={openViewer} onRetry={basht.reload} localOnly />
+        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} ownerNoText={p.status === "failed"} onOpen={openViewer} onRetry={retryMedia} localOnly />
         <div className="meta"><time className="num" dateTime={new Date(p.sentAt).toISOString()}>{formatTime(p.sentAt)}</time></div>
       </article>
     );
@@ -495,7 +497,7 @@ export default function ChatScreen() {
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
       {note.voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}
       {m.role === "assistant" ? <MessageBody text={view.assistantText} /> : note.text}
-      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} onOpen={openViewer} onRetry={basht.reload} />}
+      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} onOpen={openViewer} onRetry={retryMedia} />}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
       )}

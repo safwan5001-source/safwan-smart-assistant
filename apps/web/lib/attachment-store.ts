@@ -18,7 +18,9 @@ export type StoredImageMeta = Omit<StoredImage, "blob">;
  *  this turn, so it no longer stands as a pending bubble of its own. */
 export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string; runDone?: boolean; superseded?: boolean; images: StoredImage[] };
 export type AttachmentMeta = Omit<AttachmentRecord, "images"> & { images: StoredImageMeta[] };
-export type StoreFailure = "unavailable" | "quota" | "error";
+/** `absent`: this browser has no IndexedDB at all (nothing could ever have been stored). `unavailable`: it has one but could not OPEN it
+ *  now — what is inside is unknown (a wipe that hits this has NOT wiped anything). */
+export type StoreFailure = "absent" | "unavailable" | "quota" | "error";
 export type StoreResult<T = void> = { ok: true; value: T } | { ok: false; reason: StoreFailure };
 export type AttachmentUsage = { count: number; bytes: number };
 
@@ -47,7 +49,7 @@ const failure = (e: unknown): StoreFailure => {
 };
 const fail = <T>(reason: StoreFailure): StoreResult<T> => ({ ok: false, reason });
 
-/** Real store over an IndexedDB factory (`indexedDB` in a browser; a double in tests). `undefined` factory → always "unavailable". */
+/** Real store over an IndexedDB factory (`indexedDB` in a browser; a double in tests). `undefined` factory → always "absent". */
 export function createAttachmentStore(factory?: IDBFactory | undefined): AttachmentStore {
   let opening: Promise<IDBDatabase> | null = null;
   const open = (): Promise<IDBDatabase> => {
@@ -81,7 +83,7 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
   /** One transaction over both stores. `run` queues requests; the result is read when the transaction has committed. A lost
    *  connection (InvalidStateError / UnknownError) reopens the database and retries ONCE; a full disk never retries. */
   async function tx<T>(mode: IDBTransactionMode, run: (meta: IDBObjectStore, blobs: IDBObjectStore) => () => T, retried = false): Promise<StoreResult<T>> {
-    if (!factory) return fail("unavailable");
+    if (!factory) return fail("absent");
     let db: IDBDatabase;
     try { db = await open(); } catch { return fail("unavailable"); }
     let lastError: unknown = null;
@@ -159,11 +161,16 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
 }
 
 let shared: AttachmentStore | null = null;
-/** The app's store (this browser's IndexedDB; "unavailable" where there is none). */
+/** The app's store (this browser's IndexedDB; every call reports "absent" where there is none). */
 export const attachmentStore = (): AttachmentStore =>
   (shared ??= createAttachmentStore(typeof indexedDB === "undefined" ? undefined : indexedDB));
-/** For sign-out: wipes the local photo copies. Resolves true when nothing is left (or there never was a store). */
+/**
+ * For sign-out: wipes the local photo copies. True only when nothing is left: the wipe ran, or this browser has no IndexedDB at all
+ * (nothing could have been stored). A database that merely failed to OPEN may still hold photos, so that is NOT success — the open is
+ * retried once, and a second failure is reported as not cleared.
+ */
 export const clearAttachments = async (store: AttachmentStore = attachmentStore()): Promise<boolean> => {
-  const r = await store.clear();
-  return r.ok || r.reason === "unavailable";
+  let r = await store.clear();
+  if (!r.ok && r.reason !== "absent") r = await store.clear();
+  return r.ok || r.reason === "absent";
 };

@@ -5,7 +5,7 @@
  * (lib/local-image-views: loading → ready | failed, URLs revoked when no longer shown), and the sent photos whose row has not
  * appeared in the history (shown as the owner's own bubble, so the message never vanishes).
  */
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { BashtMessage } from "@/lib/basht-client";
 import { localAttachments } from "@/lib/local-attachments";
 import { matchAttachments, pendingRecords, type MatchRow } from "@/lib/attachment-match";
@@ -46,5 +46,7 @@ export function useLocalAttachments(rows: BashtMessage[] | null, opts: { enabled
 
   const local = useMemo(() => rowLocalState(plan.matches, snap), [plan.matches, snap]);
   const pending = useMemo(() => pendingState(plan.pending, snap), [plan.pending, snap]);
-  return { byRow: local.byRow, loadingRows: local.loadingRows, failedRows: local.failedRows, pending };
+  /** «إعادة المحاولة» on an unavailable tile: read the failed device photos again (once per press). */
+  const retry = useCallback(() => views.current?.retryFailed(), []);
+  return { byRow: local.byRow, loadingRows: local.loadingRows, failedRows: local.failedRows, pending, retry };
 }

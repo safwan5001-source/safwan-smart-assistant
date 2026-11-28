@@ -90,4 +90,36 @@ describe("device photos of the records on screen: loading → ready | failed", (
     v.want(["c1"]); v.want(["c1"]); v.want(["c1", "c1"]); await tick();
     expect(reads).toBe(1);
   });
+
+  it("«إعادة المحاولة» re-reads the failed device photo once per press: a transient failure recovers; nothing loops, and ready records are not touched", async () => {
+    let reads = 0; const per = new Map<string, number>();
+    const src = { images: async (id: string): Promise<StoredImage[] | null> => { reads++; per.set(id, (per.get(id) ?? 0) + 1); if (id === "flaky" && per.get(id)! < 2) throw new Error("idb busy"); return [img("a")]; } };
+    const v = createImageViews(src, urls());
+    v.want(["flaky", "fine"]); await tick();
+    expect(v.getSnapshot().get("flaky")).toEqual({ status: "failed" });
+    expect(v.getSnapshot().get("fine")?.status).toBe("ready");
+    v.want(["flaky", "fine"]); await tick();            // a later render does NOT re-read a failed record by itself
+    expect(per.get("flaky")).toBe(1);
+    let notified = 0; v.subscribe(() => notified++);
+    v.retryFailed();                                    // the press
+    expect(v.getSnapshot().has("flaky")).toBe(false);    // back to loading, for that record only
+    expect(v.getSnapshot().get("fine")?.status).toBe("ready");
+    await tick();
+    expect(per.get("flaky")).toBe(2); expect(per.get("fine")).toBe(1);
+    expect(v.getSnapshot().get("flaky")?.status).toBe("ready"); // recovered
+    expect(notified).toBeGreaterThan(0);
+    const before = reads; v.retryFailed(); await tick();       // nothing failed any more: no read
+    expect(reads).toBe(before);
+  });
+  it("a record that keeps failing is read once per press (bounded), and a retry for records that left the screen does nothing", async () => {
+    let reads = 0;
+    const v = createImageViews({ images: async () => { reads++; return null; } }, urls());
+    v.want(["gone"]); await tick();
+    expect(reads).toBe(1);
+    v.retryFailed(); await tick(); v.retryFailed(); await tick();
+    expect(reads).toBe(3);
+    expect(v.getSnapshot().get("gone")).toEqual({ status: "failed" });
+    v.want([]); v.retryFailed(); await tick();
+    expect(reads).toBe(3);
+  });
 });

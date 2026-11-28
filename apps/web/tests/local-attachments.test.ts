@@ -147,6 +147,28 @@ describe("local attachments (in-memory index over the device store)", () => {
     expect(puts).toBe(before);
   });
 
+  it("clear() is NOT successful when the database could not be opened after photos were saved (and says so for the leftovers report)", async () => {
+    const { idb, store, mgr } = setup();
+    mgr.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+    await settle();
+    idb.dropConnections(); idb.openFails = "error";
+    expect(await mgr.clear()).toBe(false);
+    const { wipeLeftovers } = await import("@/lib/sign-out");
+    expect(wipeLeftovers({ filesCleared: true, serverErased: true, attachmentsCleared: false }).join(" ")).toContain("الصور");
+    idb.openFails = null;
+    const l = await store.list();
+    expect(l.ok && l.value.map((m) => m.clientMsgId)).toEqual(["c1"]); // still on the device
+  });
+  it("clear() recovers from a temporary open failure (one retry) and from a browser with no IndexedDB (nothing stored)", async () => {
+    const { idb, store, mgr } = setup();
+    mgr.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+    await settle();
+    idb.dropConnections(); idb.failOpens = 1;
+    expect(await mgr.clear()).toBe(true);
+    expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
+    expect(await createLocalAttachments(createAttachmentStore(undefined)).clear()).toBe(true);
+  });
+
   it("a load that finishes after the clear does not bring old records back", async () => {
     const { idb, store } = setup();
     await store.put({ clientMsgId: "old", text: "o", sentAt: 1, images: [img("a")] });
