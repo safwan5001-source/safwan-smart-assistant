@@ -228,6 +228,7 @@ def reset_limits() -> None:
         _speaks.clear()
         _transcribes.clear()
         _status_cache.clear()
+        _status_flights.clear()
 
 
 def _run_view(j: dict) -> dict:
@@ -496,10 +497,22 @@ def _voice_status_view(j: Any) -> dict[str, Any]:
     return out
 
 
+class _Flight:
+    """One real engine read in progress: concurrent cache misses wait for it instead of each reading the engine."""
+    def __init__(self) -> None:
+        self.done = threading.Event()
+        self.result: tuple[Any, bool, float] | None = None  # (json, failed, read-at)
+
+
+_status_flights: dict[str, _Flight] = {}
+FLIGHT_WAIT = VOICE_STATUS_TIMEOUT + 2.0  # a follower never waits longer than the read's own timeout (plus slack): no stuck request
+
+
 def _engine_status_raw() -> tuple[Any, bool, bool, int]:
-    """The engine's GET /status as the engine sent it, read at most once per 30 s (a failed read: 5 s).
-    -> (json | None, failed, fresh, age_ms): `age_ms` is how long ago the engine really answered (0 for a fresh read), so a cached
-    answer is never presented as newer than it is."""
+    """The engine's GET /status as the engine sent it, read at most once per 30 s (a failed read: 5 s), SINGLE-FLIGHT: concurrent cache
+    misses share one read (the lock is never held across the network call). -> (json | None, failed, fresh, age_ms): `age_ms` is how
+    long ago the engine really answered, so a cached answer is never presented as newer than it is. `fresh` is True only for the
+    caller that performed the read, which also writes the single audit line of that read."""
     cfg = _config()
     key = cfg[0] if cfg else ""
     now = time.monotonic()
@@ -507,17 +520,33 @@ def _engine_status_raw() -> tuple[Any, bool, bool, int]:
         hit = _status_cache.get(key)
         if hit and now < hit[0]:
             return hit[1], hit[2], False, max(0, int((now - hit[3]) * 1000))
+        flight = _status_flights.get(key)
+        leader = flight is None
+        if leader:
+            flight = _status_flights[key] = _Flight()
+    assert flight is not None
+    if not leader:
+        if flight.done.wait(FLIGHT_WAIT) and flight.result is not None:
+            raw, failed, at = flight.result
+            return raw, failed, False, max(0, int((time.monotonic() - at) * 1000))
+        return None, True, False, 0  # the leader never finished in time: an honest non-answer, not a second read storm
     failed = False
     raw: Any = None
     try:
-        raw = _call("GET", "/status", timeout=VOICE_STATUS_TIMEOUT)
-    except Exception:  # noqa: BLE001 - the status read must never break the app
-        failed = True
-    with _lock:
-        _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed, now)
-    # exactly ONE audit line per real engine read, whichever route triggered it (never per cached answer, never none)
-    view = {"speak": "unknown"} if failed else _voice_status_view(raw)
-    audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
+        try:
+            raw = _call("GET", "/status", timeout=VOICE_STATUS_TIMEOUT)
+        except Exception:  # noqa: BLE001 - the status read must never break the app
+            failed = True
+        with _lock:
+            _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed, now)
+        flight.result = (raw, failed, now)
+        # exactly ONE audit line per real engine read performed (the leader's), whichever route triggered it; never per cached or shared answer
+        view = {"speak": "unknown"} if failed else _voice_status_view(raw)
+        audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
+    finally:
+        with _lock:
+            _status_flights.pop(key, None)
+        flight.done.set()
     return raw, failed, True, 0
 
 

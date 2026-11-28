@@ -10,17 +10,36 @@ export const TICK_MS = 60_000;
 type Target = { addEventListener: (t: string, f: () => void) => void; removeEventListener: (t: string, f: () => void) => void };
 type Doc = Target & { visibilityState: string };
 
+/** When the health was last re-read on a focus/visible trigger: shared by every mounted indicator, so two screens never double the reads. */
+let lastAsked = -Infinity;
+export const resetHealthThrottle = () => { lastAsked = -Infinity; };
+
+/**
+ * Health reads where only the NEWEST request may deliver (an older, slower answer never overwrites a newer one or ends «checking»
+ * early), stamped with the moment the request STARTED (the observation time), not when the answer arrived.
+ */
+export function createLatestReader<T>(fetch: () => Promise<T>, now: () => number = Date.now) {
+  let seq = 0;
+  return {
+    start(deliver: (value: T, startedAt: number) => void): void {
+      const mine = ++seq, startedAt = now();
+      void fetch().then((v) => { if (mine === seq) deliver(v, startedAt); });
+    },
+    /** Drops every answer still in flight (unmount). */
+    cancel() { seq++; },
+  };
+}
+
 /** Re-reads the health on focus / when the tab becomes visible, throttled to one read per `minMs`. Returns detach(). */
 export function attachHealthRefresh(d: { getCheckedAt: () => number | null; refreshQuiet: () => void; now?: () => number; win?: Target; doc?: Doc; minMs?: number }): () => void {
   const now = d.now ?? Date.now, minMs = d.minMs ?? HEALTH_MIN_MS;
   const win = d.win ?? window, doc = d.doc ?? document;
-  let asked = -Infinity;
   const again = () => {
     if (doc.visibilityState === "hidden") return;
     const t = now(), last = d.getCheckedAt();
     if (last === null) return; // a read is already in flight (checking)
-    if (t - Math.max(last, asked) < minMs) return;
-    asked = t;
+    if (t - Math.max(last, lastAsked) < minMs) return;
+    lastAsked = t;
     d.refreshQuiet();
   };
   win.addEventListener("focus", again);

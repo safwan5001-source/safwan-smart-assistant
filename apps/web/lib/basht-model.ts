@@ -121,10 +121,15 @@ const replyId = (provider: string | null | undefined, model: string | null | und
   if (!model || provider === "openclaw") return "";
   return provider && !model.includes("/") ? `${provider}/${model}` : model;
 };
-/** Provider prefix and the provider's fast suffix split off: "xai/grok-3-fast" → { p: "xai", name: "grok-3" }; a bare id has p "". */
-const splitId = (id: string) => { const i = id.indexOf("/"); const name = (i >= 0 ? id.slice(i + 1) : id).replace(/-fast$/, ""); return { p: i >= 0 ? id.slice(0, i) : "", name }; };
-/** The same model (a provider's fast variant of it, or a bare id next to a prefixed one, is not a different model). Two prefixed ids must agree on the provider. */
-const sameModel = (a: string, b: string) => { const x = splitId(a), y = splitId(b); return x.name === y.name && (x.p === "" || y.p === "" || x.p === y.p); };
+/**
+ * The same model: full refs compared as whole strings (the provider's fast variant "-fast" removed), where one may be the other with
+ * more provider segments in front ("openrouter/anthropic/claude" is "anthropic/claude"; a bare "grok-3" is "xai/grok-3"). Two ids that
+ * both name a provider must agree on all of it ("openai/gpt-x" and "azure/gpt-x" are different models).
+ */
+const sameModel = (a: string, b: string) => {
+  const x = a.replace(/-fast$/, ""), y = b.replace(/-fast$/, "");
+  return x === y || x.endsWith("/" + y) || y.endsWith("/" + x);
+};
 
 export type HeaderModel = {
   /** Name of the model the owner (or BASHT's default) selected; "" when unknown. */

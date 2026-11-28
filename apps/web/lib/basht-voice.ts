@@ -329,8 +329,11 @@ export function createVoicePlayer(deps: PlayerDeps) {
       const resumable = f.kind === "playback_blocked" || f.kind === "interrupted";
       if (resumable) suspended = { job: j, next }; // keep the audio (and the prefetch): a fresh tap continues without a new request
       else { silence(a, true); j.ctl.abort(); urls.forEach((x) => url.revoke(x)); urls = []; job = null; setProgress(0); }
-      if (f.kind === "unavailable") { if (isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.set("speak", "no", f.reason); }
-      if (f.kind !== "unavailable" || !isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.setFailure(f.kind, f.reason ?? ""); // a playback or a transient engine failure: never reported as a working voice
+      if (f.kind === "unavailable" && isDurableVoiceFailure(f.reason, f.given)) voiceAvailability.set("speak", "no", f.reason);
+      // recorded as a voice failure ONLY when it says something about the voice: audio that arrived and did not play (a PlaybackFailure of any
+      // kind) or a transient engine refusal with its reason. A lapsed session, a rate limit, a network drop or a timeout (no audio ever
+      // arrived) learns nothing about the engine voice, so the previous reading stays.
+      else if (e instanceof PlaybackFailure || (e instanceof BashtError && e.code === "voice_unavailable")) voiceAvailability.setFailure(f.kind, f.reason ?? "");
       const message = f.kind === "unavailable"
         ? (f.reason ? `صوت باشت غير متاح الآن. ${voiceReasonText(f.reason)}` : PLAYER_ERRORS.voice_unavailable)
         : PLAYER_ERRORS[f.code] ?? bashtErrorText(f.code);

@@ -124,13 +124,15 @@ export type VoiceLearned = {
 };
 
 const learnedVoice = (l: VoiceLearned): StatusReading | null => {
+  // a durable configuration failure stays «متوقف» whatever transient failure is recorded after it
+  if (l.speak === "no") return reading("down", l.at, { detail: voiceReasonText(l.reason) || "تعذّر النطق في المحرك" });
   const yesAt = l.speak === "yes" ? l.at ?? 0 : -1;
   if (l.failed && l.failed.at >= yesAt) {
+    // only two kinds are ever recorded: an engine refusal (kind "unavailable", with its reason) or audio that arrived and did not play
     const why = l.failed.kind === "unavailable" ? voiceReasonText(l.failed.reason || "") || "تعذّر النطق في المحرك الآن" : "وصل الصوت من المحرك لكن تعذّر تشغيله على هذا الجهاز";
     return reading("degraded", l.failed.at, { detail: why });
   }
   if (l.speak === "yes") return reading("tested_ok", l.at, { detail: "نجح نطق حقيقي في هذه الجلسة" });
-  if (l.speak === "no") return reading("down", l.at, { detail: voiceReasonText(l.reason) || "تعذّر النطق في المحرك" });
   return null;
 };
 const engineVoice = (snap: EngineSnapshot | null): StatusReading | null => {

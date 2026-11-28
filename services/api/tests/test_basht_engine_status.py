@@ -231,3 +231,70 @@ def test_the_age_is_capped_and_absent_when_the_read_failed(client, engine, monke
     assert get(client)["ageMs"] == bc.MAX_AGE_MS
     bc.reset_limits(); replies["/status"] = URLError("down")
     assert get(client) == {"ok": False}
+
+
+def test_concurrent_cache_misses_share_ONE_engine_read_and_write_ONE_audit_line(monkeypatch):
+    """Single-flight: eight requests arriving together on an empty cache perform one read, share its answer, and audit once."""
+    import threading
+    bc.reset_limits(); audit_log.clear()
+    started, release, calls = threading.Event(), threading.Event(), []
+
+    def slow(method, path, body=None, env=None, timeout=0):
+        calls.append(path); started.set(); assert release.wait(5); return dict(GOOD)
+
+    monkeypatch.setattr(bc, "_call", slow)
+    monkeypatch.setattr(bc, "_config", lambda env=None: ("https://engine.example", "t"))
+    out: list = []
+    ts = [threading.Thread(target=lambda: out.append(bc._engine_status_raw())) for _ in range(8)]
+    ts[0].start(); assert started.wait(5)
+    for t in ts[1:]:
+        t.start()
+    release.set()
+    for t in ts:
+        t.join(10)
+    assert len(calls) == 1, "one real engine read"
+    assert len(out) == 8 and all(o[0]["ok"] is True and o[1] is False for o in out)
+    assert sum(1 for o in out if o[2]) == 1, "exactly one caller performed (and audited) the read"
+    assert len([e for e in audit_log.recent(50) if e["event"] == "basht.voice_status"]) == 1
+
+
+def test_a_follower_never_waits_forever_and_the_lock_is_not_held_across_the_read(monkeypatch):
+    import threading
+    bc.reset_limits()
+    started, release = threading.Event(), threading.Event()
+
+    def slow(method, path, body=None, env=None, timeout=0):
+        started.set(); release.wait(5); return dict(GOOD)
+
+    monkeypatch.setattr(bc, "_call", slow)
+    monkeypatch.setattr(bc, "_config", lambda env=None: ("https://engine.example", "t"))
+    monkeypatch.setattr(bc, "FLIGHT_WAIT", 0.2)
+    leader = threading.Thread(target=bc._engine_status_raw); leader.start(); assert started.wait(5)
+    assert bc._lock.acquire(timeout=1), "the module lock is free while the engine read is in progress"
+    bc._lock.release()
+    raw, failed, fresh, _ = bc._engine_status_raw()  # a follower that gives up after FLIGHT_WAIT
+    assert raw is None and failed is True and fresh is False
+    release.set(); leader.join(10)
+
+
+def test_a_failed_leader_read_is_shared_with_followers_as_a_failure(monkeypatch):
+    import threading
+    from urllib.error import URLError
+    bc.reset_limits(); audit_log.clear()
+    started, release = threading.Event(), threading.Event()
+
+    def boom(method, path, body=None, env=None, timeout=0):
+        started.set(); release.wait(5); raise URLError("down")
+
+    monkeypatch.setattr(bc, "_call", boom)
+    monkeypatch.setattr(bc, "_config", lambda env=None: ("https://engine.example", "t"))
+    out: list = []
+    ts = [threading.Thread(target=lambda: out.append(bc._engine_status_raw())) for _ in range(4)]
+    ts[0].start(); assert started.wait(5)
+    for t in ts[1:]:
+        t.start()
+    release.set()
+    for t in ts:
+        t.join(10)
+    assert all(o[1] is True for o in out)
+    assert len([e for e in audit_log.recent(50) if e["event"] == "basht.voice_status"]) == 1

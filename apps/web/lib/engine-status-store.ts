@@ -19,7 +19,7 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
   const minMs = deps.minIntervalMs ?? ENGINE_STATUS_MIN_MS;
   let state: EngineSnapshot = NONE;
   let inflight: Promise<EngineSnapshot> | null = null;
-  let fetched = false;
+  let throttleFrom: number | null = null; // when the 30 s floor started: a good read, or a "no data" answer that followed a good read
   let epoch = 0; // bumped by reset(): a read that was in flight across a reset must not write into the new state
   const subs = new Set<() => void>();
   return {
@@ -28,7 +28,7 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
     /** Reads unless a read is in flight or the last one is younger than the minimum (`force` skips the age check, never the in-flight one). */
     refresh({ force = false }: { force?: boolean } = {}): Promise<EngineSnapshot> {
       if (inflight) return inflight;
-      if (!force && fetched && now() - state.at < minMs) return Promise.resolve(state);
+      if (!force && throttleFrom !== null && now() - throttleFrom < minMs) return Promise.resolve(state);
       const mine = epoch;
       const run: Promise<EngineSnapshot> = (async () => {
         let s: EngineStatus | null;
@@ -36,15 +36,21 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
         if (mine !== epoch) return state; // a reset happened meanwhile: this answer belongs to the old session
         const t = now();
         // when the engine really answered: now minus the age the API reports (a cache hit is older than this fetch); unknown stays unknown
+        if (s === null && state.status !== null) {
+          // "no data" (a 429, an outage of the door, a lapsed session) after a good read: keep what we know and keep the 30 s floor,
+          // so a limiter that just said no is not hit again at once
+          throttleFrom = t;
+          return state;
+        }
         state = { status: s, at: t, observedAt: s && s.reachable && s.ageMs !== null ? t - s.ageMs : null };
-        fetched = s !== null; // "no data" (signed out) must not block the re-read right after sign-in for 30 s
+        throttleFrom = s !== null ? t : null; // a FIRST "no data" (signed out) must not block the re-read right after sign-in
         subs.forEach((f) => f());
         return state;
       })().finally(() => { if (inflight === run) inflight = null; });
       inflight = run;
       return run;
     },
-    reset() { epoch++; state = NONE; inflight = null; fetched = false; subs.forEach((f) => f()); },
+    reset() { epoch++; state = NONE; inflight = null; throttleFrom = null; subs.forEach((f) => f()); },
   };
 }
 export type EngineStatusStore = ReturnType<typeof createEngineStatusStore>;

@@ -4,7 +4,7 @@ import { createBashtClient, type BashtModelState } from "@/lib/basht-client";
 import { headerModel } from "@/lib/basht-model";
 import { parseEngineStatus, unknownEngineStatus } from "@/lib/engine-status";
 import { createEngineStatusStore } from "@/lib/engine-status-store";
-import { attachHealthRefresh, recheckAll, startVisibleTick } from "@/lib/status-refresh";
+import { attachHealthRefresh, recheckAll, resetHealthThrottle, startVisibleTick } from "@/lib/status-refresh";
 import { readApprovals, readEngine, readVoice } from "@/lib/status-model";
 import { claudeBadge } from "@/features/settings/claude-settings";
 
@@ -47,6 +47,7 @@ describe("I1: the gateway half and the engine half of «جاهزية باشت» 
 
 describe("I1 hook-level: the health re-reads on the same trigger, throttled, and detaches", () => {
   const rig = (over: { checkedAt?: number | null } = {}) => {
+    resetHealthThrottle();
     const handlers = new Map<string, () => void>();
     const mk = () => ({ addEventListener: (t: string, f: () => void) => handlers.set(t, f), removeEventListener: (t: string) => handlers.delete(t) });
     const doc = { ...mk(), visibilityState: "visible" };
