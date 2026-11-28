@@ -92,26 +92,61 @@ export function readEngine(app: AssistantStatus, appCheckedAt: number | null, sn
   return reading(level, snap.at, { ...(level === "tested_ok" ? { label: "جاهز" } : {}), ...(detail ? { detail } : {}) });
 }
 
-/** What a real voice call in this page session proved (lib/basht-voice availability), and when. */
-export type VoiceLearned = { speak: "unknown" | "yes" | "no"; reason: VoiceReason | ""; at: number | null; playbackFailed?: { at: number } | null };
-
 /**
- * The voice: `yes` means a reply's audio really PLAYED THROUGH (a fetched blob proves nothing); a real engine failure beats the
- * engine's declaration, and a playback that failed since (blocked autoplay, stall, decode) is `degraded`, never success.
+ * What real voice calls in this page session showed (lib/basht-voice availability): `speak` yes/no with the time of that answer,
+ * `failed` = the newest attempt that did not play through (playback failure or a transient engine failure) with its allow-listed
+ * reason, `transcribe` = what a real transcription showed.
  */
-export function readVoice(snap: EngineSnapshot | null, learned: VoiceLearned): StatusReading {
-  if (learned.playbackFailed) return reading("degraded", learned.playbackFailed.at, { detail: "وصل الصوت من المحرك لكن تعذّر تشغيله على هذا الجهاز" });
-  if (learned.speak === "yes") return reading("tested_ok", learned.at, { detail: "نجح نطق حقيقي في هذه الجلسة" });
-  if (learned.speak === "no") return reading("down", learned.at, { detail: voiceReasonText(learned.reason) || "تعذّر النطق في المحرك" });
+export type VoiceLearned = {
+  speak: "unknown" | "yes" | "no"; reason: VoiceReason | ""; at: number | null;
+  failed?: { at: number; kind?: string; reason?: VoiceReason | "" } | null; transcribe?: "unknown" | "yes" | "no";
+};
+
+const learnedVoice = (l: VoiceLearned): StatusReading | null => {
+  const yesAt = l.speak === "yes" ? l.at ?? 0 : -1;
+  if (l.failed && l.failed.at >= yesAt) {
+    const why = l.failed.kind === "unavailable" ? voiceReasonText(l.failed.reason || "") || "تعذّر النطق في المحرك الآن" : "وصل الصوت من المحرك لكن تعذّر تشغيله على هذا الجهاز";
+    return reading("degraded", l.failed.at, { detail: why });
+  }
+  if (l.speak === "yes") return reading("tested_ok", l.at, { detail: "نجح نطق حقيقي في هذه الجلسة" });
+  if (l.speak === "no") return reading("down", l.at, { detail: voiceReasonText(l.reason) || "تعذّر النطق في المحرك" });
+  return null;
+};
+const engineVoice = (snap: EngineSnapshot | null): StatusReading | null => {
   const s = snap?.status;
-  if (!snap || !s || !engineAnswered(s)) return reading("unknown", null);
+  if (!snap || !s || !engineAnswered(s)) return null;
   const reason = s.voice.reason ? voiceReasonText(s.voice.reason) : "";
   switch (s.voice.speak) {
     case "ready": return reading("configured", snap.at, { detail: "المحرك يعلن جاهزية الصوت؛ لم يُجرَّب نطق بعد" });
     case "degraded": return reading("degraded", snap.at, { detail: reason || "الصوت متقطع الآن" });
     case "mismatch": case "unconfigured": return reading("down", snap.at, { detail: reason || "الصوت غير مضبوط في المحرك" });
-    default: return reading("unknown", snap.at);
+    default: return null;
   }
+};
+
+/**
+ * The voice. Two kinds of evidence, the NEWER wins (a tie: the worse):
+ *  - what this app's own real calls showed (a reply that played through = tested_ok; a failed attempt = degraded; a configuration
+ *    failure = down), and
+ *  - what the engine says now. An engine «ready» is only a declaration: it never downgrades a newer real success and never hides a
+ *    real failure, but a NEWER engine «degraded / mismatch / unconfigured» beats an older real success.
+ * A real transcription failure folds in with worse(): the row is never better than «جزئي» while dictation to the engine is broken.
+ */
+export function readVoice(snap: EngineSnapshot | null, learned: VoiceLearned): StatusReading {
+  const eng = engineVoice(snap), lea = learnedVoice(learned);
+  let out: StatusReading;
+  if (!lea) out = eng ?? reading("unknown", null);
+  else if (!eng) out = lea;
+  else {
+    const engNegative = eng.level === "degraded" || eng.level === "down";
+    const engTime = eng.checkedAt ?? 0, leaTime = lea.checkedAt ?? 0;
+    if (engNegative) out = engTime > leaTime ? eng : engTime < leaTime ? lea : RANK[eng.level] <= RANK[lea.level] ? eng : lea;
+    else out = lea.level === "down" && engTime > leaTime ? eng : lea; // a «ready» declaration only replaces an OLDER configuration failure
+  }
+  if (learned.transcribe === "no" && RANK[out.level] > RANK.degraded) {
+    return reading("degraded", out.checkedAt, { detail: "تفريغ الصوت في المحرك غير متاح الآن" + (out.level === "tested_ok" ? "؛ النطق نجح" : "") });
+  }
+  return out;
 }
 
 /** Push registration of THIS device (lib/push-client getPushState); `null` = not read yet. Nothing is "tested" until the owner taps the test. */

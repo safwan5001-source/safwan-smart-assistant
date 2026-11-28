@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import Icon from "@/components/icon";
 import { Badge } from "@/components/ui";
 import { useAssistant } from "@/components/assistant-context";
-import { voiceAvailability, useVoiceAvailability } from "@/lib/basht-voice";
+import { useVoiceAvailability } from "@/lib/basht-voice";
 import { relative } from "@/lib/basht-control";
 import { engineStatusStore, useEngineStatus } from "@/lib/engine-status-store";
 import { watchPushState, type PushState } from "@/lib/push-client";
@@ -37,7 +37,7 @@ export function useReadings(withPush = false) {
 
   const server = readServer(status, checkedAt);
   const engine = readEngine(status, checkedAt, snap);
-  const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: voiceAvailability.speakCheckedAt(), playbackFailed: voiceAvailability.playbackFailure() });
+  const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: learned.speakAt, failed: learned.fail, transcribe: learned.transcribe });
   const pushReading = readPush(push.state, push.at);
   const approvals = readApprovals(snap);
   const recheck = () => { refresh(); void engineStatusStore.refresh({ force: true }); };
