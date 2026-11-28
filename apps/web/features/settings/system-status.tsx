@@ -38,7 +38,7 @@ export function useReadings(withPush = false) {
 
   const server = readServer(status, checkedAt);
   const engine = readEngine(status, checkedAt, snap);
-  const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: voiceAvailability.speakCheckedAt() });
+  const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: voiceAvailability.speakCheckedAt(), playbackFailed: voiceAvailability.playbackFailure() });
   const pushReading = readPush(push.state, push.at);
   const approvals = readApprovals(snap);
   const recheck = () => { refresh(); void engineStatusStore.refresh({ force: true }); if (withPush) void getPushState().then((state) => setPush({ state, at: Date.now() })); };

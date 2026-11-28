@@ -93,10 +93,14 @@ export function readEngine(app: AssistantStatus, appCheckedAt: number | null, sn
 }
 
 /** What a real voice call in this page session proved (lib/basht-voice availability), and when. */
-export type VoiceLearned = { speak: "unknown" | "yes" | "no"; reason: VoiceReason | ""; at: number | null };
+export type VoiceLearned = { speak: "unknown" | "yes" | "no"; reason: VoiceReason | ""; at: number | null; playbackFailed?: { at: number } | null };
 
-/** The voice: a real reply that played beats the engine's declaration; a real failure beats it too. */
+/**
+ * The voice: `yes` means a reply's audio really PLAYED THROUGH (a fetched blob proves nothing); a real engine failure beats the
+ * engine's declaration, and a playback that failed since (blocked autoplay, stall, decode) is `degraded`, never success.
+ */
 export function readVoice(snap: EngineSnapshot | null, learned: VoiceLearned): StatusReading {
+  if (learned.playbackFailed) return reading("degraded", learned.playbackFailed.at, { detail: "وصل الصوت من المحرك لكن تعذّر تشغيله على هذا الجهاز" });
   if (learned.speak === "yes") return reading("tested_ok", learned.at, { detail: "نجح نطق حقيقي في هذه الجلسة" });
   if (learned.speak === "no") return reading("down", learned.at, { detail: voiceReasonText(learned.reason) || "تعذّر النطق في المحرك" });
   const s = snap?.status;
