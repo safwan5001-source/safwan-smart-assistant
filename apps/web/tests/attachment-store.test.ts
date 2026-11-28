@@ -152,7 +152,7 @@ describe("attachment store (IndexedDB, own database)", () => {
     it("clearAttachments reports false when the wipe itself failed", async () => {
       const { f, store } = make();
       await store.put(rec("m1"));
-      f.failNext("DataError"); // not a lost connection: no retry
+      f.failNext("DataError", 2); // not a lost connection: the wipe is attempted twice and both fail
       expect(await clearAttachments(store)).toBe(false);
       expect(await clearAttachments(store)).toBe(true);
     });
