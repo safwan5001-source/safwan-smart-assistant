@@ -225,7 +225,6 @@ export function pendingRecords(rows: readonly MatchRow[], records: readonly Matc
     && !rows.some((r) => {
       if (r.role !== "user") return false;
       if (r.runId && c.runId) return r.runId === c.runId;
-      if (r.runId) return false; // stamped with a run of its own: not this record's row
       const k = opts.skewFor?.(c.sentAt) ?? null;
       const d = r.at - (c.sentAt + (k ?? 0));
       // (wider than the fallback's own window on purpose: a row that merely arrived late still stands for the record, no twin bubble)

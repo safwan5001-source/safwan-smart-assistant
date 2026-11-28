@@ -89,6 +89,11 @@ describe("matching a local photo copy to its history row", () => {
       expect(Object.fromEntries(r.matches)).toEqual({ rB: "B" }); // B by its run id only; A and rX are not paired
       expect(matchAttachments([row("old", "x", T0 - 11 * min, { runId: "run-old" }), row("r1", "x", T0 + 1000)], [rec("c1", "x", T0)]).matches.size).toBe(1); // a stamped row far away does not disable it
     });
+    it("S4b: a stamped owner row near the record switches the text fallback off for it, even when the only candidate row is unstamped (another device's)", () => {
+      const rows = [row("rX", "hi", T0 + 30_000), row("rS", "other", T0 + 5 * min, { runId: "run-s" })];
+      expect(matchAttachments(rows, [rec("A", "hi", T0)]).matches.size).toBe(0);
+      expect(matchAttachments([row("rX", "hi", T0 + 30_000)], [rec("A", "hi", T0)]).matches.size).toBe(1); // without the stamped row it is the usual 1:1
+    });
     it("F6/S9: a record WITHOUT a run id never matches by text a row that carries a (different) run id", () => {
       const r = matchAttachments([row("rZ", "", T0 + 20_000, { runId: "rz" })], [rec("X", "", T0, { runId: undefined, uncertain: true })]);
       expect(r.matches.size).toBe(0);
@@ -115,6 +120,11 @@ describe("matching a local photo copy to its history row", () => {
         expect(run([], f, c).matches.get("f")).toBe("cf");
         expect(run([pairAt(30 * min, -20_000)], f, c).matches.has("f")).toBe(false); // known skew −20 s → the row is 35 s before the corrected send
         expect(EARLY_KNOWN_MS).toBeLessThan(EARLY_UNKNOWN_MS);
+      });
+      it("S10b: an old pair with a SMALL skew is also ignored (only pairs within an hour of the record count)", () => {
+        const f = row("f", "ب", T0 + 95_000), c = rec("cf", "ب", T0);
+        expect(run([pairAt(48 * 3600_000, 40_000)], f, c).matches.has("f")).toBe(false);
+        expect(run([pairAt(50 * min, 40_000)], f, c).matches.get("f")).toBe("cf");
       });
       it("S10: an OLD pair (days ago, an 8-minute-off clock) does not shift today's matches; neither does a pair that is itself far off or that disagrees", () => {
         const f = row("f", "ب", T0 + 8 * min - 20_000), c = rec("cf", "ب", T0);
@@ -166,6 +176,10 @@ describe("matching a local photo copy to its history row", () => {
         const r = matchAttachments(rows, [a, rec("B", "hi", T0 + 30_000, { runEnd: "done" })]);
         expect([...r.matches]).toEqual([["rB", "B"]]);
         expect(r.fresh).toEqual([{ rowKey: "rB", clientMsgId: "B", via: "text", persist: true }]);
+      });
+      it("an uncertain record is never persisted, whatever its fields say", () => {
+        const r = matchAttachments([row("r1", "hi", T0 + 5000)], [rec("U", "hi", T0, { runId: undefined, uncertain: true, runEnd: "done" })]);
+        expect(r.fresh).toEqual([{ rowKey: "r1", clientMsgId: "U", via: "text", persist: false }]);
       });
       it("a send cut off by the network (uncertain, no run id) is tried only AFTER the confirmed records, 1:1 only, and never persisted", () => {
         const u = rec("U", "hi", T0, { runId: undefined, uncertain: true });
