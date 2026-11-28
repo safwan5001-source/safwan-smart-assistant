@@ -59,3 +59,8 @@
 .media-grid.n2 .thumb-state svg, .media-grid.n3 .thumb-state svg { display: none; }
 .media-grid.n3 .thumb-state { font-size: 12px; padding: 4px; gap: 4px; }
 .media-grid.n3 .thumb-state .btn { font-size: 12px; padding-inline: 6px; }
+/* three pictures per row are ~80px wide: all their tiles share one fixed 104px height (loading, ready and unavailable alike: nothing jumps)
+   so the label and the 44px retry button fit without clipping */
+.media-grid.n3 .media-thumb { aspect-ratio: auto; block-size: 104px; }
+.media-grid.n3 .thumb-state { inline-size: 100%; box-sizing: border-box; }
+.media-grid.n3 .thumb-state .btn { white-space: normal; line-height: 1.2; max-inline-size: 100%; padding-block: 2px; }
