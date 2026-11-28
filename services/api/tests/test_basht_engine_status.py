@@ -37,7 +37,7 @@ def test_the_full_status_is_reduced_to_the_fixed_shape(client, engine):
     replies["/status"] = GOOD
     j = get(client)
     assert j == {
-        "ok": True, "engine": {"version": "2026.5.1"}, "wrapper": {"commit": "0123456789ab"},
+        "ok": True, "ageMs": 0, "engine": {"version": "2026.5.1"}, "wrapper": {"commit": "0123456789ab"},
         "features": ["voice.speak.v2", "voice.transcribe.v1", "voice.status.v1", "signing.v1", "history.images.v1", "media.inline.v1", "media.guard.v1", "runs.runId.v1", "errorCode.rate_limited.v1"],
         "attachments": {"maxImages": 8, "maxImageBytes": 10485760, "maxTotalImageBytes": 19922944, "maxFileBytes": 26214400, "maxInlineBytes": 8388608},
         "link": {"state": "up", "pendingApprovals": 2}, "voice": {"speak": "ready"},
@@ -50,7 +50,7 @@ def test_the_full_status_is_reduced_to_the_fixed_shape(client, engine):
 def test_an_older_engine_without_the_new_fields_gets_only_what_it_has(client, engine):
     _, replies = engine
     replies["/status"] = {"ok": True, "link": {"state": "up"}, "voice": {"speak": "ready"}, "features": ["voice.speak.v2"]}
-    assert get(client) == {"ok": True, "wrapper": {"commit": None}, "features": ["voice.speak.v2"], "link": {"state": "up"}, "voice": {"speak": "ready"}}
+    assert get(client) == {"ok": True, "ageMs": 0, "wrapper": {"commit": None}, "features": ["voice.speak.v2"], "link": {"state": "up"}, "voice": {"speak": "ready"}}
 
 
 @pytest.mark.parametrize("bad", [None, [], "ok", 5, {"ok": False}, {"ok": False, "error": "x"}])
@@ -204,3 +204,30 @@ def test_a_failed_real_read_is_audited_once_as_unavailable_and_carries_no_engine
     get(client); get(client); call(client, "GET", "/internal/v1/basht/voice-status")
     assert len(_audits()) == 1 and _audits()[0]["status"] == "unavailable"
     assert "engine.internal" not in json.dumps(_audits()[0])
+
+
+def test_a_cache_hit_reports_how_old_the_engine_answer_really_is(client, engine, monkeypatch):
+    """The observation time travels with the answer (as an age, so no two clocks must agree): a re-fetch inside the 30 s cache is NOT newer evidence."""
+    _, replies = engine
+    replies["/status"] = GOOD
+    t = [1000.0]
+    monkeypatch.setattr(bc.time, "monotonic", lambda: t[0])
+    assert get(client)["ageMs"] == 0
+    t[0] = 1000.0 + 21.5
+    j = get(client)
+    assert j["ageMs"] == 21_500, "served from the cache: the age of the cached read"
+    assert j["link"] == {"state": "up", "pendingApprovals": 2}
+
+
+def test_the_age_is_capped_and_absent_when_the_read_failed(client, engine, monkeypatch):
+    from urllib.error import URLError
+    _, replies = engine
+    replies["/status"] = GOOD
+    t = [1000.0]
+    monkeypatch.setattr(bc.time, "monotonic", lambda: t[0])
+    monkeypatch.setattr(bc, "VOICE_STATUS_TTL", 10_000.0)
+    get(client)
+    t[0] = 1000.0 + 5000.0
+    assert get(client)["ageMs"] == bc.MAX_AGE_MS
+    bc.reset_limits(); replies["/status"] = URLError("down")
+    assert get(client) == {"ok": False}

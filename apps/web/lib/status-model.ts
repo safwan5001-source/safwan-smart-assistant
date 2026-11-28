@@ -99,7 +99,8 @@ export function readEngine(app: AssistantStatus, appCheckedAt: number | null, sn
   if (!engineAnswered(s)) {
     // asked, no answer: a fresh gateway answering while the app path does not is a partial failure, a dead one is down; with only an
     // older gateway reading nothing more than «could not read» can be said
-    if (!gwCounts) return reading("degraded", engAt, { detail: "تعذّرت قراءة حالة المحرك الآن" });
+    // (an older «offline» gateway reading that AGREES with the failed read is still evidence of a dead engine)
+    if (!gwCounts && gateway !== "down") return reading("degraded", engAt, { detail: "تعذّرت قراءة حالة المحرك الآن" });
     return reading(gateway === "reachable" || gateway === "degraded" ? "degraded" : "down", usedAt, { detail: gateway === "reachable" ? "المحرك يعمل لكن مسار التطبيق إليه لا يستجيب" : "تعذّر الوصول إلى محرك باشت" });
   }
   const link = s.link.state;

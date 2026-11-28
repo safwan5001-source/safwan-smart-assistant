@@ -20,7 +20,7 @@ describe("parseEngineStatus: the fixed, validated shape", () => {
   it("reads every field the engine sends and nothing else", () => {
     const s = parseEngineStatus(FULL);
     expect(s).toEqual({
-      reachable: true, version: "2026.5.1", commit: "0123456789ab", features: [...KNOWN_FEATURES],
+      reachable: true, ageMs: null, version: "2026.5.1", commit: "0123456789ab", features: [...KNOWN_FEATURES],
       attachments: { maxImages: 8, maxImageBytes: 10_485_760, maxTotalImageBytes: 19_922_944, maxFileBytes: 26_214_400, maxInlineBytes: 8_388_608 },
       link: { state: "up", pendingApprovals: 2 }, voice: { speak: "degraded", reason: "link_down" },
       runs: { active: 1, total: 4, approvalsPending: 2, complete: true }, signing: { mode: "optional", active: true },
@@ -99,6 +99,33 @@ describe("the wire shape the BFF sends: parse(wire(x)) is x", () => {
   });
 });
 
+describe("observation time: the age the API reports, end to end (review P2)", () => {
+  it("parse: ageMs is a bounded non-negative integer; anything else is unknown (null), never repaired", () => {
+    expect(parseEngineStatus({ ok: true, ageMs: 0 }).ageMs).toBe(0);
+    expect(parseEngineStatus({ ok: true, ageMs: 29_000 }).ageMs).toBe(29_000);
+    for (const v of [-1, 1.5, "5", null, true, 10 * 60 * 1000 + 1, NaN, [3]]) expect(parseEngineStatus({ ok: true, ageMs: v }).ageMs, String(v)).toBeNull();
+    expect(parseEngineStatus({ ok: true }).ageMs).toBeNull(); // an older API: unknown
+    expect(parseEngineStatus({ ok: false, ageMs: 5 }).ageMs).toBeNull();
+  });
+  it("the wire carries it and the parser reads it back", () => {
+    const s = parseEngineStatus({ ...FULL, ageMs: 12_000 });
+    expect(engineStatusWire(s).ageMs).toBe(12_000);
+    expect(parseEngineStatus(engineStatusWire(s))).toEqual(s);
+    expect("ageMs" in engineStatusWire(parseEngineStatus({ ok: true }))).toBe(false);
+  });
+  it("the store orders evidence by fetch time minus the reported age, never by the fetch time", async () => {
+    let t = 100_000;
+    const answers = [parseEngineStatus({ ok: true, ageMs: 0 }), parseEngineStatus({ ok: true, ageMs: 25_000 }), parseEngineStatus({ ok: true })];
+    const store = createEngineStatusStore({ fetch: async () => answers.shift() ?? null, now: () => t });
+    await store.refresh();
+    expect(store.get()).toMatchObject({ at: 100_000, observedAt: 100_000 });
+    t = 110_000; await store.refresh({ force: true });
+    expect(store.get()).toMatchObject({ at: 110_000, observedAt: 85_000 }); // a cache hit on the API: the answer is 25 s old
+    t = 120_000; await store.refresh({ force: true });
+    expect(store.get()).toMatchObject({ at: 120_000, observedAt: null }); // an older API: unknown, not "now"
+  });
+});
+
 describe("shared contracts", () => {
   it("the voice reasons equal the browser client's list and the shared contract file", () => {
     expect([...ENGINE_VOICE_REASONS]).toEqual([...VOICE_REASONS]);
@@ -139,6 +166,12 @@ describe("GET /api/basht/engine-status (BFF)", () => {
     expect(JSON.stringify(body)).not.toMatch(/SECRET|\/data|engine\.internal|10\.0\.0\.1|agent:main|debug/);
     expect(backend.mock.calls[0][0]).toMatchObject({ path: "/internal/v1/basht/engine-status", method: "GET" });
   });
+  it("the observation age rides through the BFF (validated), and a bogus one is dropped", async () => {
+    backend.mockResolvedValueOnce(ok(200, { ...FULL, ageMs: 21_500 }));
+    expect((await (await get(authed)).json()).ageMs).toBe(21_500);
+    backend.mockResolvedValueOnce(ok(200, { ...FULL, ageMs: "fresh" }));
+    expect("ageMs" in (await (await get(authed)).json())).toBe(false);
+  });
   it("any failure on the way is 200 {ok:false}, never an error to the UI", async () => {
     for (const answer of [{ kind: "unreachable" }, { kind: "unconfigured" }, { kind: "unavailable", status: 503 }, { kind: "invalid_response" }, ok(400, {}), ok(200, null), ok(200, { ok: false }), ok(200, "x")]) {
       backend.mockResolvedValueOnce(answer);
@@ -166,7 +199,7 @@ describe("browser client + store: no polling, cached", () => {
     const fetch = vi.fn(async () => parseEngineStatus({ ok: true }));
     const store = createEngineStatusStore({ fetch, now: () => t });
     expect(ENGINE_STATUS_MIN_MS).toBe(30_000);
-    expect(store.get()).toEqual({ status: null, at: 0 });
+    expect(store.get()).toEqual({ status: null, at: 0, observedAt: null });
     await Promise.all([store.refresh(), store.refresh(), store.refresh()]);
     expect(fetch).toHaveBeenCalledTimes(1);
     t += 29_999; await store.refresh();
@@ -182,10 +215,10 @@ describe("browser client + store: no polling, cached", () => {
     const seen = vi.fn();
     store.subscribe(seen);
     await store.refresh();
-    expect(store.get()).toEqual({ status: null, at: 5 });
+    expect(store.get()).toEqual({ status: null, at: 5, observedAt: null });
     expect(seen).toHaveBeenCalled();
     store.reset();
-    expect(store.get()).toEqual({ status: null, at: 0 });
+    expect(store.get()).toEqual({ status: null, at: 0, observedAt: null });
   });
   it("there is no timer in the store module (no polling storm; hidden pages cannot poll)", () => {
     const src = readFileSync(resolve(__dirname, "../lib/engine-status-store.ts"), "utf8");

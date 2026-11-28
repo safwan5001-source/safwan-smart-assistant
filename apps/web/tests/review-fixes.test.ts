@@ -5,7 +5,7 @@ import { headerModel } from "@/lib/basht-model";
 import { parseEngineStatus, unknownEngineStatus } from "@/lib/engine-status";
 import { createEngineStatusStore } from "@/lib/engine-status-store";
 import { attachHealthRefresh, recheckAll, startVisibleTick } from "@/lib/status-refresh";
-import { readApprovals, readEngine } from "@/lib/status-model";
+import { readApprovals, readEngine, readVoice } from "@/lib/status-model";
 import { claudeBadge } from "@/features/settings/claude-settings";
 
 const T0 = 1_800_000_000_000;
@@ -36,6 +36,9 @@ describe("I1: the gateway half and the engine half of «جاهزية باشت» 
     expect(r).toMatchObject({ level: "degraded", checkedAt: T0 + 600_000, detail: "تعذّرت قراءة حالة المحرك الآن" });
     const fresh = readEngine(online("connected"), T0 + 600_000, { status: unknownEngineStatus(), at: T0 + 600_000 });
     expect(fresh.detail).toContain("مسار التطبيق");
+  });
+  it("a failed engine read with an older «offline» gateway reading that agrees is down, not a vague «could not read»", () => {
+    expect(readEngine(online("offline"), T0, { status: unknownEngineStatus(), at: T0 + 5000 })).toMatchObject({ level: "down", detail: "تعذّر الوصول إلى محرك باشت" });
   });
   it("«الخادم» going offline is a fresh health reading, so the engine row turns unknown (not a stale blame)", () => {
     expect(readEngine({ server: "offline" }, T0 + 700_000, { status: unknownEngineStatus(), at: T0 + 600_000 }).level).toBe("unknown");
@@ -90,6 +93,19 @@ describe("I1 hook-level: the health re-reads on the same trigger, throttled, and
   });
 });
 
+describe("Minor 1: the label tick does not start in a hidden page", () => {
+  it("opened hidden: no timer until the page becomes visible", () => {
+    const handlers = new Map<string, () => void>();
+    const doc = { visibilityState: "hidden", addEventListener: (t: string, f: () => void) => handlers.set(t, f), removeEventListener: (t: string) => handlers.delete(t) };
+    const timers: unknown[] = [];
+    const stop = startVisibleTick(() => {}, { doc, setTimer: () => { const h = {}; timers.push(h); return h; }, clearTimer: () => {} });
+    expect(timers).toHaveLength(0);
+    doc.visibilityState = "visible"; handlers.get("visibilitychange")!();
+    expect(timers).toHaveLength(1);
+    stop();
+  });
+});
+
 describe("I3: approvals from an incomplete run list", () => {
   it("0 pending with runs.complete false is unknown, never an all-clear", () => {
     expect(readApprovals({ status: up({ runs: { approvalsPending: 0, complete: false } }), at: 1 })).toMatchObject({ level: "unknown" });
@@ -99,6 +115,9 @@ describe("I3: approvals from an incomplete run list", () => {
   });
   it("a complete list is as before", () => {
     expect(readApprovals({ status: up({ runs: { approvalsPending: 0, complete: true } }), at: 1 })).toMatchObject({ level: "reachable", label: "لا شيء" });
+  });
+  it("a complete run list whose approvals could not be counted is unknown, and the link's own 0 is never substituted", () => {
+    expect(readApprovals({ status: up({ link: { state: "up", pendingApprovals: 0 }, runs: { approvalsPending: null, complete: true } }), at: 1 }).level).toBe("unknown");
   });
   it("when `runs` is there but could not count approvals, the link's own (maybe unsynced) 0 is never used instead", () => {
     expect(readApprovals({ status: up({ link: { state: "up", pendingApprovals: 0 }, runs: { approvalsPending: null, complete: false } }), at: 1 }).level).toBe("unknown");
@@ -163,7 +182,7 @@ describe("Minor 3: the store", () => {
     const f = vi.fn().mockImplementationOnce(() => new Promise((r) => { res = r; })).mockResolvedValue(up());
     const st = createEngineStatusStore({ fetch: f as never, now: () => 1 });
     const p = st.refresh(); st.reset(); res(up()); await p;
-    expect(st.get()).toEqual({ status: null, at: 0 });
+    expect(st.get()).toEqual({ status: null, at: 0, observedAt: null });
     await st.refresh(); // and the store is usable again right away
     expect(f).toHaveBeenCalledTimes(2);
   });
@@ -176,5 +195,35 @@ describe("Minor 7: the legacy Claude badge", () => {
     expect(claudeBadge("ready", true, "ok").tone).toBe("ok");
     expect(claudeBadge("ready", true, "fail").tone).toBe("warn");
     expect(claudeBadge("off", false, "idle")).toMatchObject({ tone: undefined, label: "غير مفعّل" });
+  });
+});
+
+describe("review P2: a cached engine answer re-fetched after a real playback is not newer evidence", () => {
+  const T = 1_800_000_000_000;
+  const degraded = parseEngineStatus({ ok: true, link: { state: "up" }, voice: { speak: "degraded", reason: "link_down" } });
+  const success = { speak: "yes" as const, reason: "" as const, at: T + 10_000 };
+  it("engine degraded (observed T) -> speech succeeds (T+10 s) -> forced recheck at T+20 s gets the CACHED answer (age 20 s): still tested_ok", () => {
+    const snap = { status: degraded, at: T + 20_000, observedAt: T + 20_000 - 20_000 };
+    expect(readVoice(snap, success).level).toBe("tested_ok");
+  });
+  it("without the fix's observation time (fetch time used as evidence time) the stale failure would look newer: the old reading is degraded", () => {
+    const wrong = { status: degraded, at: T + 20_000, observedAt: T + 20_000 };
+    expect(readVoice(wrong, success).level).toBe("degraded");
+  });
+  it("an answer of unknown age (an older API, observedAt null/missing) never overrides a newer playback success", () => {
+    expect(readVoice({ status: degraded, at: T + 20_000, observedAt: null }, success).level).toBe("tested_ok");
+    expect(readVoice({ status: degraded, at: T + 20_000 }, success).level).toBe("tested_ok");
+    const bad = parseEngineStatus({ ok: true, voice: { speak: "unconfigured" } });
+    expect(readVoice({ status: bad, at: T + 20_000 }, success).level).toBe("tested_ok");
+  });
+  it("a genuinely newer engine failure (observed after the playback) still wins", () => {
+    expect(readVoice({ status: degraded, at: T + 20_000, observedAt: T + 15_000 }, success).level).toBe("degraded");
+  });
+  it("with no real playback evidence at all, an unknown-age engine statement is still the only data and is shown", () => {
+    expect(readVoice({ status: degraded, at: T, observedAt: null }, { speak: "unknown", reason: "", at: null }).level).toBe("degraded");
+  });
+  it("the displayed check time is the observation when known (the cached answer says how old it really is)", () => {
+    const r = readVoice({ status: degraded, at: T + 20_000, observedAt: T }, { speak: "unknown", reason: "", at: null });
+    expect(r.checkedAt).toBe(T);
   });
 });
