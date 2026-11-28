@@ -92,13 +92,14 @@ export function readEngine(app: AssistantStatus, appCheckedAt: number | null, sn
   // The two sources are read at different times (the public health at load / on focus, the engine's own status on its own 30 s clock).
   // The gateway half only counts while it is AT LEAST AS NEW as the engine read: an older «starting» / «offline» never degrades a
   // fresher signed read, and the row is stamped with the OLDER of the sources it actually used.
+  const engAt = shownAt(snap);
   const gwAt = appCheckedAt ?? 0;
-  const gwCounts = gwAt >= snap.at;
-  const usedAt = gwCounts ? Math.min(snap.at, gwAt) : snap.at;
+  const gwCounts = gwAt >= engAt;
+  const usedAt = gwCounts ? Math.min(engAt, gwAt) : engAt;
   if (!engineAnswered(s)) {
     // asked, no answer: a fresh gateway answering while the app path does not is a partial failure, a dead one is down; with only an
     // older gateway reading nothing more than «could not read» can be said
-    if (!gwCounts) return reading("degraded", snap.at, { detail: "تعذّرت قراءة حالة المحرك الآن" });
+    if (!gwCounts) return reading("degraded", engAt, { detail: "تعذّرت قراءة حالة المحرك الآن" });
     return reading(gateway === "reachable" || gateway === "degraded" ? "degraded" : "down", usedAt, { detail: gateway === "reachable" ? "المحرك يعمل لكن مسار التطبيق إليه لا يستجيب" : "تعذّر الوصول إلى محرك باشت" });
   }
   const link = s.link.state;
@@ -136,9 +137,9 @@ const engineVoice = (snap: EngineSnapshot | null): StatusReading | null => {
   if (!snap || !s || !engineAnswered(s)) return null;
   const reason = s.voice.reason ? voiceReasonText(s.voice.reason) : "";
   switch (s.voice.speak) {
-    case "ready": return reading("configured", snap.at, { detail: "المحرك يعلن جاهزية الصوت؛ لم يُجرَّب نطق بعد" });
-    case "degraded": return reading("degraded", snap.at, { detail: reason || "الصوت متقطع الآن" });
-    case "mismatch": case "unconfigured": return reading("down", snap.at, { detail: reason || "الصوت غير مضبوط في المحرك" });
+    case "ready": return reading("configured", shownAt(snap), { detail: "المحرك يعلن جاهزية الصوت؛ لم يُجرَّب نطق بعد" });
+    case "degraded": return reading("degraded", shownAt(snap), { detail: reason || "الصوت متقطع الآن" });
+    case "mismatch": case "unconfigured": return reading("down", shownAt(snap), { detail: reason || "الصوت غير مضبوط في المحرك" });
     default: return null;
   }
 };
@@ -158,7 +159,9 @@ export function readVoice(snap: EngineSnapshot | null, learned: VoiceLearned): S
   else if (!eng) out = lea;
   else {
     const engNegative = eng.level === "degraded" || eng.level === "down";
-    const engTime = eng.checkedAt ?? 0, leaTime = lea.checkedAt ?? 0;
+    // evidence is ordered by when the ENGINE answered, never by when this app asked: a cached answer re-fetched after a real playback
+    // is old evidence, and an answer of unknown age (an older API) is the oldest of all: it can never override a real event
+    const engTime = snap?.observedAt ?? -1, leaTime = lea.checkedAt ?? 0;
     if (engNegative) out = engTime > leaTime ? eng : engTime < leaTime ? lea : RANK[eng.level] <= RANK[lea.level] ? eng : lea;
     else out = lea.level === "down" && engTime > leaTime ? eng : lea; // a «ready» declaration only replaces an OLDER configuration failure
   }
@@ -190,13 +193,13 @@ export function readPush(state: PushState | "loading" | null, checkedAt: number 
 export function readApprovals(snap: EngineSnapshot | null): StatusReading {
   const s = snap?.status;
   if (!snap || !s || !engineAnswered(s)) return reading("unknown", null);
-  if (s.link.state === "down" || s.link.state === "connecting") return reading("degraded", snap.at, { detail: "الاتصال بالمحرك متقطع؛ لا يمكن قراءة الموافقات الآن" });
+  if (s.link.state === "down" || s.link.state === "connecting") return reading("degraded", shownAt(snap), { detail: "الاتصال بالمحرك متقطع؛ لا يمكن قراءة الموافقات الآن" });
   const n = s.runs ? s.runs.approvalsPending : s.link.pendingApprovals;
-  if (s.link.state !== "up" || n === null || n === undefined) return reading("unknown", snap.at);
+  if (s.link.state !== "up" || n === null || n === undefined) return reading("unknown", shownAt(snap));
   const partial = s.runs !== null && !s.runs.complete;
   if (partial) {
-    return n === 0 ? reading("unknown", snap.at, { detail: "قراءة المحرك غير مكتملة؛ لا يمكن الجزم بخلوّ الموافقات" })
-      : reading("reachable", snap.at, { label: `على الأقل ${n}`, detail: "قراءة المحرك غير مكتملة؛ افتح الموافقات للقرار" });
+    return n === 0 ? reading("unknown", shownAt(snap), { detail: "قراءة المحرك غير مكتملة؛ لا يمكن الجزم بخلوّ الموافقات" })
+      : reading("reachable", shownAt(snap), { label: `على الأقل ${n}`, detail: "قراءة المحرك غير مكتملة؛ افتح الموافقات للقرار" });
   }
-  return reading("reachable", snap.at, { label: n === 0 ? "لا شيء" : `${n} بانتظارك`, detail: n === 0 ? "لا موافقات معلّقة" : "افتح الموافقات للقرار" });
+  return reading("reachable", shownAt(snap), { label: n === 0 ? "لا شيء" : `${n} بانتظارك`, detail: n === 0 ? "لا موافقات معلّقة" : "افتح الموافقات للقرار" });
 }

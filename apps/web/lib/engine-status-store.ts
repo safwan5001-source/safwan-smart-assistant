@@ -12,7 +12,7 @@ import type { EngineStatus } from "./engine-status";
 import type { EngineSnapshot } from "./status-model";
 
 export const ENGINE_STATUS_MIN_MS = 30_000;
-const NONE: EngineSnapshot = { status: null, at: 0 };
+const NONE: EngineSnapshot = { status: null, at: 0, observedAt: null };
 
 export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatus | null>; now?: () => number; minIntervalMs?: number }) {
   const now = deps.now ?? Date.now;
@@ -34,7 +34,9 @@ export function createEngineStatusStore(deps: { fetch: () => Promise<EngineStatu
         let s: EngineStatus | null;
         try { s = await deps.fetch(); } catch { s = null; }
         if (mine !== epoch) return state; // a reset happened meanwhile: this answer belongs to the old session
-        state = { status: s, at: now() };
+        const t = now();
+        // when the engine really answered: now minus the age the API reports (a cache hit is older than this fetch); unknown stays unknown
+        state = { status: s, at: t, observedAt: s && s.reachable && s.ageMs !== null ? t - s.ageMs : null };
         fetched = s !== null; // "no data" (signed out) must not block the re-read right after sign-in for 30 s
         subs.forEach((f) => f());
         return state;
