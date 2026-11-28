@@ -161,6 +161,7 @@ describe("per-owner scope of the device-local photo store", () => {
       const q = localStorageRegistry(full()); q.add(A); expect(q.failures!()).toBe(1);
       const n = localStorageRegistry(undefined); n.add(A); expect(n.failures!()).toBe(1);
       const c = localStorageRegistry(storage({ getItem: () => "[1" })); c.read(); expect(c.failures!()).toBe(1);
+      const w = localStorageRegistry(storage({ getItem: () => '{"not":"a list"}' })); expect(w.read()).toEqual([]); expect(w.failures!()).toBe(1); // valid JSON of the wrong shape
     });
   });
 
