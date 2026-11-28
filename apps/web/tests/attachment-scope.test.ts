@@ -312,3 +312,66 @@ describe("P2 (erase-all keeps the owner known): a photo sent right after «erase
     expect(idb.dbs.size).toBe(0);                                  // nothing was written anywhere
   });
 });
+
+describe("P2 (blocked site data): reading the storage globals can THROW — nothing may throw out of a render or an effect", () => {
+  const block = (name: "localStorage" | "indexedDB") => {
+    const had = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { configurable: true, get() { throw new DOMException("denied", "SecurityError"); } });
+    return () => { if (had) Object.defineProperty(globalThis, name, had); else delete (globalThis as Record<string, unknown>)[name]; };
+  };
+  const fresh = async () => { const { vi } = await import("vitest"); vi.resetModules(); return { store: await import("@/lib/attachment-store"), mgr: await import("@/lib/local-attachments") }; };
+
+  it("a throwing localStorage getter: the default registry is built without throwing, reads as empty, and counts a scope it cannot record", async () => {
+    const restore = block("localStorage");
+    try {
+      const { store } = await fresh();
+      expect(store.browserLocalStorage()).toBeUndefined();
+      const reg = store.localStorageRegistry();                     // the default argument reads the global: it must not throw
+      expect(reg.read()).toEqual([]);
+      reg.add("0123456789abcdef");
+      expect(reg.failures!()).toBe(1);
+    } finally { restore(); }
+  });
+
+  it("the app's manager (what every chat render calls) is created without throwing when localStorage OR indexedDB is blocked, and works memory-only", async () => {
+    for (const blocked of [["localStorage"], ["indexedDB"], ["localStorage", "indexedDB"]] as const) {
+      const restores = blocked.map(block);
+      try {
+        const { store, mgr } = await fresh();
+        const m = mgr.localAttachments();                           // = useLocalAttachments()'s first call on every render
+        expect(m.getSnapshot()).toEqual([]);
+        setOwnerScope(A);
+        m.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+        await m.load(); await settle();
+        expect(m.getSnapshot().map((e) => e.clientMsgId)).toEqual(["c1"]);   // the photo still shows, from memory
+        expect(await m.usage()).toBeNull();                         // (this test environment has no real IndexedDB: nothing to read)
+        expect(typeof store.attachmentStore().scope).toBe("function");
+        expect(await m.clearAll()).toBe(true);                      // no IndexedDB at all: nothing could have been stored
+      } finally { restores.forEach((r) => r()); resetOwnerScopeForTests(); }
+    }
+  });
+
+  it("the settings section's reads and the sign-out wipe do not throw either", async () => {
+    const restores = [block("localStorage"), block("indexedDB")];
+    try {
+      const { mgr } = await fresh();
+      const { readDevicePhotos } = await import("@/lib/device-photos");
+      expect((await readDevicePhotos(mgr.localAttachments(), true)).status).toBe("unreadable");
+      await expect(mgr.localAttachments().clearAll()).resolves.toBe(true);
+    } finally { restores.forEach((r) => r()); }
+  });
+
+  it("wipe honesty under a blocked localStorage: IndexedDB works but no registry can be kept → the wipe wipes what it knows and reports it could not be sure; nothing stored → success", async () => {
+    const restore = block("localStorage");
+    try {
+      const { store } = await fresh();
+      const idb = fakeIDB(); idb.supportsDatabases = false;
+      const scoped = store.createScopedStore(idb as unknown as IDBFactory);   // the DEFAULT registry, built while the global throws
+      scoped.setScope(A); await scoped.put(rec("a1"));
+      expect(await store.clearAttachments(scoped)).toBe(false);
+      expect(await ids(scoped)).toEqual([]);
+      const idle = store.createScopedStore(fakeIDB() as unknown as IDBFactory);
+      expect(await store.clearAttachments(idle)).toBe(true);
+    } finally { restore(); }
+  });
+});

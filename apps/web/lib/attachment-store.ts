@@ -174,7 +174,18 @@ export type ScopeRegistry = {
   failures?(): number;
 };
 const REGISTRY_KEY = "basht.attachment.scopes";
-export function localStorageRegistry(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = typeof localStorage === "undefined" ? undefined : (() => { try { return localStorage; } catch { return undefined; } })()): ScopeRegistry {
+/**
+ * The browser's localStorage, or undefined. Merely READING the global can throw (SecurityError when site data is blocked), so the whole
+ * lookup — the `typeof` and the property read — is guarded: unreadable storage is simply "unavailable", never an exception.
+ */
+export function browserLocalStorage(): Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined {
+  try { return typeof localStorage === "undefined" ? undefined : localStorage; } catch { return undefined; }
+}
+/** The browser's IndexedDB factory, or undefined (absent, or the global itself throws under a blocking policy). */
+export function browserIndexedDB(): IDBFactory | undefined {
+  try { return typeof indexedDB === "undefined" ? undefined : indexedDB; } catch { return undefined; }
+}
+export function localStorageRegistry(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = browserLocalStorage()): ScopeRegistry {
   let failed = 0;
   const read = (): string[] => {
     try {
@@ -272,7 +283,7 @@ export function createScopedStore(factory: IDBFactory | undefined, registry: Sco
 
 let shared: ScopedAttachmentStore | null = null;
 /** The app's store (this browser's IndexedDB, one database per owner scope; every call reports "absent" where there is none). */
-export const attachmentStore = (): ScopedAttachmentStore => (shared ??= createScopedStore(typeof indexedDB === "undefined" ? undefined : indexedDB));
+export const attachmentStore = (): ScopedAttachmentStore => (shared ??= createScopedStore(browserIndexedDB()));
 /**
  * For sign-out: wipes the local photo copies of EVERY owner scope. True only when nothing is left: the wipe ran, or this browser has no
  * IndexedDB at all (nothing could have been stored). A database that merely failed to OPEN may still hold photos, so that is NOT
