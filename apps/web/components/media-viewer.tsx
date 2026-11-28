@@ -155,7 +155,7 @@ function ViewerBody({ items, index, onIndex, onClose }: { items: ViewerItem[]; i
         <button type="button" className="vw-btn" onClick={onClose} aria-label={VIEWER_TEXT.close}><Icon name="close" size={22} /></button>
         <div className="vw-title">
           <strong dir="auto">{item.name}</strong>
-          {many && <small className="num" aria-live="polite">{index + 1} / {items.length}</small>}
+          {many && <small className="num" dir="ltr" aria-live="polite">{index + 1} / {items.length}</small>}
         </div>
         <div className="vw-actions">
           {item.kind === "pdf" && <button type="button" className="vw-btn" disabled={!blob} onClick={() => say(openFile(blob))} aria-label={VIEWER_TEXT.open}><Icon name="pdf" size={22} /></button>}
