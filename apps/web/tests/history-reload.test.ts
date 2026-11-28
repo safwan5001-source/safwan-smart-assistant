@@ -41,7 +41,8 @@ describe("a picture's retry never leaves the search window (it was a batch-2 add
     expect(src).toMatch(/const reload = useCallback\(async \(\) => \{[\s\S]*?reloadCurrentView\(\{ windowed: windowedRef\.current, anchor: windowAnchor\.current/);
     expect(src).not.toMatch(/const reload = useCallback\(\(\) => \{ if \(keyRef\.current\) void load/);
     expect(src).toContain("windowedRef.current = true; windowAnchor.current = messageId;");
-    expect(src).toMatch(/leftWindow\) \{ windowedRef\.current = false; windowAnchor\.current = null;/);
+    expect(src).toMatch(/if \(next\.leftWindow\) windowAnchor\.current = null;/);
+    expect(src).toMatch(/olderRowsRef\.current = \[\]; windowAnchor\.current = null; \/\/ a new conversation on screen/);
     // a window refresh keeps the focus: nothing in reload touches it
     const body = src.slice(src.indexOf("const reload = useCallback"), src.indexOf("const backToLatest"));
     expect(body).not.toContain("setFocusId"); expect(body).not.toContain("viewGen.current++");

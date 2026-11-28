@@ -119,7 +119,8 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const [list, page] = await Promise.all([bashtClient.sessions(), bashtClient.historyPage(k)]);
       if (!current()) return;
       const next = rowsAfterLoad(windowedRef.current, olderRowsRef.current, messagesRef.current, page.messages);
-      if (next.leftWindow) { windowedRef.current = false; windowAnchor.current = null; viewGen.current++; setFocusId(null); }
+      if (next.leftWindow) { windowedRef.current = false; viewGen.current++; setFocusId(null); }
+      if (next.leftWindow) windowAnchor.current = null; // the window (and what it was opened around) is gone
       if (next.olderRows !== olderRowsRef.current) { olderRowsRef.current = next.olderRows; setOlderRows(next.olderRows); }
       setSessions(list); setMessages(page.messages); setWindowed(false);
       // older rows already paged in stay above; the cursor continues from them, else from this page
@@ -182,9 +183,9 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
 
   useEffect(() => {
     if (gate !== "open" || !key) return;
-    messagesRef.current = null; olderRowsRef.current = []; // a new conversation on screen: nothing to reconcile with
+    messagesRef.current = null; olderRowsRef.current = []; windowAnchor.current = null; // a new conversation on screen: nothing to reconcile with
     viewGen.current++;
-    windowedRef.current = false; windowAnchor.current = null;
+    windowedRef.current = false;
     setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
