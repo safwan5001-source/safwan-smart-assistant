@@ -233,8 +233,12 @@ def reset_limits() -> None:
 def _run_view(j: dict) -> dict:
     from .basht_media import steps  # B1 tool progress (names only)
     status = j.get("status") if j.get("status") in ("running", "done", "error", "stopped") else "error"
-    return {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error",
-            "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs")), "steps": steps(j.get("steps"))}
+    out = {"run_id": _text(j.get("runId"), 64), "status": status, "text": _text(j.get("text")), "failed": status == "error",
+           "first_token_ms": _int(j.get("firstTokenMs")), "total_ms": _int(j.get("totalMs")), "steps": steps(j.get("steps"))}
+    code = j.get("errorCode")  # additive: why a run failed ("rate_limited" …); a short lowercase token only, never engine text
+    if status == "error" and isinstance(code, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,31}", code):
+        out["error_code"] = code
+    return out
 
 
 @router.get("/sessions")

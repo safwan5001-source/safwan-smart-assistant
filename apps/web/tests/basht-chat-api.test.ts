@@ -129,6 +129,12 @@ describe("BASHT chat door: model control (M)", () => {
     backend.mockResolvedValueOnce(ok(400, { detail: { code: "<script>" } }));
     expect(await (await call("POST", "model", { ...authed, body: { model: "x/y" } })).json()).toEqual({ error: "bad_request" });
   });
+  it("a failed run carries a short error code (rate_limited) and nothing else from the engine", async () => {
+    backend.mockResolvedValueOnce(ok(200, { status: "error", text: "x", failed: true, error_code: "rate_limited", first_token_ms: null, total_ms: null }));
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "error", text: "x", failed: true, errorCode: "rate_limited", firstTokenMs: null, totalMs: null, steps: [] });
+    backend.mockResolvedValueOnce(ok(200, { status: "error", text: "x", failed: true, error_code: "<script>alert(1)</script>" }));
+    expect(await (await call("GET", `runs/${RUN}`, authed)).json()).not.toHaveProperty("errorCode");
+  });
   it("a run carries the bridge-measured latency", async () => {
     backend.mockResolvedValueOnce(ok(200, { status: "done", text: "x", failed: false, first_token_ms: 640, total_ms: 2100 }));
     expect(await (await call("GET", `runs/${RUN}`, authed)).json()).toEqual({ status: "done", text: "x", failed: false, firstTokenMs: 640, totalMs: 2100, steps: [] });

@@ -10,6 +10,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
 import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
+import { localAttachments, toStoredImage } from "@/lib/local-attachments";
+import { RATE_LIMIT_TEXT, runErrorRetryable, runErrorText } from "@/lib/run-error";
 
 const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
@@ -35,8 +37,9 @@ const settle = (id: string, r: RunEnd) => {
 let lastTurn: { text: string; images: PreparedImage[] } | null = null;
 
 export type BashtGate = "checking" | "disabled" | "locked" | "open";
-export type LiveImage = { name: string; previewUrl: string };
-export type BashtLive = { prompt: string; text: string; at: number; images?: LiveImage[]; steps?: BashtStep[] };
+/** `blob`: the same bytes that were sent (the viewer shares/downloads them without fetching a blob: URL). */
+export type LiveImage = { name: string; previewUrl: string; blob?: Blob };
+export type BashtLive = { prompt: string; text: string; at: number; images?: LiveImage[]; steps?: BashtStep[]; runId?: string };
 /** Where older rows come from: an `earlier` cursor (also across «محادثة جديدة») or the engine's offset paging. */
 type Older = { before: string } | { offset: number } | null;
 const olderOf = (p: { earlier: string | null; hasMore: boolean; nextOffset: number | null }): Older =>
@@ -130,7 +133,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const poll = useCallback(async (run: ActiveRun) => {
     const gen = ++pollGen;
     const mine = () => gen === pollGen && activeRun?.id === run.id;
-    setLive({ prompt: run.prompt, text: "", at: run.at, images: run.images });
+    setLive({ prompt: run.prompt, text: "", at: run.at, images: run.images, runId: run.id });
     // the finished turn belongs to the App session: refresh it only if that is still the conversation on screen
     // the live bubble stays until the refreshed history is on screen, so the reply never blinks out in between
     const finish = async () => { if (keyRef.current === APP_SESSION_KEY) await load(APP_SESSION_KEY, true); setLive(null); };
@@ -140,17 +143,19 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
         const r = await bashtClient.run(run.id);
         if (!mine()) return;
         if (first && r.text) { first = false; setAgentPhase("responding"); }
-        setLive({ prompt: run.prompt, text: r.text, at: run.at, images: run.images, steps: r.steps ?? [] });
+        setLive({ prompt: run.prompt, text: r.text, at: run.at, images: run.images, steps: r.steps ?? [], runId: run.id });
         if (r.status !== "running") {
           activeRun = null;
           // a finished turn needs its photo previews no more (its bubble is replaced by the engine's copy below); a failed or
           // stopped one keeps them for «إعادة المحاولة»
-          const finished = r.status === "done" ? lastTurn : null;
-          if (r.status === "done") lastTurn = null;
+          // (a rate limit is a subscription quota: a one-tap resend would only hit it again, so nothing is kept for a retry either)
+          const limited = r.status === "error" && !runErrorRetryable(r);
+          const finished = r.status === "done" || limited ? lastTurn : null;
+          if (r.status === "done" || limited) lastTurn = null;
           setFailedTurn(r.status !== "done" && lastTurn ? { text: lastTurn.text, images: lastTurn.images.length } : null);
-          settle(run.id, { status: r.status, text: r.text });
+          settle(run.id, { status: r.status, text: limited ? RATE_LIMIT_TEXT : r.text });
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
-          if (r.status === "error") setError("تعذّر إكمال الرد من باشت. أعد المحاولة.");
+          if (r.status === "error") setError(runErrorText(r));
           if (r.status === "stopped") setError("أُوقف الرد.");
           await finish();
           if (finished) turnPreviews.release(urlsOf(finished));
@@ -202,18 +207,27 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   /** Starts one owner turn and returns its run id. Throws BashtError (Arabic message) if the engine did not accept it — the caller
    *  keeps the draft. B2: `images` (already downscaled, EXIF-free) ride on the same turn. */
   const send = useCallback(async (text: string, images: PreparedImage[] = []) => {
+    // R5: the photos stay on this device too (IndexedDB; memory-only where that is unavailable) so the message keeps its picture
+    // after the history reloads. Registered before the request (a page killed mid-send may still have reached the engine) and
+    // forgotten if the engine refuses the turn.
+    const mgr = images.length ? localAttachments() : null;
+    const clientMsgId = mgr ? mgr.newId() : null;
+    const stored = mgr ? images.map(toStoredImage) : [];
+    if (mgr && clientMsgId) mgr.register({ clientMsgId, text, sentAt: Date.now(), images: stored });
     try {
       const id = images.length ? await bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) : await bashtClient.send(text);
+      if (mgr && clientMsgId) mgr.attachRun(clientMsgId, id);
       setError(""); setFailedTurn(null); setFocusId(null);
       setAgentPhase("thinking");
       const prev = lastTurn;
       lastTurn = { text, images };
       turnPreviews.adopt(urlsOf(lastTurn));
       if (prev) turnPreviews.release(urlsOf(prev), urlsOf(lastTurn)); // a newer turn replaced it (a retry keeps the same photos)
-      activeRun = { id, prompt: text, at: Date.now(), images: images.map((i) => ({ name: i.name, previewUrl: i.previewUrl })) };
+      activeRun = { id, prompt: text, at: Date.now(), images: images.map((i, k) => ({ name: i.name, previewUrl: i.previewUrl, blob: stored[k]?.blob })) };
       void poll(activeRun);
       return id;
     } catch (e) {
+      if (mgr && clientMsgId) mgr.discard(clientMsgId);
       if (e instanceof BashtError && e.code === "unauthorized") setGate("locked");
       throw e instanceof BashtError ? e : new BashtError("unavailable");
     }
@@ -293,11 +307,13 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); requestFocus(messageId);
     } catch (e) { setError(errText(e)); }
   }, [olderRows, messages, setOlder, requestFocus]);
+  /** Re-reads the newest page without resetting what is paged in (a tile's «إعادة المحاولة»). */
+  const reload = useCallback(() => { if (keyRef.current) void load(keyRef.current, true); }, [load]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
 
   // one array per real change of the history: a new array on every render would re-run the screen's scroll effect (e.g. on each
   // keystroke) and pull the owner back to the focused message while reading elsewhere
   const shown = useMemo(() => (messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages), [olderRows, messages]);
   return { gate, sessions, messages: shown, live, error, unlock, recheck, send, waitRun, stop, refresh,
-    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, focusReq, setFocusId, windowed, backToLatest };
+    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, focusReq, setFocusId, windowed, backToLatest, reload };
 }

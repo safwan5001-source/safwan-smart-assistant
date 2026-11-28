@@ -251,6 +251,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
     if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,
+      // additive: why a failed run failed (a short token the app maps to its own Arabic text; never engine text)
+      ...(typeof j.error_code === "string" && /^[a-z][a-z0-9_]{0,31}$/.test(j.error_code) ? { errorCode: j.error_code } : {}),
       firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null,
       steps: Array.isArray(j.steps) ? j.steps : [] }));
     if (req.method === "POST" && run[2]) return relay(`/internal/v1/basht/runs/${run[1]}/stop`, "POST", {});

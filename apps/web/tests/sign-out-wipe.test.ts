@@ -10,6 +10,10 @@ describe("sign-out wipe report (review: never a silent partial wipe)", () => {
     expect(wipeLeftovers({ filesCleared: true, serverErased: false })[0]).toContain("الإشعارات");
     expect(wipeLeftovers({ filesCleared: false, serverErased: false })).toHaveLength(2);
   });
+  it("also reports the device copies of photos sent to BASHT when they could not be cleared", () => {
+    expect(wipeLeftovers({ filesCleared: true, serverErased: true, attachmentsCleared: true })).toEqual([]);
+    expect(wipeLeftovers({ filesCleared: true, serverErased: true, attachmentsCleared: false })[0]).toContain("الصور");
+  });
 });
 
 describe("sign-out vs the login gate (review: no redirect mid-wipe)", () => {

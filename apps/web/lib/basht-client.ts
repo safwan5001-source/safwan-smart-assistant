@@ -9,10 +9,13 @@ export type BashtMedia = { kind: "image" | "file" | "link"; name: string; ref?: 
 /** `provider`/`model`: the model that actually wrote an assistant reply (as the engine recorded it), with any fallback.
  *  `kind: "reset"` (role "system") marks «محادثة جديدة» in the engine's record; `id` is the engine's message id (B1). */
 export type BashtMessage = { role: "user" | "assistant" | "system"; text: string; at: number; provider?: string | null; model?: string | null; fallback?: BashtFallback;
-  id?: string | null; kind?: "reset"; media?: BashtMedia[] };
+  id?: string | null; kind?: "reset"; media?: BashtMedia[];
+  /** Optional: the run / idempotency key of an owner message, when the engine exposes it (the strongest match for a local photo copy). */
+  runId?: string | null };
 /** B1: a tool BASHT is using in the running turn (name only, never its arguments). */
 export type BashtStep = { tool: string; done: boolean };
-export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean; firstTokenMs?: number | null; totalMs?: number | null; steps?: BashtStep[] };
+/** `errorCode`: why a failed run failed, when the engine says so (additive; only "rate_limited" is acted on, see lib/run-error). */
+export type BashtRun = { status: "running" | "done" | "error" | "stopped"; text: string; failed: boolean; errorCode?: string; firstTokenMs?: number | null; totalMs?: number | null; steps?: BashtStep[] };
 /** One page of a conversation: `earlier` is the cursor for older rows (also across «محادثة جديدة»), or null. */
 export type BashtPage = { messages: BashtMessage[]; earlier: string | null; hasMore: boolean; nextOffset: number | null };
 export type BashtHit = { key: string; label: string; message_id: string; role: "user" | "assistant"; at: number; snippet: string };

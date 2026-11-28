@@ -14,7 +14,7 @@
  *   owner's message), and the live voice session in the voice panel. Without it: browser dictation, one mic button either way.
  */
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import Icon from "@/components/icon";
 import Modal from "@/components/modal";
 import { AgentOrb, BrandMark, Empty, ListSkeleton, Notice } from "@/components/ui";
@@ -35,6 +35,11 @@ import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/bash
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
 import ApprovalInlineCard from "./approval-inline-card";
 import MessageMedia, { LiveImages } from "./message-media";
+import MediaViewer from "@/components/media-viewer";
+import { localRowKey, useLocalAttachments, type PendingLocal } from "./use-local-attachments";
+import { viewerItems, type ViewerItem } from "@/lib/viewer-items";
+import { isPlaceholderOnly } from "@/lib/attachment-match";
+import { isProviderLimitNotice, RATE_LIMIT_TEXT } from "@/lib/run-error";
 import { ComposerImages, useComposerImages } from "./composer-images";
 import { BashtSearchResults, EarlierButton, ResetDivider, RetryBar, RunSteps, WindowBanner } from "./chat-extras";
 import { modelReadsImages } from "@/lib/image-prep";
@@ -66,7 +71,7 @@ const STARTERS: { label: string; text: string }[] = [
 
 type Preview = { name: string; url: string; kind: "image" | "pdf" };
 type View = { kind: "main" } | { kind: "engine"; key: string } | { kind: "archive"; id: string };
-type Item = { kind: "local"; at: number; m: Message } | { kind: "engine"; at: number; m: BashtMessage; i: number };
+type Item = { kind: "local"; at: number; m: Message } | { kind: "engine"; at: number; m: BashtMessage; i: number } | { kind: "pending"; at: number; p: PendingLocal };
 
 export default function ChatScreen() {
   const hydrated = useHydrated();
@@ -177,13 +182,32 @@ export default function ChatScreen() {
     return overlayHistory().open(() => setVoice(false), { push: !location.search.includes("voice=1") });
   }, [voice]);
 
+  // R5: the owner's own photos kept on this device — shown on their row when the engine's row has none, and as the owner's own
+  // bubble while no row stands for a sent photo message (it never vanishes)
+  const localMedia = useLocalAttachments(view.kind === "main" ? basht.messages : null,
+    { enabled: bashtOn && view.kind === "main" && basht.gate === "open", liveRunId: basht.live?.runId ?? null, windowed: basht.windowed });
   // One timeline: engine messages (server) + this device's events (local), ordered by time.
   const items: Item[] = useMemo(() => {
     if (view.kind !== "main") return [];
     const local: Item[] = (mainThread?.messages ?? []).map((m) => ({ kind: "local", at: m.created, m }));
     const remote: Item[] = bashtOn ? (basht.messages ?? []).map((m, i) => ({ kind: "engine", at: m.at, m, i })) : [];
-    return [...local, ...remote].sort((a, b) => a.at - b.at);
-  }, [view.kind, mainThread, bashtOn, basht.messages]);
+    const pending: Item[] = bashtOn ? localMedia.pending.map((p) => ({ kind: "pending", at: p.sentAt, p })) : [];
+    return [...local, ...remote, ...pending].sort((a, b) => a.at - b.at);
+  }, [view.kind, mainThread, bashtOn, basht.messages, localMedia.pending]);
+
+  // The full-screen viewer walks through every picture of the conversation on screen (a live photo opens alone).
+  const [viewer, setViewer] = useState<{ items: ViewerItem[]; index: number } | null>(null);
+  const gallery = useMemo((): ViewerItem[] => {
+    if (view.kind === "engine") return (basht.messages ?? []).flatMap((m) => viewerItems({ sessionKey: view.key, messageId: m.id, media: m.media }));
+    return items.flatMap((it) => it.kind === "engine" ? viewerItems({ sessionKey: engineKey, messageId: it.m.id, media: it.m.media, local: localMedia.byRow.get(localRowKey(it.m, it.i)) })
+      : it.kind === "pending" ? viewerItems({ sessionKey: null, messageId: null, media: [], local: it.p.images }) : []);
+  }, [view, items, basht.messages, engineKey, localMedia.byRow]);
+  const galleryRef = useRef(gallery);
+  galleryRef.current = gallery;
+  const openViewer = useCallback((item: ViewerItem) => {
+    const g = galleryRef.current; const i = g.findIndex((x) => x.id === item.id);
+    setViewer(i >= 0 ? { items: g, index: i } : { items: [item], index: 0 });
+  }, []);
 
   // Follow new messages only while the owner is at the bottom: reading older messages is never yanked away by a poll; opening a
   // conversation or sending jumps to the end (instantly — a smooth scroll over a long conversation lags on a phone).
@@ -449,16 +473,33 @@ export default function ChatScreen() {
       </div>
     </article>
   );
+  /** A sent photo message whose row is not in the history (yet): the owner's own bubble from this device, never silently dropped. */
+  const pendingBubble = (p: PendingLocal) => {
+    const parsed = parseVoiceNote(p.text);
+    return (
+      <article key={"p-" + p.clientMsgId} className="bubble user">
+        {parsed.text}
+        {!p.images.length && <span className="media-thumb loading" aria-busy="true" aria-label="جارٍ تحميل الصورة" />}
+        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} onOpen={openViewer} onRetry={basht.reload} localOnly />
+        <div className="meta"><time className="num" dateTime={new Date(p.sentAt).toISOString()}>{formatTime(p.sentAt)}</time></div>
+      </article>
+    );
+  };
   /** A message from BASHT's own record (the engine): read here, kept there. */
-  const engineBubble = (m: BashtMessage, key: string, sk: string | null = engineKey) => {
+  const engineBubble = (m: BashtMessage, key: string, sk: string | null = engineKey, idx = -1) => {
     if (m.kind === "reset") return <ResetDivider key={key} at={m.at} />;
-    const note = m.role === "user" ? parseVoiceNote(m.text) : { voice: false, text: m.text };
+    const parsed = m.role === "user" ? parseVoiceNote(m.text) : { voice: false, text: m.text };
+    // the engine records an image-only message as a bare placeholder («[image]»): not a caption, so no text is shown for it
+    const note = m.role === "user" && isPlaceholderOnly(parsed.text) ? { ...parsed, text: "" } : parsed;
+    const noText = m.role === "user" && !note.text.trim() && !note.voice && !(idx >= 0 && localMedia.loadingRows.has(localRowKey(m, idx)));
+    const localImgs = idx >= 0 ? localMedia.byRow.get(localRowKey(m, idx)) : undefined;
+    const shownText = m.role === "assistant" && isProviderLimitNotice(m.text) ? RATE_LIMIT_TEXT : m.text; // the provider's quota notice, in clear Arabic
     return (
     <article key={key} id={m.id ? "m-" + m.id : undefined} className={"bubble " + m.role + (m.id && m.id === basht.focusId ? " focused" : "")}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
       {note.voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}
-      {m.role === "assistant" ? <MessageBody text={m.text} /> : note.text}
-      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} />}
+      {m.role === "assistant" ? <MessageBody text={shownText} /> : note.text}
+      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} onOpen={openViewer} onRetry={basht.reload} />}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
       )}
@@ -480,9 +521,10 @@ export default function ChatScreen() {
   // 90 → 15 component renders per keystroke with a 50-message page, 465 → 15 with 300). A bubble that reads other state must add it here.
   // engine rows are keyed by their engine id (stable when earlier rows load above them: a reply being played keeps its «إيقاف»);
   // index + time only for a row without an id
-  const timeline = useMemo(() => items.map((it) => (it.kind === "local" ? localBubble(mainThread!.id, it.m) : engineBubble(it.m, it.m.id ? `e-${it.m.id}` : `e-${it.i}-${it.at}`))),
-    // engineBubble also reads basht.focusId (the focused search hit) and engineKey (whose media it fetches)
-    [items, model.models, basht.focusId, engineKey]); // eslint-disable-line react-hooks/exhaustive-deps -- the bubble builders only read stable callbacks besides these
+  const timeline = useMemo(() => items.map((it) => (it.kind === "local" ? localBubble(mainThread!.id, it.m)
+    : it.kind === "pending" ? pendingBubble(it.p) : engineBubble(it.m, it.m.id ? `e-${it.m.id}` : `e-${it.i}-${it.at}`, engineKey, it.i))),
+    // engineBubble also reads basht.focusId (the focused search hit), engineKey (whose media it fetches) and the local photo copies
+    [items, model.models, basht.focusId, engineKey, localMedia.byRow, localMedia.loadingRows]); // eslint-disable-line react-hooks/exhaustive-deps -- the bubble builders only read stable callbacks besides these
 
   const others = basht.sessions.filter((s) => s.key !== APP_SESSION_KEY);
   const list = (
@@ -584,7 +626,7 @@ export default function ChatScreen() {
                 {timeline}
                 {live && (
                   <>
-                    <article className="bubble user">{parseVoiceNote(live.prompt).voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}{parseVoiceNote(live.prompt).text}<LiveImages images={live.images} /></article>
+                    <article className="bubble user">{parseVoiceNote(live.prompt).voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}{parseVoiceNote(live.prompt).text}<LiveImages images={live.images} onOpen={(its, i) => setViewer({ items: its, index: i })} /></article>
                     <article className="bubble assistant streaming" aria-busy="true">
                       <span className="who"><BrandMark size="xs" />باشت</span>
                       {liveText ? <MessageBody text={liveText} /> : <span className="muted"><span className="typing" aria-hidden="true"><i /><i /><i /></span> باشت يفكّر…</span>}
@@ -685,6 +727,7 @@ export default function ChatScreen() {
           </div>
         )}
       </Modal>
+      <MediaViewer items={viewer?.items ?? []} index={viewer?.index ?? null} onIndex={(i) => setViewer((v) => (v ? { ...v, index: i } : v))} onClose={() => setViewer(null)} />
       <ReminderDialog open={!!offer} onClose={() => setOffer(null)} seed={offer?.draft} clarification={offer?.clarification} notes={offer?.notes} />
     </div>
   );

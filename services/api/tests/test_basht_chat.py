@@ -138,6 +138,17 @@ def test_run_view_and_stop(client, engine):
     assert call(client, "GET", "/internal/v1/basht/runs/not-a-uuid").status_code == 404
 
 
+def test_failed_run_carries_a_short_error_code_only(client, engine):
+    _, replies = engine
+    replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "error", "text": "x", "errorCode": "rate_limited"}
+    assert call(client, "GET", f"/internal/v1/basht/runs/{RUN}").json()["error_code"] == "rate_limited"
+    for bad in ("Rate Limited", "HTTP 429 usage_limit_reached", "x" * 80, 429, None):  # never engine text, never on a non-error run
+        replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "error", "text": "x", "errorCode": bad}
+        assert "error_code" not in call(client, "GET", f"/internal/v1/basht/runs/{RUN}").json()
+    replies[f"/runs/{RUN}"] = {"ok": True, "runId": RUN, "status": "done", "text": "x", "errorCode": "rate_limited"}
+    assert "error_code" not in call(client, "GET", f"/internal/v1/basht/runs/{RUN}").json()
+
+
 def test_unconfigured_without_token_or_https(client, engine, monkeypatch):
     calls, _ = engine
     monkeypatch.setenv("BASHT_APP_TOKEN", "short")
