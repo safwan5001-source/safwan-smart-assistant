@@ -135,6 +135,11 @@ describe("voice", () => {
     expect(readVoice(snap(eng({ voice: { speak: "mismatch", reason: "identity_mismatch" } })), NO_VOICE).level).toBe("down");
     expect(readVoice(snap(eng({ voice: { speak: "unconfigured" } })), NO_VOICE).level).toBe("down");
   });
+  it("a playback that failed (audio fetched, not played) is degraded and beats an older success; never tested_ok", () => {
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW - 500, playbackFailed: { at: NOW - 100 } })).toMatchObject({ level: "degraded", checkedAt: NOW - 100 });
+    expect(readVoice(snap(eng()), { speak: "unknown", reason: "", at: null, playbackFailed: { at: NOW } }).level).toBe("degraded");
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW, playbackFailed: null }).level).toBe("tested_ok");
+  });
   it("a real voice reply beats the declaration (tested_ok); a real failure beats it too (down)", () => {
     expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW - 100 })).toMatchObject({ level: "tested_ok", checkedAt: NOW - 100 });
     expect(readVoice(snap(eng()), { speak: "no", reason: "provider_error", at: NOW - 200 })).toMatchObject({ level: "down", checkedAt: NOW - 200 });
