@@ -11,6 +11,8 @@ import { compactStore, taskModePrefStore, tasksStore, themeStore, threadsStore, 
 import { MODE_LABEL } from "@/lib/permissions";
 import { runCommand } from "@/lib/commands";
 import { listFiles } from "@/lib/files-db";
+import DevicePhotos from "./device-photos";
+import { eraseSummary } from "@/lib/sign-out";
 import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
 import ClaudeSettings from "./claude-settings";
@@ -37,8 +39,11 @@ export default function SettingsScreen() {
     if (!ok) return;
     const res = await runCommand("data.erase_all", {}, { approved: true });
     if (res.status !== "executed") toast("تعذر المسح", "error");
-    else if (res.data.filesCleared) { setFiles({ count: 0, bytes: 0 }); toast(res.data.serverErased ? "تم مسح البيانات المحلية وبيانات الإشعارات على الخادم" : "تم مسح البيانات المحلية، لكن تعذر الوصول إلى خادم الإشعارات لحذف نسخته. أعد المحاولة لاحقاً.", res.data.serverErased ? "ok" : "error"); }
-    else toast("مُسحت المهام والمحادثات، لكن تعذر الوصول إلى مكتبة الملفات فلم تُحذف.", "error");
+    else {
+      if (res.data.filesCleared) setFiles({ count: 0, bytes: 0 });
+      const summary = eraseSummary(res.data); // never "done" while anything stayed: files, device photos, the push server
+      toast(summary.text, summary.ok ? "ok" : "error");
+    }
   };
 
   return (
@@ -87,6 +92,8 @@ export default function SettingsScreen() {
           <button className="btn btn-danger" onClick={() => void erase()}><Icon name="trash" size={18} />مسح كل البيانات</button>
         </div>
       </section>
+
+      <DevicePhotos />
 
       <section className="about" aria-label="عن التطبيق">
         <BrandMark size="lg" />

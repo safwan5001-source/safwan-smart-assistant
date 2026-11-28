@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleAuth, resetAuthLimits, type Deps } from "@/server/owner-auth";
+import { handleAuth, ownerScopeOf, resetAuthLimits, type Deps } from "@/server/owner-auth";
+import { createHash } from "node:crypto";
 import { doorAccess, resetOwnerSessionCache, SESSION_COOKIE, sessionCookieValue } from "@/server/owner-session";
 import { handleBashtChat, resetBashtLimits } from "@/server/basht-chat";
 
@@ -63,7 +64,27 @@ describe("unified owner sign-in: switch", () => {
     resetOwnerSessionCache(); api.down = true;
     expect(await (await call("GET", "status")).json()).toMatchObject({ owner_auth: false, unavailable: true }); // could not ask ≠ "off"
     api.down = false; api.config = { owner_auth: true, passkeys: false };
-    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true, gate: true, unavailable: false });
+    expect(await (await call("GET", "status", withSession())).json()).toEqual({ owner_auth: true, passkeys: false, authenticated: true, gate: true, unavailable: false, owner_scope: ownerScopeOf(ACCOUNT) });
+  });
+});
+
+describe("owner scope (an opaque id for scoping this device's local data)", () => {
+  it("an authenticated owner gets exactly 16 lowercase hex characters, derived from the account by SHA-256 with a domain prefix; the account id itself is never sent", async () => {
+    const body = await (await call("GET", "status", withSession())).json();
+    expect(body.owner_scope).toMatch(/^[0-9a-f]{16}$/);
+    expect(body.owner_scope).toBe(createHash("sha256").update(`basht-owner-scope-v1:${ACCOUNT}`).digest("hex").slice(0, 16));
+    expect(JSON.stringify(body)).not.toContain(ACCOUNT);
+  });
+  it("stable for one owner, different for another", () => {
+    expect(ownerScopeOf(ACCOUNT)).toBe(ownerScopeOf(ACCOUNT));
+    expect(ownerScopeOf(ACCOUNT)).not.toBe(ownerScopeOf("9f1e2d3c-1111-4222-8333-444455556666"));
+  });
+  it("NOT exposed to anyone who is not the signed-in owner: no cookie, an unknown session, the API down, the gate off", async () => {
+    for (const r of [await call("GET", "status"), await call("GET", "status", withSession("not-a-session"))]) expect(await r.json()).not.toHaveProperty("owner_scope");
+    resetOwnerSessionCache(); api.down = true;
+    expect(await (await call("GET", "status", withSession())).json()).not.toHaveProperty("owner_scope"); // an outage is not "signed in"
+    api.down = false; resetOwnerSessionCache();
+    expect(await (await call("GET", "status", withSession(), undefined, deps({ env: base }))).json()).not.toHaveProperty("owner_scope");
   });
 });
 

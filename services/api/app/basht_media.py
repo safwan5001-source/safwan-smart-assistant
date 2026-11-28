@@ -48,6 +48,7 @@ SEND_REFUSALS = {"too_many_images", "image_too_large", "images_too_large", "unsu
 _B64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
 _REF_RE = re.compile(r"^[0-9a-f]{32}$")
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,100}$")
+_RUN_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _TOOL_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
 
 
@@ -254,7 +255,13 @@ def media_rows(v: Any) -> list[dict]:
 def row_extras(m: dict) -> dict:
     """id (for jumps / media / paging) and media of one history row."""
     rid = m.get("id") if isinstance(m.get("id"), str) and _ID_RE.fullmatch(m["id"]) else None
-    return {"id": rid, "media": media_rows(m.get("media"))}
+    out = {"id": rid, "media": media_rows(m.get("media"))}
+    # additive: the run an owner message started (the strongest match for a device-local photo copy). Owner rows only, and only the
+    # exact shape /send returns (a lowercase UUID); anything else is dropped, never passed on.
+    run = m.get("runId")
+    if m.get("role") == "user" and isinstance(run, str) and _RUN_ID_RE.fullmatch(run):
+        out["runId"] = run
+    return out
 
 
 def steps(v: Any) -> list[dict]:

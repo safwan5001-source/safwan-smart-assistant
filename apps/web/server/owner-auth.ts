@@ -1,8 +1,9 @@
 import "server-only";
+import { createHash } from "node:crypto";
 /**
  * /api/auth/* — sign in to BASHT once, for the whole app (A1).
  *
- *   GET  status                       → { owner_auth, passkeys, authenticated, gate, unavailable }
+ *   GET  status                       → { owner_auth, passkeys, authenticated, gate, unavailable, owner_scope? }  (`owner_scope`: only when authenticated)
  *                                        (gate = the web switch OWNER_AUTH; unavailable = the API could not be asked)
  *   POST login/code {code, remember}  → owner code → session cookie
  *   POST logout · POST logout-all     → this device · every device (DELETE also accepted: the doors' legacy "lock")
@@ -81,6 +82,13 @@ const refusal = (json: unknown): [string, number] => {
   return (typeof code === "string" && REFUSALS[code]) || ["bad_request", 400];
 };
 
+/**
+ * An opaque, stable id of the signed-in owner for scoping this device's local data (the saved photo copies): the first 16 hex
+ * characters of SHA-256 over the server-held account id, domain-separated. The account id itself is never sent. 64 bits is ample to
+ * keep two owners' device data apart; it identifies nobody outside this server.
+ */
+export const ownerScopeOf = (account: string): string => createHash("sha256").update(`basht-owner-scope-v1:${account}`).digest("hex").slice(0, 16);
+
 export async function handleAuth(req: Request, path: string[], deps: Deps = defaultDeps()): Promise<Response> {
   const route = path.join("/");
   const cfg = await ownerAuthConfig(deps);
@@ -88,7 +96,9 @@ export async function handleAuth(req: Request, path: string[], deps: Deps = defa
     const check = cfg.owner_auth ? await checkOwnerSession(req, deps) : { account: null, outage: false };
     // unavailable: the API (or its database) could not be asked — NOT "signed out"; clients must not send the owner to /login
     return json({ owner_auth: cfg.owner_auth, passkeys: cfg.passkeys, authenticated: check.account !== null, gate: ownerAuthOn(deps.env),
-      unavailable: !cfg.reachable || check.outage });
+      unavailable: !cfg.reachable || check.outage,
+      // only an authenticated owner learns it (an anonymous, locked or outage answer carries no scope)
+      ...(check.account !== null ? { owner_scope: ownerScopeOf(check.account) } : {}) });
   }
   if (!cfg.owner_auth) return err("disabled", 503);
   if (req.method !== "GET" && !sameOrigin(req)) return err("forbidden", 403);

@@ -13,7 +13,7 @@ import { useOwnerGate } from "@/components/owner-gate";
 import { formatTime } from "@/lib/format";
 import { LOGIN_PATH } from "@/lib/login-path";
 import { authClient, AuthError, passkeysSupported, type AuthStatus, type OwnerSession, type Passkey } from "@/lib/owner-auth";
-import { clearPrivateData, markLeaving, signOut, wipeLeftovers, type WipeResult } from "@/lib/sign-out";
+import { endOwnerOnDevice, markLeaving, signOut, wipeLeftovers, type WipeResult } from "@/lib/sign-out";
 
 const WIPE_NOTE = "تُمسح من هذا الجهاز بياناته المحلية: المهام والمحادثات المحلية والتذكيرات والإشعارات والملفات.";
 
@@ -57,7 +57,7 @@ export default function SecuritySettings() {
   };
   const end = async (x: OwnerSession) => {
     if (!(await confirm({ title: `إنهاء جلسة «${x.device ?? "جهاز"}»؟`, message: "يُطلب الدخول من جديد على ذلك الجهاز.", confirmLabel: "إنهاء الجلسة", tone: "danger" }))) return;
-    await run(async () => { const own = await authClient.endSession(x.id); if (!own) return false; markLeaving(); return clearPrivateData(); }, "أُنهيت الجلسة");
+    await run(async () => { const own = await authClient.endSession(x.id); if (!own) return false; markLeaving(); return endOwnerOnDevice(); }, "أُنهيت الجلسة");
   };
   const signOutAll = async () => {
     if (!(await confirm({ title: "الخروج من كل الأجهزة؟", message: `تنتهي كل جلسات المالك فورًا، ومنها هذا الجهاز. تبقى أجهزة Face ID مسجّلة (أزلها من قسم Face ID إن لزم). ${WIPE_NOTE}`, confirmLabel: "خروج من الكل", tone: "danger" }))) return;

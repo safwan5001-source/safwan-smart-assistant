@@ -160,7 +160,7 @@ describe("one conversation, one mic", () => {
   it("«استمع» is on BASHT's replies only, and the live session speaks in the same conversation", () => {
     // the stable engine row id (a reply being played keeps its state when earlier rows load above it)
     expect(chat).toMatch(/\{m\.role === "assistant" && <ListenButton id=\{m\.id \|\| key\} text=\{m\.text\} \/>\}/);
-    expect(chat).toMatch(/engineBubble\(it\.m, it\.m\.id \? `e-\$\{it\.m\.id\}` : `e-\$\{it\.i\}-\$\{it\.at\}`\)/);
+    expect(chat).toMatch(/engineBubble\(it\.m, it\.m\.id \? `e-\$\{it\.m\.id\}` : `e-\$\{it\.i\}-\$\{it\.at\}`, engineKey, it\.i\)/);
     // self-contained: the button reads the shared player and the engine's availability itself (safe inside a memoized timeline)
     const btn = src("features/chat/listen-button.tsx");
     expect(btn).toMatch(/usePlayer\(\)/); expect(btn).toMatch(/speakGate\(avail, status\)\.show/);

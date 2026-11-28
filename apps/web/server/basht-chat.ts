@@ -124,6 +124,18 @@ const SETTINGS_MS = 45_000;
 const MODEL_REF = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
 const LEVEL = /^[a-z][a-z0-9_-]{0,39}$/;
 
+/** The run an owner row started: exactly what /send returns (a lowercase UUID). Anything else is dropped (absent, never null). */
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The history page as the API returned it; only `runId` of owner rows is re-validated here (defence in depth). */
+export function historyView(j: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(j.messages)) return j;
+  return { ...j, messages: j.messages.map((m) => {
+    if (!m || typeof m !== "object" || !("runId" in m)) return m;
+    const { runId, ...rest } = m as Record<string, unknown>;
+    return (m as { role?: unknown }).role === "user" && typeof runId === "string" && RUN_ID.test(runId) ? { ...rest, runId } : rest;
+  }) };
+}
+
 /** What the browser may learn from the API's status codes. */
 const API_ERRORS: Record<number, [number, string]> = { 400: [400, "bad_request"], 404: [404, "not_found"], 409: [409, "busy"], 422: [400, "bad_request"], 429: [429, "rate_limited"], 503: [503, "unavailable"] };
 
@@ -192,7 +204,7 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
     if ((before !== null && !CURSOR.test(before)) || (around !== null && !MSG_ID.test(around))) return err("bad_request", 400);
     // fixed path + JSON body: callBackend never takes a query string (server/backend.ts)
     return relay("/internal/v1/basht/history", "POST", { key, limit: 50, ...(offset !== null ? { offset: Number(offset) } : {}),
-      ...(before !== null ? { before } : around !== null ? { around } : {}) }, undefined, before !== null || around !== null ? 35_000 : 15_000);
+      ...(before !== null ? { before } : around !== null ? { around } : {}) }, historyView, before !== null || around !== null ? 35_000 : 15_000);
   }
   if (req.method === "POST" && route === "send") {
     const data = await readJson(req);
@@ -251,6 +263,8 @@ export async function handleBashtChat(req: Request, path: string[], deps: Deps =
   const run = /^runs\/([0-9a-f-]{36})(\/stop)?$/.exec(route);
   if (run && RUN.test(run[1])) {
     if (req.method === "GET" && !run[2]) return relay(`/internal/v1/basht/runs/${run[1]}`, "GET", undefined, (j) => ({ status: j.status, text: typeof j.text === "string" ? j.text : "", failed: j.failed === true,
+      // additive: why a failed run failed (a short token the app maps to its own Arabic text; never engine text)
+      ...(typeof j.error_code === "string" && /^[a-z][a-z0-9_]{0,31}$/.test(j.error_code) ? { errorCode: j.error_code } : {}),
       firstTokenMs: typeof j.first_token_ms === "number" ? j.first_token_ms : null, totalMs: typeof j.total_ms === "number" ? j.total_ms : null,
       steps: Array.isArray(j.steps) ? j.steps : [] }));
     if (req.method === "POST" && run[2]) return relay(`/internal/v1/basht/runs/${run[1]}/stop`, "POST", {});

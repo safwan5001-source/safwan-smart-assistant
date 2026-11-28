@@ -41,3 +41,26 @@
 /* iPhone width: the conversation column never grows past the card (a long model line in the head, or the photo strip, used to
    widen the implicit grid column and push the head/composer off-screen). */
 .chat-main { grid-template-columns: minmax(0, 1fr); }
+
+/* R5/A04: a picture tile always keeps one box (loading, ready and «غير متاحة» are the same size: nothing jumps). */
+.media-grid.n1 .media-thumb { aspect-ratio: 4 / 3; max-height: 260px; max-inline-size: 320px; }
+.media-thumb.loading { background: linear-gradient(100deg, var(--surface-3) 30%, var(--surface-2) 50%, var(--surface-3) 70%); background-size: 200% 100%; animation: media-shimmer 1.4s linear infinite; }
+.media-thumb.loading img { opacity: 0; }
+.media-thumb img { transition: opacity var(--t-fast, .16s) var(--ease, ease-out); }
+.media-thumb.unavailable { display: grid; place-items: center; cursor: default; border: 1px dashed var(--border-strong, var(--border)); background: var(--surface-2); color: var(--muted); }
+.media-thumb .thumb-state { display: grid; justify-items: center; gap: 6px; padding: 8px; text-align: center; font-size: 12.5px; line-height: 1.4; }
+@keyframes media-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .media-thumb.loading { animation: none; } .media-thumb img { transition: none; } }
+
+/* «غير متاحة · إعادة المحاولة»: the retry button is a 44px touch target; in the 2- and 3-picture grids (cells ~100-150px wide at 390px)
+   the icon is dropped so label + button fit without clipping. */
+.media-thumb .thumb-state .btn { min-block-size: 44px; min-inline-size: 44px; padding-inline: 10px; white-space: nowrap; }
+.media-thumb.unavailable { min-inline-size: 0; overflow: hidden; }
+.media-grid.n2 .thumb-state svg, .media-grid.n3 .thumb-state svg { display: none; }
+.media-grid.n3 .thumb-state { font-size: 12px; padding: 4px; gap: 4px; }
+.media-grid.n3 .thumb-state .btn { font-size: 12px; padding-inline: 6px; }
+/* three pictures per row are ~80px wide: all their tiles share one fixed 104px height (loading, ready and unavailable alike: nothing jumps)
+   so the label and the 44px retry button fit without clipping */
+.media-grid.n3 .media-thumb { aspect-ratio: auto; block-size: 104px; }
+.media-grid.n3 .thumb-state { inline-size: 100%; box-sizing: border-box; }
+.media-grid.n3 .thumb-state .btn { white-space: normal; line-height: 1.2; max-inline-size: 100%; padding-block: 2px; }
