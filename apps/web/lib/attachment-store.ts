@@ -16,7 +16,9 @@ export type StoredImage = { id: string; name: string; mime: string; size: number
 export type StoredImageMeta = Omit<StoredImage, "blob">;
 /** `runDone`: the record's turn reached a terminal state (a text match may be persisted from then on). `superseded`: the owner retried
  *  this turn, so it no longer stands as a pending bubble of its own. */
-export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string; runDone?: boolean; superseded?: boolean; images: StoredImage[] };
+export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string; runDone?: boolean;
+  /** How the turn ended (`runDone` says only that it did). `uncertain`: the send was cut off by the network, so the engine may or may not have the turn. */
+  runEnd?: "done" | "error" | "stopped"; uncertain?: boolean; superseded?: boolean; images: StoredImage[] };
 export type AttachmentMeta = Omit<AttachmentRecord, "images"> & { images: StoredImageMeta[] };
 /** `absent`: this browser has no IndexedDB at all (nothing could ever have been stored). `unavailable`: it has one but could not OPEN it
  *  now — what is inside is unknown (a wipe that hits this has NOT wiped anything). */
@@ -30,7 +32,7 @@ export type AttachmentStore = {
   /** One record with its photo bytes. */
   get(id: string): Promise<StoreResult<AttachmentRecord | null>>;
   /** Fills fields into an existing record (a missing record is not an error); `matchedRowId: null` clears the binding. */
-  patch(id: string, fields: { runId?: string; matchedRowId?: string | null; runDone?: boolean; superseded?: boolean }): Promise<StoreResult>;
+  patch(id: string, fields: { runId?: string; matchedRowId?: string | null; runDone?: boolean; runEnd?: "done" | "error" | "stopped"; uncertain?: boolean; superseded?: boolean }): Promise<StoreResult>;
   remove(id: string): Promise<StoreResult>;
   usage(): Promise<StoreResult<AttachmentUsage>>;
   /** Deletes everything (sign-out, or the owner's explicit «clear»). */
@@ -107,7 +109,7 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
     put: (rec) => tx("readwrite", (meta, blobs) => {
       const m: AttachmentMeta = { clientMsgId: rec.clientMsgId, text: rec.text, sentAt: rec.sentAt,
         ...(rec.runId ? { runId: rec.runId } : {}), ...(rec.matchedRowId ? { matchedRowId: rec.matchedRowId } : {}),
-        ...(rec.runDone ? { runDone: true } : {}), ...(rec.superseded ? { superseded: true } : {}),
+        ...(rec.runDone ? { runDone: true } : {}), ...(rec.runEnd ? { runEnd: rec.runEnd } : {}), ...(rec.uncertain ? { uncertain: true } : {}), ...(rec.superseded ? { superseded: true } : {}),
         images: rec.images.map(({ blob: _b, ...i }) => i) };
       meta.put(m);
       for (const i of rec.images) blobs.put({ key: blobKey(rec.clientMsgId, i.id), blob: i.blob });
@@ -135,6 +137,8 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
         if (fields.runId) next.runId = fields.runId;
         if (fields.matchedRowId) next.matchedRowId = fields.matchedRowId; else if (fields.matchedRowId === null) delete next.matchedRowId;
         if (fields.runDone) next.runDone = true;
+        if (fields.runEnd) next.runEnd = fields.runEnd;
+        if (fields.uncertain) next.uncertain = true;
         if (fields.superseded) next.superseded = true;
         meta.put(next);
       };

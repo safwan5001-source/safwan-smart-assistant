@@ -4,7 +4,8 @@ import { EARLY_UNKNOWN_MS, isPlaceholderOnly, matchAttachments, MATCH_WINDOW_MS,
 const T0 = 1_700_000_000_000;
 const min = 60_000;
 const row = (key: string, text: string, at: number, extra: Partial<MatchRow> = {}): MatchRow => ({ key, role: "user", text, at, hasServerMedia: false, ...extra });
-const rec = (id: string, text: string, sentAt: number, extra: Partial<MatchRecord> = {}): MatchRecord => ({ clientMsgId: id, text, sentAt, ...extra });
+// a record whose send the engine confirmed (a run id came back); tests that need the runId-less kinds pass `runId: undefined`
+const rec = (id: string, text: string, sentAt: number, extra: Partial<MatchRecord> = {}): MatchRecord => ({ clientMsgId: id, text, sentAt, runId: "run-" + id, ...extra });
 const m = (rows: MatchRow[], recs: MatchRecord[]) => Object.fromEntries(matchAttachments(rows, recs).matches);
 
 describe("text normalisation", () => {

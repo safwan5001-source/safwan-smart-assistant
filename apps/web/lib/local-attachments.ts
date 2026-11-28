@@ -86,9 +86,11 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     /** The engine accepted the turn: remember its run id (the strongest match). */
     attachRun(id: string, runId: string): void { patchEntry(id, { runId }, { runId }); },
     /** The turn of this run reached a terminal state: a text match for it may now be persisted. */
-    markDone(runId: string): void {
-      for (const e of entries.values()) if (e.runId === runId && !e.runDone) patchEntry(e.clientMsgId, { runDone: true }, { runDone: true });
+    markDone(runId: string, end: "done" | "error" | "stopped" = "done"): void {
+      for (const e of entries.values()) if (e.runId === runId && !e.runEnd) patchEntry(e.clientMsgId, { runDone: true, runEnd: end }, { runDone: true, runEnd: end });
     },
+    /** The send was cut off by the network: the engine may or may not have the turn. The copy is KEPT (it can still be matched, strictly). */
+    markUncertain(id: string): void { const cur = entries.get(id); if (cur && !cur.uncertain) patchEntry(id, { uncertain: true }, { uncertain: true }); },
     /** The owner retried this turn: it no longer stands as a separate pending bubble (a row it already has still shows its photo). */
     supersede(id: string): void { const cur = entries.get(id); if (cur && !cur.superseded) patchEntry(id, { superseded: true }, { superseded: true }); },
     /** The row this record was matched to (persisted so it survives reloads). */
@@ -139,7 +141,9 @@ export const localAttachments = (): LocalAttachments => (shared ??= createLocalA
  * engine), tied to the run once the engine accepted it, forgotten if the engine refused it, and the failed attempt it replaces
  * (`supersedes`, a retry) stops standing as a pending bubble of its own.
  */
-export async function sendWithLocalCopy(mgr: LocalAttachments, a: { text: string; images: StoredImage[]; post: () => Promise<string>; supersedes?: string | null; now?: () => number }):
+export async function sendWithLocalCopy(mgr: LocalAttachments, a: { text: string; images: StoredImage[]; post: () => Promise<string>; supersedes?: string | null; now?: () => number;
+  /** A DEFINITE refusal (validation, 4xx): the engine did not take the turn, so the copy is forgotten. Anything else (a network error, a timeout) may have reached it. */
+  isRefusal?: (e: unknown) => boolean }):
   Promise<{ runId: string; clientMsgId: string }> {
   const clientMsgId = mgr.newId();
   mgr.register({ clientMsgId, text: a.text, sentAt: (a.now ?? Date.now)(), images: a.images });
@@ -148,5 +152,8 @@ export async function sendWithLocalCopy(mgr: LocalAttachments, a: { text: string
     mgr.attachRun(clientMsgId, runId);
     if (a.supersedes) mgr.supersede(a.supersedes);
     return { runId, clientMsgId };
-  } catch (e) { mgr.discard(clientMsgId); throw e; }
+  } catch (e) {
+    if (a.isRefusal?.(e)) mgr.discard(clientMsgId); else mgr.markUncertain(clientMsgId); // may have been accepted: keep it
+    throw e;
+  }
 }

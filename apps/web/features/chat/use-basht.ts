@@ -7,7 +7,7 @@
  * - Nothing here ever pretends a message reached BASHT: `send` resolves only after the engine accepted the turn.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { bashtClient, BashtError, bashtErrorText, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
+import { bashtClient, BashtError, bashtErrorText, isDefiniteRefusal, type BashtMessage, type BashtSession, type BashtStep } from "@/lib/basht-client";
 import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
 import { localAttachments, sendWithLocalCopy, toStoredImage } from "@/lib/local-attachments";
@@ -152,7 +152,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
           const finished = out.finished;
           lastTurn = out.nextLastTurn;
           setFailedTurn(out.failed ? { text: out.failed.text, images: out.failed.images.length } : null);
-          localAttachments().markDone(run.id); // from now on a text match for this turn's photo may be persisted
+          localAttachments().markDone(run.id, r.status === "done" ? "done" : r.status === "stopped" ? "stopped" : "error"); // how the turn ended decides what a text match may do
           settle(run.id, { status: r.status, text: out.endText });
           setAgentPhase(r.status === "done" ? "replied" : r.status === "stopped" ? "stopped" : "reply_failed");
           if (out.error) setError(out.error);
@@ -213,7 +213,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     try {
       let id: string;
       if (images.length) {
-        const sent = await sendWithLocalCopy(localAttachments(), { text, images: stored, supersedes: opts.supersedes,
+        const sent = await sendWithLocalCopy(localAttachments(), { text, images: stored, supersedes: opts.supersedes, isRefusal: isDefiniteRefusal,
           post: () => bashtClient.sendMedia(text, images.map((i) => ({ mime: i.mime, data: i.data }))) });
         id = sent.runId; clientMsgId = sent.clientMsgId;
       } else id = await bashtClient.send(text);

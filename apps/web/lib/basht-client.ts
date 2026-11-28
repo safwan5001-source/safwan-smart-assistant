@@ -56,6 +56,8 @@ export const BASHT_ERROR_TEXT: Record<string, string> = {
   timeout: "تأخّر الرد طويلًا فأُوقف الطلب. أعد المحاولة.",
 };
 export const bashtErrorText = (code: string) => BASHT_ERROR_TEXT[code] ?? BASHT_ERROR_TEXT.unavailable;
+/** The engine answered and DID NOT take the request (validation, auth, limits, busy). A network error, a timeout or a 5xx may have reached it. */
+const REFUSAL_CODES = new Set(["bad_request", "unauthorized", "forbidden", "disabled", "rate_limited", "busy", "too_many_images", "image_too_large", "images_too_large", "unsupported_image", "too_large", "unsupported"]);
 
 /**
  * Why BASHT's engine voice is unavailable (`reason` of a voice error / voice-status). A fixed list identical to the shared contract
@@ -207,3 +209,5 @@ export const bashtClient = createBashtClient();
 /** Same-origin URL of one media item (served with the owner session, never cached by shared caches). */
 export const bashtMediaUrl = (key: string, msg: string, ref: string) =>
   `/api/basht/media?key=${encodeURIComponent(key)}&msg=${encodeURIComponent(msg)}&ref=${encodeURIComponent(ref)}`;
+
+export const isDefiniteRefusal = (e: unknown): boolean => e instanceof BashtError && REFUSAL_CODES.has(e.code);
