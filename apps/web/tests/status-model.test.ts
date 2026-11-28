@@ -136,9 +136,35 @@ describe("voice", () => {
     expect(readVoice(snap(eng({ voice: { speak: "unconfigured" } })), NO_VOICE).level).toBe("down");
   });
   it("a playback that failed (audio fetched, not played) is degraded and beats an older success; never tested_ok", () => {
-    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW - 500, playbackFailed: { at: NOW - 100 } })).toMatchObject({ level: "degraded", checkedAt: NOW - 100 });
-    expect(readVoice(snap(eng()), { speak: "unknown", reason: "", at: null, playbackFailed: { at: NOW } }).level).toBe("degraded");
-    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW, playbackFailed: null }).level).toBe("tested_ok");
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW - 500, failed: { at: NOW - 100 } })).toMatchObject({ level: "degraded", checkedAt: NOW - 100 });
+    expect(readVoice(snap(eng()), { speak: "unknown", reason: "", at: null, failed: { at: NOW } }).level).toBe("degraded");
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW, failed: null }).level).toBe("tested_ok");
+  });
+  it("I2: the NEWER evidence wins: an old real success loses to a newer engine «unconfigured / mismatch / degraded», keeps beating a «ready»", () => {
+    const old = { speak: "yes" as const, reason: "" as const, at: NOW - 3_600_000 };
+    for (const [speak, level] of [["unconfigured", "down"], ["mismatch", "down"], ["degraded", "degraded"]] as const) {
+      expect(readVoice(snap(eng({ voice: { speak } }), NOW), old).level, speak).toBe(level);
+    }
+    expect(readVoice(snap(eng({ voice: { speak: "ready" } }), NOW), old).level).toBe("tested_ok");
+    // an OLDER engine statement does not override a newer real success
+    expect(readVoice(snap(eng({ voice: { speak: "unconfigured" } }), NOW - 7_200_000), old).level).toBe("tested_ok");
+    // tie: the worse
+    expect(readVoice(snap(eng({ voice: { speak: "degraded" } }), old.at), old).level).toBe("degraded");
+    // a newer «ready» replaces an older durable failure; an older one does not
+    const no = { speak: "no" as const, reason: "provider_error" as const, at: NOW - 1000 };
+    expect(readVoice(snap(eng(), NOW), no).level).toBe("configured");
+    expect(readVoice(snap(eng(), NOW - 5000), no).level).toBe("down");
+  });
+  it("a real transient failure is kept against a newer «ready» (only a real success clears it); a newer success beats it", () => {
+    const f = { speak: "yes" as const, reason: "" as const, at: NOW - 5000, failed: { at: NOW - 1000, kind: "unavailable", reason: "link_down" as const } };
+    expect(readVoice(snap(eng(), NOW), f)).toMatchObject({ level: "degraded", detail: expect.stringContaining("منقطع") });
+    expect(readVoice(snap(eng(), NOW), { ...f, at: NOW, failed: null }).level).toBe("tested_ok");
+  });
+  it("a real transcription failure folds in: never better than «جزئي»; a worse level stays", () => {
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW, transcribe: "no" })).toMatchObject({ level: "degraded", detail: expect.stringContaining("تفريغ") });
+    expect(readVoice(snap(eng()), { speak: "unknown", reason: "", at: null, transcribe: "no" }).level).toBe("degraded");
+    expect(readVoice(snap(eng({ voice: { speak: "mismatch" } })), { speak: "unknown", reason: "", at: null, transcribe: "no" }).level).toBe("down");
+    expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW, transcribe: "yes" }).level).toBe("tested_ok");
   });
   it("a real voice reply beats the declaration (tested_ok); a real failure beats it too (down)", () => {
     expect(readVoice(snap(eng()), { speak: "yes", reason: "", at: NOW - 100 })).toMatchObject({ level: "tested_ok", checkedAt: NOW - 100 });
