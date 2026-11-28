@@ -20,9 +20,9 @@ export type AttachmentRecord = { clientMsgId: string; text: string; sentAt: numb
   /** How the turn ended (`runDone` says only that it did). `uncertain`: the send was cut off by the network, so the engine may or may not have the turn. */
   runEnd?: "done" | "error" | "stopped"; uncertain?: boolean; superseded?: boolean; images: StoredImage[] };
 export type AttachmentMeta = Omit<AttachmentRecord, "images"> & { images: StoredImageMeta[] };
-/** `absent`: this browser has no IndexedDB at all (nothing could ever have been stored). `unavailable`: it has one but could not OPEN it
+/** `noscope`: no owner is known yet, so the scoped store is not touched at all (never an unscoped fallback). `absent`: this browser has no IndexedDB at all (nothing could ever have been stored). `unavailable`: it has one but could not OPEN it
  *  now — what is inside is unknown (a wipe that hits this has NOT wiped anything). */
-export type StoreFailure = "absent" | "unavailable" | "quota" | "error";
+export type StoreFailure = "absent" | "noscope" | "unavailable" | "quota" | "error";
 export type StoreResult<T = void> = { ok: true; value: T } | { ok: false; reason: StoreFailure };
 export type AttachmentUsage = { count: number; bytes: number };
 
@@ -39,7 +39,9 @@ export type AttachmentStore = {
   clear(): Promise<StoreResult>;
 };
 
+/** The database name of earlier, UNSCOPED builds (never deployed; still wiped on sign-out). A scoped database is `basht-attachments-v1-<scope>`. */
 export const ATTACHMENT_DB = "basht-attachments-v1";
+export const scopedDbName = (scope: string) => `${ATTACHMENT_DB}-${scope}`;
 const META = "meta";
 const BLOBS = "blobs";
 const blobKey = (id: string, imageId: string) => `${id}#${imageId}`;
@@ -52,14 +54,14 @@ const failure = (e: unknown): StoreFailure => {
 const fail = <T>(reason: StoreFailure): StoreResult<T> => ({ ok: false, reason });
 
 /** Real store over an IndexedDB factory (`indexedDB` in a browser; a double in tests). `undefined` factory → always "absent". */
-export function createAttachmentStore(factory?: IDBFactory | undefined): AttachmentStore {
+export function createAttachmentStore(factory?: IDBFactory | undefined, dbName: string = ATTACHMENT_DB): AttachmentStore {
   let opening: Promise<IDBDatabase> | null = null;
   const open = (): Promise<IDBDatabase> => {
     if (opening) return opening;
     const p = new Promise<IDBDatabase>((resolve, reject) => {
       if (!factory) return reject(new Error("unavailable"));
       let req: IDBOpenDBRequest;
-      try { req = factory.open(ATTACHMENT_DB, 1); } catch (e) { return reject(e); }
+      try { req = factory.open(dbName, 1); } catch (e) { return reject(e); }
       req.onupgradeneeded = () => {
         const db = req.result;
         if (!db.objectStoreNames.contains(META)) db.createObjectStore(META, { keyPath: "clientMsgId" });
@@ -164,17 +166,90 @@ export function createAttachmentStore(factory?: IDBFactory | undefined): Attachm
   };
 }
 
-let shared: AttachmentStore | null = null;
-/** The app's store (this browser's IndexedDB; every call reports "absent" where there is none). */
-export const attachmentStore = (): AttachmentStore =>
-  (shared ??= createAttachmentStore(typeof indexedDB === "undefined" ? undefined : indexedDB));
+/** Which scopes have a database on this device (so sign-out can find them where `indexedDB.databases()` does not exist). Opaque ids only. */
+export type ScopeRegistry = { read(): string[]; add(scope: string): void; clear(): void };
+const REGISTRY_KEY = "basht.attachment.scopes";
+export function localStorageRegistry(storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | undefined = typeof localStorage === "undefined" ? undefined : (() => { try { return localStorage; } catch { return undefined; } })()): ScopeRegistry {
+  const read = (): string[] => { try { const v = JSON.parse(storage?.getItem(REGISTRY_KEY) ?? "[]"); return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && /^[0-9a-f]{16}$/.test(x)) : []; } catch { return []; } };
+  return {
+    read,
+    add(scope) { try { const all = new Set(read()); if (!all.has(scope)) { all.add(scope); storage?.setItem(REGISTRY_KEY, JSON.stringify([...all])); } } catch { /* blocked storage: databases() or the next wipe still find it */ } },
+    clear() { try { storage?.removeItem(REGISTRY_KEY); } catch { /* blocked */ } },
+  };
+}
+
 /**
- * For sign-out: wipes the local photo copies. True only when nothing is left: the wipe ran, or this browser has no IndexedDB at all
- * (nothing could have been stored). A database that merely failed to OPEN may still hold photos, so that is NOT success — the open is
- * retried once, and a second failure is reported as not cleared.
+ * Wipes EVERY scope's database (and the unscoped one of earlier builds): sign-out. Each database is cleared (its open retried once);
+ * any scope that could not be wiped makes the whole wipe fail, so the leftover warning stays honest.
  */
-export const clearAttachments = async (store: AttachmentStore = attachmentStore()): Promise<boolean> => {
-  let r = await store.clear();
-  if (!r.ok && r.reason !== "absent") r = await store.clear();
+export async function wipeAllScopes(factory: IDBFactory | undefined, registry: ScopeRegistry): Promise<StoreResult> {
+  if (!factory) return fail("absent");
+  const names = new Set<string>();
+  let listed = false;
+  try {
+    const dbs = await (factory as IDBFactory & { databases?: () => Promise<{ name?: string }[]> }).databases?.();
+    if (dbs) { listed = true; for (const d of dbs) if (d.name?.startsWith(ATTACHMENT_DB)) names.add(d.name); }
+  } catch { /* fall back to the registry */ }
+  if (!listed) { names.add(ATTACHMENT_DB); for (const s of registry.read()) names.add(scopedDbName(s)); }
+  let failed: StoreFailure | null = null;
+  for (const name of names) {
+    const st = createAttachmentStore(factory, name);
+    let r = await st.clear();
+    if (!r.ok && r.reason !== "absent") r = await st.clear();
+    if (!r.ok && r.reason !== "absent") failed = r.reason;
+  }
+  if (failed) return fail(failed);
+  registry.clear();
+  return { ok: true, value: undefined };
+}
+
+export type ScopedAttachmentStore = AttachmentStore & {
+  setScope(scope: string | null): void; scope(): string | null;
+  /** Every scope (sign-out). */
+  clearAll(): Promise<StoreResult>;
+};
+/**
+ * The store the app uses: one database per owner scope. While the owner is not known (`scope` null) NOTHING is read or written —
+ * every call answers `noscope` without touching IndexedDB. A call is bound to the scope it started under, so a save in flight
+ * when the owner changes finishes in the OLD owner's database, never the new one's.
+ */
+export function createScopedStore(factory: IDBFactory | undefined, registry: ScopeRegistry = localStorageRegistry()): ScopedAttachmentStore {
+  let scope: string | null = null;
+  const stores = new Map<string, AttachmentStore>();
+  const forScope = (s: string) => {
+    let st = stores.get(s);
+    if (!st) { st = createAttachmentStore(factory, scopedDbName(s)); stores.set(s, st); if (factory) registry.add(s); }
+    return st;
+  };
+  const via = <A extends unknown[], R>(f: (st: AttachmentStore, ...a: A) => Promise<StoreResult<R>>) => (...a: A): Promise<StoreResult<R>> => {
+    const s = scope;
+    return s ? f(forScope(s), ...a) : Promise.resolve(fail<R>("noscope"));
+  };
+  return {
+    setScope(next) { scope = next; },
+    scope: () => scope,
+    put: via((st, rec: AttachmentRecord) => st.put(rec)),
+    list: via((st) => st.list()),
+    get: via((st, id: string) => st.get(id)),
+    patch: via((st, id: string, fields: Parameters<AttachmentStore["patch"]>[1]) => st.patch(id, fields)),
+    remove: via((st, id: string) => st.remove(id)),
+    usage: via((st) => st.usage()),
+    clear: via((st) => st.clear()),
+    clearAll: () => wipeAllScopes(factory, registry),
+  };
+}
+
+let shared: ScopedAttachmentStore | null = null;
+/** The app's store (this browser's IndexedDB, one database per owner scope; every call reports "absent" where there is none). */
+export const attachmentStore = (): ScopedAttachmentStore => (shared ??= createScopedStore(typeof indexedDB === "undefined" ? undefined : indexedDB));
+/**
+ * For sign-out: wipes the local photo copies of EVERY owner scope. True only when nothing is left: the wipe ran, or this browser has no
+ * IndexedDB at all (nothing could have been stored). A database that merely failed to OPEN may still hold photos, so that is NOT
+ * success — each open is retried once, and a second failure is reported as not cleared.
+ */
+export const clearAttachments = async (store: AttachmentStore & { clearAll?: () => Promise<StoreResult> } = attachmentStore()): Promise<boolean> => {
+  const wipe = () => (store.clearAll ? store.clearAll() : store.clear());
+  let r = await wipe();
+  if (!r.ok && r.reason !== "absent") r = await wipe();
   return r.ok || r.reason === "absent";
 };
