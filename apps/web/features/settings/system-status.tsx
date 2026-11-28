@@ -11,7 +11,7 @@ import { useAssistant } from "@/components/assistant-context";
 import { voiceAvailability, useVoiceAvailability } from "@/lib/basht-voice";
 import { relative } from "@/lib/basht-control";
 import { engineStatusStore, useEngineStatus } from "@/lib/engine-status-store";
-import { getPushState, type PushState } from "@/lib/push-client";
+import { watchPushState, type PushState } from "@/lib/push-client";
 import { ATTACHMENT_KEYS } from "@/lib/engine-status";
 import { checkedText, readApprovals, readEngine, readPush, readServer, readVoice, readingLabel, statusIcon, statusTone, type EngineSnapshot, type StatusReading } from "@/lib/status-model";
 
@@ -26,11 +26,10 @@ export function useReadings(withPush = false) {
   const snap = useEngineStatus(status.server === "online" && status.bashtChat);
   const learned = useVoiceAvailability();
   const [push, setPush] = useState<{ state: PushState | "loading"; at: number | null }>({ state: "loading", at: null });
+  // follows this device's registration (the store the notification controls write to) and the end of enable/disable, plus a re-check
   useEffect(() => {
     if (!withPush) return;
-    let live = true;
-    void getPushState().then((state) => live && setPush({ state, at: Date.now() }));
-    return () => { live = false; };
+    return watchPushState((state, at) => setPush({ state, at }));
   }, [withPush, checkedAt]);
   // "now" for the «قبل N» text: advances only when something is re-read, never on a timer
   const [now, setNow] = useState(() => Date.now());
@@ -41,7 +40,7 @@ export function useReadings(withPush = false) {
   const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: voiceAvailability.speakCheckedAt(), playbackFailed: voiceAvailability.playbackFailure() });
   const pushReading = readPush(push.state, push.at);
   const approvals = readApprovals(snap);
-  const recheck = () => { refresh(); void engineStatusStore.refresh({ force: true }); if (withPush) void getPushState().then((state) => setPush({ state, at: Date.now() })); };
+  const recheck = () => { refresh(); void engineStatusStore.refresh({ force: true }); };
   return { status, snap, now, server, engine, voice, push: pushReading, approvals, recheck };
 }
 

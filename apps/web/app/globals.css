@@ -418,7 +418,11 @@ a.attn-item:hover { border-color: var(--accent-border); }
 /* ── chat ─────────────────────────────────────────────────────────────── */
 .chat { display: grid; grid-template-columns: minmax(0, 1fr); height: calc(100dvh - var(--topbar-h) - env(safe-area-inset-top) - var(--bottom-nav-h) - env(safe-area-inset-bottom) - 2 * var(--space)); min-height: 420px; border: 1px solid var(--border); border-radius: var(--radius-xl); overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
 .chat-side { display: none; }
-.chat-main { display: grid; grid-template-rows: auto 1fr auto; min-width: 0; min-height: 0; }
+/* A flex column, not a three-row grid: the log is THE flexible child however many optional strips (executed-model strip, locked form,
+   offline/info notices) sit above it, and everything else keeps its own height, so the composer can never be pushed out of the box. */
+.chat-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-main > * { flex: none; }
+.chat-main > .chat-log { flex: 1 1 0; min-height: 0; }
 .chat-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-block-end: 1px solid var(--border); background: var(--glass); }
 .chat-head strong { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px; }
 .chat-agent { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; }

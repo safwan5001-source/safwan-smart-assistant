@@ -108,8 +108,40 @@ export async function getPushState(): Promise<PushState> {
   } catch { return "error"; }
 }
 
+const pushListeners = new Set<() => void>();
+/**
+ * `cb` runs whenever this device's push registration may have changed: any write of `pushDeviceStore` (register, subscribe flag,
+ * reset, a change from another tab through the store's own storage listener) and the END of enablePush / disablePush, which can
+ * change what getPushState() answers without writing the store (permission denied, server not configured). No timers, no polling.
+ */
+export function subscribePushChange(cb: () => void): () => void {
+  const off = pushDeviceStore.subscribe(cb);
+  pushListeners.add(cb);
+  return () => { off(); pushListeners.delete(cb); };
+}
+const emitPushChange = () => pushListeners.forEach((f) => f());
+
+/**
+ * Keeps `onState` equal to getPushState(): once now, then after every change `subscribePushChange` reports. A slower older read never
+ * overwrites a newer one, and after the returned stop() nothing is delivered (a read still in flight is dropped).
+ */
+export function watchPushState(onState: (s: PushState, at: number) => void,
+  deps: { get: () => Promise<PushState>; subscribe: (cb: () => void) => () => void; now: () => number } = { get: getPushState, subscribe: subscribePushChange, now: Date.now }): () => void {
+  let live = true, seq = 0;
+  const read = () => {
+    const mine = ++seq;
+    void deps.get().then((s) => { if (live && mine === seq) onState(s, deps.now()); }, () => { if (live && mine === seq) onState("error", deps.now()); });
+  };
+  const off = deps.subscribe(read);
+  read();
+  return () => { live = false; off(); };
+}
+
 /** Must be called from a user gesture (tap). */
 export async function enablePush(): Promise<PushState> {
+  try { return await enablePushNow(); } finally { emitPushChange(); }
+}
+async function enablePushNow(): Promise<PushState> {
   if (pushDeviceStore.getSnapshot()?.erasePending && !(await eraseRemoteDevice())) return "error"; // finish the pending wipe first
   const caps = detectCaps();
   const blocked = pushUnavailableReason(caps);
@@ -142,6 +174,9 @@ export async function enablePush(): Promise<PushState> {
 }
 
 export async function disablePush(): Promise<PushState> {
+  try { return await disablePushNow(); } finally { emitPushChange(); }
+}
+async function disablePushNow(): Promise<PushState> {
   try {
     const reg = await navigator.serviceWorker.getRegistration("/");
     await (await reg?.pushManager.getSubscription())?.unsubscribe();
