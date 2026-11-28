@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { ATTACHMENT_DB, clearAttachments, createAttachmentStore, createScopedStore, scopedDbName, wipeAllScopes, type ScopeRegistry } from "@/lib/attachment-store";
+import { ATTACHMENT_DB, clearAttachments, createAttachmentStore, createScopedStore, localStorageRegistry, scopedDbName, wipeAllScopes, type ScopeRegistry } from "@/lib/attachment-store";
 import { bindOwnerScope, createLocalAttachments } from "@/lib/local-attachments";
 import { getOwnerScope, resetOwnerScopeForTests, setOwnerScope, subscribeOwnerScope } from "@/lib/owner-scope";
 import { createAuthClient, parseOwnerScope } from "@/lib/owner-auth";
@@ -98,6 +98,71 @@ describe("per-owner scope of the device-local photo store", () => {
       for (const s of [A, B]) { scoped.setScope(s); expect(await ids(scoped)).toEqual([]); }
     });
   }
+
+  describe("P2 (registry cannot be saved): the wipe never claims success while scoped photos could remain", () => {
+    const storage = (over: Partial<Pick<Storage, "getItem" | "setItem" | "removeItem">> = {}) => {
+      const data = new Map<string, string>();
+      return { getItem: (k: string) => data.get(k) ?? null, setItem: (k: string, v: string) => { data.set(k, v); }, removeItem: (k: string) => { data.delete(k); }, ...over };
+    };
+    const full = () => storage({ setItem: () => { throw new DOMException("quota", "QuotaExceededError"); } });
+    const mk = (st: ReturnType<typeof storage> | undefined, databases: boolean | "rejects") => {
+      const idb = fakeIDB(); idb.supportsDatabases = databases === true;
+      if (databases === "rejects") { idb.supportsDatabases = true; Object.defineProperty(idb, "databases", { get: () => async () => { throw new Error("boom"); } }); }
+      const registry = localStorageRegistry(st);
+      return { idb, registry, scoped: createScopedStore(idb as unknown as IDBFactory, registry) };
+    };
+
+    it("the reproduction: no databases(), a registry whose setItem throws, put → clearAll: the live-known scope IS wiped and the wipe reports it could not be sure", async () => {
+      const { scoped } = mk(full(), false);
+      scoped.setScope(A); await scoped.put(rec("a1"));
+      const r = await scoped.clearAll();
+      expect(await ids(scoped)).toEqual([]);                          // the photo is gone (wiped through the live-known scope)
+      expect(r).toEqual({ ok: false, reason: "unavailable" });        // …and sign-out / erase-all will name the photos as a leftover
+      expect(await clearAttachments(scoped)).toBe(false);
+    });
+    it("…also when databases() REJECTS", async () => {
+      const { scoped } = mk(full(), "rejects");
+      scoped.setScope(A); await scoped.put(rec("a1"));
+      expect(await clearAttachments(scoped)).toBe(false);
+      expect(await ids(scoped)).toEqual([]);
+    });
+    it("a browser with no usable localStorage at all (scope cannot be recorded) is the same", async () => {
+      const { scoped } = mk(undefined, false);
+      scoped.setScope(A); await scoped.put(rec("a1"));
+      expect(await clearAttachments(scoped)).toBe(false);
+      expect(await ids(scoped)).toEqual([]);
+    });
+    it("a corrupt registry value is a discovery failure too", async () => {
+      const { scoped } = mk(storage({ getItem: () => "{not json" }), false);
+      scoped.setScope(A); await scoped.put(rec("a1"));
+      expect(await clearAttachments(scoped)).toBe(false);
+    });
+    it("the live-known scopes are wiped even when the registry would not list them (two owners in one page session)", async () => {
+      const { scoped } = mk(full(), false);
+      scoped.setScope(A); await scoped.put(rec("a1")); scoped.setScope(B); await scoped.put(rec("b1"));
+      await scoped.clearAll();
+      for (const sc of [A, B]) { scoped.setScope(sc); expect(await ids(scoped)).toEqual([]); }
+    });
+    it("happy paths still report success: databases() works (even with a broken registry); a healthy registry works without databases(); a device that stored nothing", async () => {
+      const a = mk(full(), true);
+      a.scoped.setScope(A); await a.scoped.put(rec("a1"));
+      expect(await clearAttachments(a.scoped)).toBe(true); expect(await ids(a.scoped)).toEqual([]);
+      const b = mk(storage(), false);
+      b.scoped.setScope(A); await b.scoped.put(rec("a1"));
+      expect(await clearAttachments(b.scoped)).toBe(true); expect(await ids(b.scoped)).toEqual([]);
+      const c = mk(full(), false);                                     // never stored anything: nothing could remain
+      expect(await clearAttachments(c.scoped)).toBe(true);
+      const d = mk(undefined, false);
+      expect(await clearAttachments(d.scoped)).toBe(true);
+    });
+    it("registry unit: a read of an absent key is not a failure; a throwing setItem, a missing storage and a corrupt value are counted", () => {
+      expect(localStorageRegistry(storage()).failures!()).toBe(0);
+      const ok = localStorageRegistry(storage()); expect(ok.read()).toEqual([]); ok.add(A); expect(ok.read()).toEqual([A]); expect(ok.failures!()).toBe(0);
+      const q = localStorageRegistry(full()); q.add(A); expect(q.failures!()).toBe(1);
+      const n = localStorageRegistry(undefined); n.add(A); expect(n.failures!()).toBe(1);
+      const c = localStorageRegistry(storage({ getItem: () => "[1" })); c.read(); expect(c.failures!()).toBe(1);
+    });
+  });
 
   it("no IndexedDB at all: the wipe counts as done", async () => {
     expect(await wipeAllScopes(undefined, memRegistry())).toEqual({ ok: false, reason: "absent" });
