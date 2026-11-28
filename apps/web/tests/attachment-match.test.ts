@@ -14,11 +14,14 @@ describe("text normalisation", () => {
     expect(normalizeText("[image]")).toBe("");
     expect(normalizeText("[media attached: photo.jpg (image/jpeg)]\nشوف")).toBe("شوف");
     expect(normalizeText("[صورة]")).toBe("");
+    expect(normalizeText("User sent image(s) with no text.")).toBe(""); // the sentence an older engine showed as the owner's words
+    expect(normalizeText("User sent image with no text")).toBe("");
     expect(normalizeText("(image) هذه")).toBe("هذه");
     expect(normalizeText("شوف [المرفق] هنا")).toBe("شوف [المرفق] هنا"); // an ordinary bracket stays
   });
   it("placeholder-only: has text, but only a media placeholder", () => {
     expect(isPlaceholderOnly("[image]")).toBe(true);
+    expect(isPlaceholderOnly("User sent image(s) with no text.")).toBe(true);
     expect(isPlaceholderOnly("<media:image> <media:image>")).toBe(true);
     expect(isPlaceholderOnly("")).toBe(false);
     expect(isPlaceholderOnly("   ")).toBe(false);
@@ -36,6 +39,8 @@ describe("matching a local photo copy to its history row", () => {
     expect(m([row("r1", "", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" });
     expect(m([row("r1", "[image]", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" });
     expect(m([row("r1", "<media:image>", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" });
+    expect(m([row("r1", "User sent image(s) with no text.", T0 + 1000)], [rec("c1", "", T0)])).toEqual({ r1: "c1" }); // older engine
+    expect(m([row("r1", "", T0 + 1000, { hasServerMedia: false })], [rec("c1", "", T0)])).toEqual({ r1: "c1" }); // current engine: "" + an unavailable media entry
   });
   it("the row's time must be within ±3 minutes of the send (inclusive), otherwise nothing is guessed", () => {
     expect(m([row("r1", "x", T0 + MATCH_WINDOW_MS)], [rec("c1", "x", T0)])).toEqual({ r1: "c1" });

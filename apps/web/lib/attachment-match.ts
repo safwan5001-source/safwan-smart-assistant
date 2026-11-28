@@ -13,7 +13,8 @@
  *     rows and records (identical texts sent close together) is paired in time order, each pair inside the window; any other group
  *     (a row without a record, a record without a row, more of one side) is ambiguous and matches nothing.
  * Text is compared after trimming, collapsing whitespace, removing invisible/bidi marks and the engine's media placeholders
- * (`<media:image>`, `[image]` …), so an image-only message («»), a placeholder row and a caption-less photo all compare equal.
+ * (`<media:image>`, `[image]`, and the sentence older engines put there: «User sent image(s) with no text.»), so an image-only message
+ * (the current engine returns text «» plus a media entry), a placeholder row and a caption-less photo all compare equal.
  * Known limits: a device clock more than ±3 minutes off the engine's never matches (nothing is shown); an engine that rewrites a
  * caption beyond the placeholders above never matches; rows paged out of the loaded history cannot match until they are loaded.
  */
@@ -33,7 +34,7 @@ export type MatchRow = {
 export type MatchRecord = { clientMsgId: string; text: string; sentAt: number; runId?: string; matchedRowId?: string };
 
 const INVISIBLE = /[​-‏‪-‮⁦-⁩﻿]/g;
-const PLACEHOLDER = /<media:[a-z0-9_-]+>|\[(?:media attached|image|images|photo|photos|attachment|صورة|صور|مرفق)[^\]\n]{0,200}\]|\((?:image|photo|صورة)\)/gi;
+const PLACEHOLDER = /User sent images?(?:\(s\))? with no text\.?|<media:[a-z0-9_-]+>|\[(?:media attached|image|images|photo|photos|attachment|صورة|صور|مرفق)[^\]\n]{0,200}\]|\((?:image|photo|صورة)\)/gi;
 const squash = (t: string) => t.replace(INVISIBLE, "").normalize("NFC").replace(/\s+/g, " ").trim();
 /** Text without the engine's media placeholders, whitespace collapsed. */
 export const normalizeText = (t: string): string => squash(String(t ?? "").replace(PLACEHOLDER, " "));
