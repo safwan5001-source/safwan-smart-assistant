@@ -24,18 +24,20 @@ export function useMediaQuery(query: string): boolean {
 }
 
 /** `checkedAt`: epoch ms when the current `status` ANSWERED (null while checking), for the "last check" line of the status indicators. */
-export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void; checkedAt: number | null } {
+export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void; refreshQuiet: () => void; checkedAt: number | null } {
   const [state, setState] = useState<{ status: AssistantStatus; checkedAt: number | null }>({ status: { server: "checking" }, checkedAt: null });
   const refresh = useCallback(() => {
     setState({ status: { server: "checking" }, checkedAt: null });
     void assistantService.status().then((status) => setState({ status, checkedAt: Date.now() }));
   }, []);
+  /** Re-reads the health WITHOUT flipping every indicator to «checking» (used on focus, throttled by the caller). */
+  const refreshQuiet = useCallback(() => { void assistantService.status().then((status) => setState({ status, checkedAt: Date.now() })); }, []);
   useEffect(() => {
     let live = true;
     void assistantService.status().then((status) => live && setState({ status, checkedAt: Date.now() }));
     return () => { live = false; };
   }, []);
-  return { status: state.status, refresh, checkedAt: state.checkedAt };
+  return { status: state.status, refresh, refreshQuiet, checkedAt: state.checkedAt };
 }
 
 /** Keeps a local search box in sync when global search navigates to the same page with a new ?q=. */

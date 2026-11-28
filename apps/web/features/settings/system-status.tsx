@@ -4,13 +4,14 @@
  * the engine's own /status, what a real voice call learned, this device's push registration. Nothing is typed by hand, and "no data"
  * reads «غير معروف» with no success colour. The old direct-Claude key is not a source of any indicator here.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Icon from "@/components/icon";
 import { Badge } from "@/components/ui";
 import { useAssistant } from "@/components/assistant-context";
 import { useVoiceAvailability } from "@/lib/basht-voice";
 import { relative } from "@/lib/basht-control";
 import { engineStatusStore, useEngineStatus } from "@/lib/engine-status-store";
+import { attachHealthRefresh, recheckAll, startVisibleTick } from "@/lib/status-refresh";
 import { watchPushState, type PushState } from "@/lib/push-client";
 import { ATTACHMENT_KEYS } from "@/lib/engine-status";
 import { checkedText, readApprovals, readEngine, readPush, readServer, readVoice, readingLabel, statusIcon, statusTone, type EngineSnapshot, type StatusReading } from "@/lib/status-model";
@@ -22,7 +23,7 @@ export function StatusBadge({ r }: { r: StatusReading }) {
 
 /** The readings the settings and dashboard show, from the shared sources. `push` is read only when `withPush` (it asks the browser). */
 export function useReadings(withPush = false) {
-  const { status, refresh, checkedAt } = useAssistant();
+  const { status, refresh, refreshQuiet, checkedAt } = useAssistant();
   const snap = useEngineStatus(status.server === "online" && status.bashtChat);
   const learned = useVoiceAvailability();
   const [push, setPush] = useState<{ state: PushState | "loading"; at: number | null }>({ state: "loading", at: null });
@@ -31,16 +32,21 @@ export function useReadings(withPush = false) {
     if (!withPush) return;
     return watchPushState((state, at) => setPush({ state, at }));
   }, [withPush, checkedAt]);
-  // "now" for the «قبل N» text: advances only when something is re-read, never on a timer
+  // the public health re-reads on the same focus/visible trigger as the engine's own status (30 s throttle, no polling)
+  const checkedRef = useRef<number | null>(checkedAt);
+  checkedRef.current = checkedAt;
+  useEffect(() => attachHealthRefresh({ getCheckedAt: () => checkedRef.current, refreshQuiet }), [refreshQuiet]);
+  // "now" for the «قبل N» text: advances when something is re-read, and once a minute WHILE THE PAGE IS VISIBLE (no fetch)
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => { setNow(Date.now()); }, [checkedAt, snap.at, push.at]);
+  useEffect(() => startVisibleTick(() => setNow(Date.now())), []);
 
   const server = readServer(status, checkedAt);
   const engine = readEngine(status, checkedAt, snap);
   const voice = readVoice(snap, { speak: learned.speak, reason: learned.reason || "", at: learned.speakAt, failed: learned.fail, transcribe: learned.transcribe });
   const pushReading = readPush(push.state, push.at);
   const approvals = readApprovals(snap);
-  const recheck = () => { refresh(); void engineStatusStore.refresh({ force: true }); };
+  const recheck = () => recheckAll({ refresh, engineRefresh: (o) => engineStatusStore.refresh(o) });
   return { status, snap, now, server, engine, voice, push: pushReading, approvals, recheck };
 }
 
