@@ -43,6 +43,7 @@ describe("an owner's image message is never an empty bubble", () => {
   it("…and a local copy rescues a row whose server media is unavailable", () => {
     const html = mm({ ownerNoText: true, media: [srvImg("b".repeat(32), { available: false })], local: [local()] });
     expect(html).toContain('src="blob:local/c1:a"');
+    expect(html).not.toContain(MEDIA_TEXT.unavailable); // one photo, not the photo plus an «unavailable» twin
   });
   it("a message WITH text and no media renders nothing extra; photos still being read from the device are not flagged unavailable", () => {
     expect(mm({ ownerNoText: false })).toBe("");

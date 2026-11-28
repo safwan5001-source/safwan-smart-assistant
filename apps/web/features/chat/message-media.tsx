@@ -88,7 +88,8 @@ export default function MessageMedia({ sessionKey, messageId, media, local, owne
   const open = (it: ViewerItem) => { if (onOpen) onOpen(it); else setOwn(items.findIndex((x) => x.id === it.id)); };
   const all = media ?? [];
   const images = items.filter((i) => i.kind === "image");
-  const brokenImages = all.filter((m) => m.kind === "image" && !serverImage(m)); // the engine lists them but cannot serve them
+  // the engine lists them but cannot serve them (a local copy of the owner's photos stands in for them, so no «unavailable» tile next to it)
+  const brokenImages = images.some((i) => i.local) ? [] : all.filter((m) => m.kind === "image" && !serverImage(m));
   const others = all.filter((m) => m.kind !== "image");
   // an owner's message without text and without any picture to show: say so (never an empty bubble)
   const placeholder = ownerNoText && !images.length && !brokenImages.length && !others.length;
