@@ -150,12 +150,13 @@ describe("GET /api/basht/engine-status (BFF)", () => {
 
 describe("browser client + store: no polling, cached", () => {
   const res = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  it("401/403/disabled = null (not asked: no data), a network failure or a non-answer = reachable false", async () => {
+  it("401/403/404/429/503 = null (not asked: no data), a network failure or a non-answer = reachable false", async () => {
     const mk = (f: () => Promise<Response>) => createBashtClient(f as unknown as typeof fetch);
     expect(await mk(async () => res(401, { error: "unauthorized" })).engineStatus()).toBeNull();
     expect(await mk(async () => res(403, { error: "forbidden" })).engineStatus()).toBeNull();
     expect(await mk(async () => res(503, { error: "disabled" })).engineStatus()).toBeNull();
-    expect(await mk(async () => res(503, { error: "unavailable" })).engineStatus()).toEqual(unknownEngineStatus());
+    expect(await mk(async () => res(503, { error: "unavailable" })).engineStatus()).toBeNull(); // an outage of the door is no data, not "asked and nobody answered"
+    expect(await mk(async () => res(500, { error: "x" })).engineStatus()).toEqual(unknownEngineStatus());
     expect(await mk(async () => { throw new Error("net"); }).engineStatus()).toEqual(unknownEngineStatus());
     expect(await mk(async () => res(200, { ok: true, link: { state: "up" } })).engineStatus()).toMatchObject({ reachable: true, link: { state: "up" } });
     expect(await mk(async () => new Response("<html>", { status: 200 })).engineStatus()).toEqual(unknownEngineStatus());
