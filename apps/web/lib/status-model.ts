@@ -81,15 +81,26 @@ export function readEngine(app: AssistantStatus, appCheckedAt: number | null, sn
     // not read (signed out, not asked yet): only the public gateway check speaks
     return reading(gateway, appCheckedAt, gateway === "down" ? { detail: "تعذّر الوصول إلى محرك باشت" } : gateway === "degraded" ? { detail: "محرك باشت قيد التشغيل" } : {});
   }
+  // The two sources are read at different times (the public health at load / on focus, the engine's own status on its own 30 s clock).
+  // The gateway half only counts while it is AT LEAST AS NEW as the engine read: an older «starting» / «offline» never degrades a
+  // fresher signed read, and the row is stamped with the OLDER of the sources it actually used.
+  const gwAt = appCheckedAt ?? 0;
+  const gwCounts = gwAt >= snap.at;
+  const usedAt = gwCounts ? Math.min(snap.at, gwAt) : snap.at;
   if (!engineAnswered(s)) {
-    // asked, no answer: the gateway answering while the app path does not is a partial failure, a dead gateway is down
-    return reading(gateway === "reachable" || gateway === "degraded" ? "degraded" : "down", snap.at, { detail: gateway === "reachable" ? "المحرك يعمل لكن مسار التطبيق إليه لا يستجيب" : "تعذّر الوصول إلى محرك باشت" });
+    // asked, no answer: a fresh gateway answering while the app path does not is a partial failure, a dead one is down; with only an
+    // older gateway reading nothing more than «could not read» can be said
+    if (!gwCounts) return reading("degraded", snap.at, { detail: "تعذّرت قراءة حالة المحرك الآن" });
+    return reading(gateway === "reachable" || gateway === "degraded" ? "degraded" : "down", usedAt, { detail: gateway === "reachable" ? "المحرك يعمل لكن مسار التطبيق إليه لا يستجيب" : "تعذّر الوصول إلى محرك باشت" });
   }
   const link = s.link.state;
   let level: StatusLevel = link === "up" ? "tested_ok" : link === "connecting" ? "degraded" : link === "down" ? "degraded" : "reachable";
-  if (gateway !== "reachable") level = worse(level, "degraded"); // success needs BOTH the signed read and the public gateway check to agree
-  const detail = link === "up" ? undefined : link === "connecting" ? "الاتصال الداخلي بالمحرك يُعاد الآن" : link === "down" ? "الاتصال الداخلي بالمحرك منقطع" : undefined;
-  return reading(level, snap.at, { ...(level === "tested_ok" ? { label: "جاهز" } : {}), ...(detail ? { detail } : {}) });
+  let detail = link === "up" ? undefined : link === "connecting" ? "الاتصال الداخلي بالمحرك يُعاد الآن" : link === "down" ? "الاتصال الداخلي بالمحرك منقطع" : undefined;
+  if (gwCounts && gateway !== "reachable") { // success needs the signed read AND a gateway check that is not older to agree
+    level = worse(level, "degraded");
+    detail ??= "بوابة المحرك لم تكن جاهزة عند آخر فحص";
+  }
+  return reading(level, usedAt, { ...(level === "tested_ok" ? { label: "جاهز" } : {}), ...(detail ? { detail } : {}) });
 }
 
 /**
