@@ -1,20 +1,26 @@
 /**
- * A picture's «إعادة المحاولة» re-reads the history. It must refresh what is ON SCREEN: inside a search-result window that is the
- * window around the picked message (its media metadata is refreshed in place — the window, its focus and the paged-in rows stay),
- * never the newest page (that would silently leave the window and scroll the owner away from the message). On the newest page it is the
- * ordinary latest-page load.
+ * One rule for a picture's «إعادة المحاولة»: it refreshes the AFFECTED MESSAGE wherever it lives — the newest page, a search window,
+ * rows paged in through «عرض الرسائل السابقة» (also those paged in while a window is open) — by re-reading a page around that
+ * message and replacing only its media metadata in the rows already on screen. It never changes the view: the window, the focus,
+ * the cursor and how much is paged in all stay exactly as they were.
  */
-import type { BashtMessage, BashtPage } from "./basht-client";
+import type { BashtMessage } from "./basht-client";
 
-export type ReloadOutcome = { kind: "latest" } | { kind: "window"; messages: BashtMessage[] };
+/** The message `id` as the freshly read page has it, or undefined (the engine no longer returns it). */
+export const freshRow = (page: { messages: readonly BashtMessage[] }, id: string): BashtMessage | undefined => page.messages.find((m) => m.id === id);
 
-export async function reloadCurrentView(a: {
-  /** A search window (not the newest page) is on screen, and the message it was opened around. */
-  windowed: boolean; anchor: string | null;
-  fetchAround: (messageId: string) => Promise<Pick<BashtPage, "messages">>;
-  loadLatest: () => void | Promise<void>;
-}): Promise<ReloadOutcome> {
-  if (a.windowed && a.anchor) return { kind: "window", messages: (await a.fetchAround(a.anchor)).messages };
-  await a.loadLatest();
-  return { kind: "latest" };
+/** `rows` with the media of message `id` replaced; the SAME array when `id` is not in it (so state does not change). */
+export function patchRowMedia(rows: BashtMessage[], id: string, fresh: Pick<BashtMessage, "media">): BashtMessage[] {
+  const i = rows.findIndex((m) => m.id === id);
+  if (i < 0) return rows;
+  return rows.map((m, k) => (k === i ? { ...m, media: fresh.media } : m));
+}
+
+/**
+ * Reads the page around `id` and returns the refreshed row, or null when it cannot be refreshed: no id (a row without an engine id
+ * cannot be addressed), or the engine no longer returns it.
+ */
+export async function refreshMessageMedia(id: string | null | undefined, fetchAround: (id: string) => Promise<{ messages: readonly BashtMessage[] }>): Promise<BashtMessage | null> {
+  if (!id) return null;
+  return freshRow(await fetchAround(id), id) ?? null;
 }

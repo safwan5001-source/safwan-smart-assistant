@@ -12,7 +12,7 @@ import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
 import { localAttachments, sendWithLocalCopy, toStoredImage } from "@/lib/local-attachments";
 import { turnOutcome } from "@/lib/turn-outcome";
-import { reloadCurrentView } from "@/lib/history-reload";
+import { patchRowMedia, refreshMessageMedia } from "@/lib/history-reload";
 
 const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
@@ -109,7 +109,6 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   // window each start a new view; an older page requested for an abandoned view is dropped when it arrives.
   const viewGen = useRef(0);
   const windowedRef = useRef(false); // a search window (not the newest page) is on screen
-  const windowAnchor = useRef<string | null>(null); // …and the message it was opened around
 
   // Only the latest load for the conversation still on screen may write: a slower, older response is dropped.
   const load = useCallback(async (k: string, keepError = false) => {
@@ -120,7 +119,6 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       if (!current()) return;
       const next = rowsAfterLoad(windowedRef.current, olderRowsRef.current, messagesRef.current, page.messages);
       if (next.leftWindow) { windowedRef.current = false; viewGen.current++; setFocusId(null); }
-      if (next.leftWindow) windowAnchor.current = null; // the window (and what it was opened around) is gone
       if (next.olderRows !== olderRowsRef.current) { olderRowsRef.current = next.olderRows; setOlderRows(next.olderRows); }
       setSessions(list); setMessages(page.messages); setWindowed(false);
       // older rows already paged in stay above; the cursor continues from them, else from this page
@@ -183,7 +181,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
 
   useEffect(() => {
     if (gate !== "open" || !key) return;
-    messagesRef.current = null; olderRowsRef.current = []; windowAnchor.current = null; // a new conversation on screen: nothing to reconcile with
+    messagesRef.current = null; olderRowsRef.current = []; // a new conversation on screen: nothing to reconcile with
     viewGen.current++;
     windowedRef.current = false;
     setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
@@ -305,22 +303,26 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const page = await bashtClient.historyPage(k, { around: messageId });
       if (keyRef.current !== k || gen !== loadGen.current || pick !== jumpGen.current) return;
       viewGen.current++; // an older page requested while this window loaded belongs to the previous view: it is dropped
-      olderRowsRef.current = []; windowedRef.current = true; windowAnchor.current = messageId;
+      olderRowsRef.current = []; windowedRef.current = true;
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); requestFocus(messageId);
     } catch (e) { setError(errText(e)); }
   }, [olderRows, messages, setOlder, requestFocus]);
-  /** A picture's «إعادة المحاولة»: re-reads what is on screen. In a search window that is the window itself (media refreshed in place;
-   *  the window, its focus and the paged-in rows stay); on the newest page, the ordinary load (what is paged in is kept). */
-  const reload = useCallback(async () => {
+  /**
+   * A picture's «إعادة المحاولة»: refreshes the affected MESSAGE wherever it lives (newest page, search window, rows paged in through
+   * «عرض الرسائل السابقة») by replacing only its media metadata (lib/history-reload). The view never changes: window, focus, cursor
+   * and paged-in extent stay. A row without an engine id (or a pending bubble) falls back to the ordinary newest-page load, but only
+   * when no search window is open (it would leave the window).
+   */
+  const refreshMedia = useCallback(async (messageId?: string | null) => {
     const k = keyRef.current;
     if (!k) return;
-    const inWindow = windowedRef.current && !!windowAnchor.current;
-    const gen = inWindow ? ++loadGen.current : loadGen.current; // a window refresh supersedes an older load in flight (the newest-page load takes its own turn)
-    const view = viewGen.current;
+    if (!messageId) { if (!windowedRef.current) void load(k, true); return; }
+    const gen = loadGen.current; // a load that started meanwhile carries newer data than this read
     try {
-      const out = await reloadCurrentView({ windowed: windowedRef.current, anchor: windowAnchor.current, loadLatest: () => load(k, true),
-        fetchAround: (id) => bashtClient.historyPage(k, { around: id }) });
-      if (out.kind === "window" && keyRef.current === k && gen === loadGen.current && view === viewGen.current && windowedRef.current) setMessages(out.messages);
+      const fresh = await refreshMessageMedia(messageId, (id) => bashtClient.historyPage(k, { around: id }));
+      if (!fresh || keyRef.current !== k || gen !== loadGen.current) return;
+      setMessages((m) => (m ? patchRowMedia(m, messageId, fresh) : m));
+      setOlderRows((o) => patchRowMedia(o, messageId, fresh));
     } catch (e) { if (keyRef.current === k) setError(errText(e)); }
   }, [load]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
@@ -329,5 +331,5 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   // keystroke) and pull the owner back to the focused message while reading elsewhere
   const shown = useMemo(() => (messages === null ? null : olderRows.length ? mergeRows(olderRows, messages) : messages), [olderRows, messages]);
   return { gate, sessions, messages: shown, live, error, unlock, recheck, send, waitRun, stop, refresh,
-    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, focusReq, setFocusId, windowed, backToLatest, reload };
+    retry, failedTurn, newConversation, resetting, loadEarlier, hasEarlier: older !== null, loadingOlder, jumpTo, focusId, focusReq, setFocusId, windowed, backToLatest, refreshMedia };
 }

@@ -199,8 +199,8 @@ export default function ChatScreen() {
     return items.flatMap((it) => it.kind === "engine" ? viewerItems({ sessionKey: engineKey, messageId: it.m.id, media: it.m.media, local: localMedia.byRow.get(localRowKey(it.m, it.i)) })
       : it.kind === "pending" ? viewerItems({ sessionKey: null, messageId: null, media: [], local: it.p.images }) : []);
   }, [view, items, basht.messages, engineKey, localMedia.byRow]);
-  // «إعادة المحاولة» on an unavailable picture: re-read the failed device photos AND the history (a server copy may be available now)
-  const retryMedia = useCallback(() => { localMedia.retry(); basht.reload(); }, [localMedia.retry, basht.reload]); // eslint-disable-line react-hooks/exhaustive-deps
+  // «إعادة المحاولة» on an unavailable picture: re-read the failed device photos AND refresh that message's media wherever it lives (a server copy may be available now)
+  const retryMedia = useCallback((messageId?: string | null) => { localMedia.retry(); void basht.refreshMedia(messageId); }, [localMedia.retry, basht.refreshMedia]); // eslint-disable-line react-hooks/exhaustive-deps
   const galleryRef = useRef(gallery);
   galleryRef.current = gallery;
   const openViewer = useCallback((item: ViewerItem) => {

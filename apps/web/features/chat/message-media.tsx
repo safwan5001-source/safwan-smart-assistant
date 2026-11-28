@@ -76,8 +76,8 @@ export default function MessageMedia({ sessionKey, messageId, media, local, owne
   localFailed?: boolean;
   /** Opens the shared (conversation-wide) viewer; without it this message opens its own. */
   onOpen?: (item: ViewerItem) => void;
-  /** Re-reads the history (an unavailable picture may be available now). */
-  onRetry?: () => void;
+  /** «إعادة المحاولة» on an unavailable picture: refreshes this message's media (given its engine id) — an unavailable picture may be available now. */
+  onRetry?: (messageId: string | null | undefined) => void;
   localOnly?: boolean;
 }) {
   const { toast } = useDialogs();
@@ -90,6 +90,7 @@ export default function MessageMedia({ sessionKey, messageId, media, local, owne
     try { downloadBlob(await fetchBlob(u), name); } catch { toast("تعذّر تنزيل الملف.", "error"); }
   };
   const open = (it: ViewerItem) => { if (onOpen) onOpen(it); else setOwn(items.findIndex((x) => x.id === it.id)); };
+  const retry = onRetry ? () => onRetry(messageId) : undefined; // the tile's retry refreshes THIS message
   const all = media ?? [];
   const images = items.filter((i) => i.kind === "image");
   // the engine lists them but cannot serve them (a local copy of the owner's photos stands in for them, so no «unavailable» tile next to it)
@@ -107,8 +108,8 @@ export default function MessageMedia({ sessionKey, messageId, media, local, owne
             const l = it.local ? local?.find((x) => "l:" + x.id === it.id) : undefined;
             return <ImageTile key={it.id} item={it} ratio={shown === 1 && l?.width && l.height ? Math.min(2, Math.max(0.6, l.width / l.height)) : undefined} onOpen={() => open(it)} />;
           })}
-          {brokenImages.map((m, i) => <UnavailableTile key={"b" + i} onRetry={onRetry} />)}
-          {placeholder && <UnavailableTile label={MEDIA_TEXT.imageUnavailable} onRetry={onRetry} />}
+          {brokenImages.map((m, i) => <UnavailableTile key={"b" + i} onRetry={retry} />)}
+          {placeholder && <UnavailableTile label={MEDIA_TEXT.imageUnavailable} onRetry={retry} />}
         </div>
       )}
       {localOnly && images.some((i) => i.local) && <small className="muted">{MEDIA_TEXT.localOnly}</small>}
