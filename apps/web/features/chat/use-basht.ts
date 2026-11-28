@@ -12,6 +12,7 @@ import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
 import { localAttachments, sendWithLocalCopy, toStoredImage } from "@/lib/local-attachments";
 import { turnOutcome } from "@/lib/turn-outcome";
+import { reloadCurrentView } from "@/lib/history-reload";
 
 const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
@@ -108,6 +109,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   // window each start a new view; an older page requested for an abandoned view is dropped when it arrives.
   const viewGen = useRef(0);
   const windowedRef = useRef(false); // a search window (not the newest page) is on screen
+  const windowAnchor = useRef<string | null>(null); // …and the message it was opened around
 
   // Only the latest load for the conversation still on screen may write: a slower, older response is dropped.
   const load = useCallback(async (k: string, keepError = false) => {
@@ -117,7 +119,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const [list, page] = await Promise.all([bashtClient.sessions(), bashtClient.historyPage(k)]);
       if (!current()) return;
       const next = rowsAfterLoad(windowedRef.current, olderRowsRef.current, messagesRef.current, page.messages);
-      if (next.leftWindow) { windowedRef.current = false; viewGen.current++; setFocusId(null); }
+      if (next.leftWindow) { windowedRef.current = false; windowAnchor.current = null; viewGen.current++; setFocusId(null); }
       if (next.olderRows !== olderRowsRef.current) { olderRowsRef.current = next.olderRows; setOlderRows(next.olderRows); }
       setSessions(list); setMessages(page.messages); setWindowed(false);
       // older rows already paged in stay above; the cursor continues from them, else from this page
@@ -182,7 +184,7 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
     if (gate !== "open" || !key) return;
     messagesRef.current = null; olderRowsRef.current = []; // a new conversation on screen: nothing to reconcile with
     viewGen.current++;
-    windowedRef.current = false;
+    windowedRef.current = false; windowAnchor.current = null;
     setMessages(null); setOlderRows([]); setOlder(null); setFocusId(null); setWindowed(false);
     void load(key);
     if (activeRun && key === APP_SESSION_KEY) void poll(activeRun);
@@ -302,12 +304,24 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
       const page = await bashtClient.historyPage(k, { around: messageId });
       if (keyRef.current !== k || gen !== loadGen.current || pick !== jumpGen.current) return;
       viewGen.current++; // an older page requested while this window loaded belongs to the previous view: it is dropped
-      olderRowsRef.current = []; windowedRef.current = true;
+      olderRowsRef.current = []; windowedRef.current = true; windowAnchor.current = messageId;
       setMessages(page.messages); setOlderRows([]); setOlder(olderOf(page)); setWindowed(true); requestFocus(messageId);
     } catch (e) { setError(errText(e)); }
   }, [olderRows, messages, setOlder, requestFocus]);
-  /** Re-reads the newest page without resetting what is paged in (a tile's «إعادة المحاولة»). */
-  const reload = useCallback(() => { if (keyRef.current) void load(keyRef.current, true); }, [load]);
+  /** A picture's «إعادة المحاولة»: re-reads what is on screen. In a search window that is the window itself (media refreshed in place;
+   *  the window, its focus and the paged-in rows stay); on the newest page, the ordinary load (what is paged in is kept). */
+  const reload = useCallback(async () => {
+    const k = keyRef.current;
+    if (!k) return;
+    const inWindow = windowedRef.current && !!windowAnchor.current;
+    const gen = inWindow ? ++loadGen.current : loadGen.current; // a window refresh supersedes an older load in flight (the newest-page load takes its own turn)
+    const view = viewGen.current;
+    try {
+      const out = await reloadCurrentView({ windowed: windowedRef.current, anchor: windowAnchor.current, loadLatest: () => load(k, true),
+        fetchAround: (id) => bashtClient.historyPage(k, { around: id }) });
+      if (out.kind === "window" && keyRef.current === k && gen === loadGen.current && view === viewGen.current && windowedRef.current) setMessages(out.messages);
+    } catch (e) { if (keyRef.current === k) setError(errText(e)); }
+  }, [load]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
 
   // one array per real change of the history: a new array on every render would re-run the screen's scroll effect (e.g. on each
