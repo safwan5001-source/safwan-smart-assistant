@@ -128,6 +128,25 @@ describe("local attachments (in-memory index over the device store)", () => {
     expect(await store.usage()).toEqual({ ok: true, value: { count: 1, bytes: 3 } });
   });
 
+  it("the save is not even STARTED after a clear, and one already in flight is undone (each guard on its own)", async () => {
+    const idb = fakeIDB(); const real = createAttachmentStore(idb as unknown as IDBFactory);
+    let puts = 0; let open!: () => void; const gate = new Promise<void>((r) => { open = r; });
+    const slow = { ...real, put: async (rec: Parameters<typeof real.put>[0]) => { puts++; await gate; return real.put(rec); } };
+    const mgr = createLocalAttachments(slow);
+    mgr.register({ clientMsgId: "early", text: "x", sentAt: 1, images: [img("a")] });
+    await settle(); // the save is in flight, held at the gate
+    expect(puts).toBe(1);
+    const cleared = mgr.clear();
+    open(); await cleared; await settle();
+    expect(await real.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } }); // the in-flight save did not resurrect "early"
+    const startedAfterClear = createLocalAttachments(slow);
+    const before = puts;
+    startedAfterClear.register({ clientMsgId: "z", text: "z", sentAt: 3, images: [img("c")] });
+    void startedAfterClear.clear(); // clear() in the same tick as register(): the chained save must see the new generation and not start
+    await settle();
+    expect(puts).toBe(before);
+  });
+
   it("a load that finishes after the clear does not bring old records back", async () => {
     const { idb, store } = setup();
     await store.put({ clientMsgId: "old", text: "o", sentAt: 1, images: [img("a")] });

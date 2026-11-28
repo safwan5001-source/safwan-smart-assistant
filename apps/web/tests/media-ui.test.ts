@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DialogsProvider } from "@/components/dialogs";
-import MediaViewer, { VIEWER_TEXT } from "@/components/media-viewer";
+import MediaViewer, { bytesFor, VIEWER_TEXT } from "@/components/media-viewer";
 import MessageMedia, { ImageTile, LiveImages, MEDIA_TEXT } from "@/features/chat/message-media";
 import { bashtMediaUrl, type BashtMedia } from "@/lib/basht-client";
 import { viewerItems, type LocalImageView, type ViewerItem } from "@/lib/viewer-items";
@@ -67,6 +67,15 @@ describe("image tile states", () => {
     const html = renderToStaticMarkup(createElement(ImageTile, { item, onOpen: () => {} }));
     expect(html).toContain("media-thumb loading");
     expect(html).toContain('src="/api/basht/media?x=1"');
+  });
+});
+
+describe("viewer bytes across next/prev", () => {
+  it("bytes tagged for another item or attempt read as loading (the previous picture never flashes), the right ones pass through", () => {
+    const ready = { key: "i1:0", status: "ready" as const, blob: new Blob(["x"]), url: "blob:a" };
+    expect(bytesFor(ready, "i1:0")).toBe(ready);
+    expect(bytesFor(ready, "i2:0")).toEqual({ status: "loading", blob: null, url: null });
+    expect(bytesFor(ready, "i1:1").status).toBe("loading"); // a retry of the same item starts from loading too
   });
 });
 

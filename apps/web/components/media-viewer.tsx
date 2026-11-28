@@ -24,6 +24,8 @@ export const VIEWER_TEXT = {
 type Bytes = { status: "loading" | "ready" | "error"; blob: Blob | null; url: string | null };
 type Tagged = Bytes & { key: string };
 const LOADING: Bytes = { status: "loading", blob: null, url: null };
+/** The bytes belong to ONE item+attempt: after next/prev the previous picture's bytes are never shown, not even for a frame. */
+export const bytesFor = (s: Tagged, key: string): Bytes => (s.key === key ? s : LOADING);
 
 /** The bytes of one item: a local copy is ready at once; a server item is fetched once (through the owner session) and shown from a blob URL. */
 function useItemBytes(item: ViewerItem, attempt: number): Bytes {
@@ -46,7 +48,7 @@ function useItemBytes(item: ViewerItem, attempt: number): Bytes {
     })();
     return () => { ctl.abort(); if (made) URL.revokeObjectURL(made); };
   }, [item, attempt, key]);
-  return s.key === key ? s : LOADING;
+  return bytesFor(s, key);
 }
 
 const fit = (nw: number, nh: number, vw: number, vh: number) => {

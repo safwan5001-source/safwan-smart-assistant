@@ -245,6 +245,10 @@ describe("a sent photo whose row has not appeared (the message must not vanish)"
     expect(pendingRecords([], [rec("c1", "x", T0, { runId: "r", matchedRowId: "r9" })], new Map(), opts)).toEqual([]);
     expect(pendingRecords([], [rec("c1", "x", T0, { runId: "r" })], new Map(), { now: T0 + 6 * 60 * min + 1 })).toEqual([]);
   });
+  it("a record superseded by a retry is not a separate pending bubble (its row, if any, still shows its photo)", () => {
+    expect(pendingRecords([], [{ ...rec("c1", "x", T0, { runId: "run-1" }), superseded: true }], new Map(), opts)).toEqual([]);
+    expect(matchAttachments([row("r1", "x", T0 + 1000)], [{ ...rec("c1", "x", T0, { runId: "run-1" }), superseded: true }]).matches.size).toBe(1);
+  });
   it("ordered by send time", () => {
     const recs = [rec("c2", "b", T0 + 5000, { runId: "r2" }), rec("c1", "a", T0, { runId: "r1" })];
     expect(pendingRecords([], recs, new Map(), opts).map((c) => c.clientMsgId)).toEqual(["c1", "c2"]);
