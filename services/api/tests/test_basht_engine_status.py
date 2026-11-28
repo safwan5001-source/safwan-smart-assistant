@@ -166,9 +166,41 @@ def test_a_failed_read_is_remembered_briefly_and_recovers(client, engine, monkey
     assert get(client)["ok"] is True and len(calls) == 2
 
 
-def test_the_engine_status_reader_does_not_write_audit_noise_per_cached_answer(client, engine):
+def _audits():
+    return [e for e in audit_log.recent(50) if e["event"] == "basht.voice_status"]
+
+
+def test_exactly_one_audit_line_per_real_engine_read_whichever_route_triggered_it(client, engine):
+    """The audit line is written where the engine is really read: engine-status first, then voice-status from the cache = ONE line (it used to be none)."""
     _, replies = engine
     replies["/status"] = GOOD
     audit_log.clear()
-    get(client); get(client); get(client)
-    assert len([e for e in audit_log.recent(10) if e["event"] == "basht.voice_status"]) <= 1
+    get(client)
+    assert call(client, "GET", "/internal/v1/basht/voice-status").json()["speak"] == "ready"
+    get(client)
+    assert len(_audits()) == 1 and _audits()[0]["status"] == GOOD["voice"]["speak"]
+    audit_log.clear(); bc.reset_limits()
+    call(client, "GET", "/internal/v1/basht/voice-status")  # the other order
+    get(client)
+    assert len(_audits()) == 1
+
+
+def test_a_second_real_read_after_the_cache_expires_is_a_second_line(client, engine, monkeypatch):
+    calls, replies = engine
+    replies["/status"] = GOOD
+    audit_log.clear()
+    get(client)
+    now = [bc.time.monotonic() + bc.VOICE_STATUS_TTL + 1]
+    monkeypatch.setattr(bc.time, "monotonic", lambda: now[0])
+    get(client)
+    assert len(calls) == 2 and len(_audits()) == 2
+
+
+def test_a_failed_real_read_is_audited_once_as_unavailable_and_carries_no_engine_text(client, engine):
+    from urllib.error import URLError
+    _, replies = engine
+    replies["/status"] = URLError("engine.internal refused")
+    audit_log.clear()
+    get(client); get(client); call(client, "GET", "/internal/v1/basht/voice-status")
+    assert len(_audits()) == 1 and _audits()[0]["status"] == "unavailable"
+    assert "engine.internal" not in json.dumps(_audits()[0])
