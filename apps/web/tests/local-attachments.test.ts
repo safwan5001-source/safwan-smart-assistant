@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createAttachmentStore } from "@/lib/attachment-store";
 import { base64ToBlob, createLocalAttachments, LOAD_RETRY_MS, sendWithLocalCopy } from "@/lib/local-attachments";
 import { fakeIDB } from "./stubs/fake-idb";
+import { BashtError, isDefiniteRefusal } from "@/lib/basht-client";
 
 const img = (id: string) => ({ id, name: id + ".jpg", mime: "image/jpeg", size: 3, width: 10, height: 20, blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }) });
 const settle = () => new Promise((r) => setTimeout(r, 30));
@@ -227,17 +228,44 @@ describe("sendWithLocalCopy: one owner turn with photos", () => {
     expect(by[first.clientMsgId].superseded).toBe(true);
     expect(by[retry.clientMsgId].superseded).toBeFalsy();
   });
-  it("the engine REFUSING the turn discards the device copy (nothing was sent) and rethrows the error", async () => {
+  it("the engine DEFINITELY refusing the turn (validation, 4xx) discards the device copy (nothing was sent) and rethrows the error", async () => {
     const { store, mgr } = setup();
-    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], post: async () => { throw new Error("busy"); } })).rejects.toThrow("busy");
+    const refusal = new BashtError("image_too_large");
+    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], isRefusal: isDefiniteRefusal, post: async () => { throw refusal; } })).rejects.toBe(refusal);
     await settle();
     expect(mgr.getSnapshot()).toEqual([]);
     expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
   });
+  it("F5: a network error or a timeout (the bridge may have accepted the turn) KEEPS the copy, marked uncertain — on the device too", async () => {
+    for (const code of ["network", "timeout", "unavailable"]) {
+      const { store, mgr } = setup();
+      await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], isRefusal: isDefiniteRefusal, post: async () => { throw new BashtError(code); } })).rejects.toThrow();
+      await settle();
+      expect(mgr.getSnapshot()).toHaveLength(1);
+      expect(mgr.getSnapshot()[0]).toMatchObject({ uncertain: true, text: "x" });
+      expect(mgr.getSnapshot()[0].runId).toBeUndefined();
+      const l = await store.list();
+      expect(l.ok && l.value[0]).toMatchObject({ uncertain: true });
+    }
+    expect(isDefiniteRefusal(new Error("x"))).toBe(false); // an unknown error is never assumed to be a refusal
+    for (const code of ["bad_request", "too_many_images", "unsupported_image", "busy", "rate_limited", "unauthorized"]) expect(isDefiniteRefusal(new BashtError(code))).toBe(true);
+    for (const code of ["network", "timeout", "unavailable", "not_found"]) expect(isDefiniteRefusal(new BashtError(code))).toBe(false);
+  });
+  it("how a turn ended is remembered (markDone with the outcome), once", async () => {
+    const { store, mgr } = setup();
+    mgr.register({ clientMsgId: "c1", text: "x", sentAt: 1, images: [img("a")] });
+    mgr.attachRun("c1", "run-1");
+    await settle();
+    mgr.markDone("run-1", "error"); mgr.markDone("run-1", "done"); // the first outcome stands
+    await settle();
+    expect(mgr.getSnapshot()[0]).toMatchObject({ runDone: true, runEnd: "error" });
+    const l = await store.list();
+    expect(l.ok && l.value[0]).toMatchObject({ runDone: true, runEnd: "error" });
+  });
   it("a refused RETRY leaves the failed attempt it would have replaced exactly as it was", async () => {
     const { mgr } = setup();
     const first = await sendWithLocalCopy(mgr, { text: "x", images: [img("a")], post: async () => "run-1" });
-    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], supersedes: first.clientMsgId, post: async () => { throw new Error("no"); } })).rejects.toThrow();
+    await expect(sendWithLocalCopy(mgr, { text: "x", images: [img("a")], supersedes: first.clientMsgId, isRefusal: isDefiniteRefusal, post: async () => { throw new BashtError("busy"); } })).rejects.toThrow();
     expect(mgr.getSnapshot().map((e) => [e.clientMsgId, !!e.superseded])).toEqual([[first.clientMsgId, false]]);
   });
 });
