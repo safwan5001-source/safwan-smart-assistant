@@ -193,6 +193,47 @@ describe("matching a local photo copy to its history row", () => {
       const assistant = matchAttachments([row("r1", "x", T0, { role: "assistant" })], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
       unbindIs(assistant, ["c1"]);
     });
+    describe("an exact run id overrides a stale text-only binding (review: wrong photo kept after the real row arrived)", () => {
+      it("repro: the photo was bound by text to ANOTHER device's image-only row; the real run-stamped row then arrives → the photo moves to it", () => {
+        const stale = rec("c1", "", T0, { runId: "run-1", matchedRowId: "other", runDone: true });
+        const rows = [row("other", "", T0 + 3000), row("real", "", T0 + 6000, { runId: "run-1" })];
+        const r = matchAttachments(rows, [stale]);
+        expect([...r.matches]).toEqual([["real", "c1"]]);                       // not on the other device's message any more
+        expect(r.fresh).toEqual([{ rowKey: "real", clientMsgId: "c1", via: "runId", persist: true }]); // bind() overwrites the stale binding
+        unbindIs(r, []);                                                          // (an unbind after the bind would erase it: none is asked for)
+      });
+      it("sequence: first load has only the other row (fallback binds it, persisted once the turn finished), the next load brings the run-stamped row", () => {
+        const first = matchAttachments([row("other", "", T0 + 3000)], [rec("c1", "", T0, { runId: "run-1", runDone: true })]);
+        expect(first.fresh).toEqual([{ rowKey: "other", clientMsgId: "c1", via: "text", persist: true }]);
+        const second = matchAttachments([row("other", "", T0 + 3000), row("real", "", T0 + 6000, { runId: "run-1" })],
+          [rec("c1", "", T0, { runId: "run-1", runDone: true, matchedRowId: "other" })]);
+        expect([...second.matches]).toEqual([["real", "c1"]]);
+        expect(second.fresh.map((f) => f.rowKey)).toEqual(["real"]);
+      });
+      it("two records, one bound by text to the wrong row: only that one moves, the other keeps its correct row", () => {
+        const rows = [row("wrong", "x", T0 + 1000), row("right2", "x", T0 + 61_000), row("x1", "x", T0 + 2000, { runId: "run-1" })];
+        const recs = [rec("c1", "x", T0, { runId: "run-1", matchedRowId: "wrong", runDone: true }), rec("c2", "x", T0 + 60_000, { runId: "run-2", matchedRowId: "right2", runDone: true })];
+        const r = matchAttachments(rows, recs);
+        expect(Object.fromEntries(r.matches)).toEqual({ x1: "c1", right2: "c2" });
+        unbindIs(r, []);
+      });
+      it("a record WITHOUT a run id bound by text to a row that another record claimed by run id is unbound", () => {
+        const r = matchAttachments([row("r1", "x", T0 + 1000, { runId: "run-1" })], [rec("c1", "x", T0, { runId: "run-1" }), rec("c2", "x", T0, { matchedRowId: "r1" })]);
+        expect([...r.matches]).toEqual([["r1", "c1"]]);
+        unbindIs(r, ["c2"]);
+      });
+      it("a persisted binding whose record's run id matches a DIFFERENT loaded row is dropped; a row stamped with some other run id never keeps it", () => {
+        const dropped = matchAttachments([row("a", "x", T0), row("b", "x", T0 + 1000, { runId: "run-1" })], [rec("c1", "x", T0, { runId: "run-1", matchedRowId: "a" })]);
+        expect([...dropped.matches]).toEqual([["b", "c1"]]);
+        const clash = matchAttachments([row("a", "x", T0, { runId: "other" })], [rec("c1", "x", T0, { runId: "run-1", matchedRowId: "a" })]);
+        expect(clash.matches.size).toBe(0); unbindIs(clash, ["c1"]);
+      });
+      it("exact matches do not depend on time or order (records sent out of row order still land on their own rows)", () => {
+        const rows = [row("r2", "", T0 + 10 * min, { runId: "run-2" }), row("r1", "", T0 + 1000, { runId: "run-1" })];
+        const r = matchAttachments(rows, [rec("c1", "", T0 + 9 * min, { runId: "run-1" }), rec("c2", "", T0, { runId: "run-2" })]);
+        expect(Object.fromEntries(r.matches)).toEqual({ r1: "c1", r2: "c2" });
+      });
+    });
     it("a freed record (its binding dropped) is matched afresh in the same pass", () => {
       const r = matchAttachments([row("r1", "نص آخر", T0), row("r2", "x", T0 + 1000)], [rec("c1", "x", T0, { matchedRowId: "r1" })]);
       unbindIs(r, ["c1"]);

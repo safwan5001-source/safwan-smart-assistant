@@ -54,7 +54,6 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
      */
     load(o: { force?: boolean } = {}): Promise<void> {
       if (loaded && (loadState !== "failed" || (!o.force && now() - failedAt < LOAD_RETRY_MS))) return loaded;
-      if (loadState === "loading" && loaded) return loaded;
       const gen = generation;
       loadState = "loading";
       loaded = store.list().then((r) => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAttachmentStore } from "@/lib/attachment-store";
-import { base64ToBlob, createLocalAttachments, sendWithLocalCopy } from "@/lib/local-attachments";
+import { base64ToBlob, createLocalAttachments, LOAD_RETRY_MS, sendWithLocalCopy } from "@/lib/local-attachments";
 import { fakeIDB } from "./stubs/fake-idb";
 
 const img = (id: string) => ({ id, name: id + ".jpg", mime: "image/jpeg", size: 3, width: 10, height: 20, blob: new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }) });
@@ -167,6 +167,41 @@ describe("local attachments (in-memory index over the device store)", () => {
     expect(await mgr.clear()).toBe(true);
     expect(await store.usage()).toEqual({ ok: true, value: { count: 0, bytes: 0 } });
     expect(await createLocalAttachments(createAttachmentStore(undefined)).clear()).toBe(true);
+  });
+
+  it("a FAILED first list is not cached: the next load (after the cool-down) or a forced one (the retry press) reads again and the saved photos appear", async () => {
+    const idb = fakeIDB(); const real = createAttachmentStore(idb as unknown as IDBFactory);
+    await real.put({ clientMsgId: "old", text: "o", sentAt: 1, images: [img("a")] });
+    let lists = 0; const counted = { ...real, list: async () => { lists++; return real.list(); } };
+    let t = 1_000_000;
+    const mgr = createLocalAttachments(counted, { now: () => t });
+    idb.dropConnections(); idb.failOpens = 1;          // the first open fails, then IndexedDB recovers
+    await mgr.load();
+    expect(lists).toBe(1); expect(mgr.getSnapshot()).toEqual([]);   // not discovered yet
+    await mgr.load(); await mgr.load();                              // right away: inside the cool-down, no tight loop
+    expect(lists).toBe(1);
+    t += LOAD_RETRY_MS + 1;
+    await mgr.load();                                                // a history load after the cool-down: the second attempt
+    expect(lists).toBe(2);
+    expect(mgr.getSnapshot().map((e) => e.clientMsgId)).toEqual(["old"]);
+    await mgr.load(); await mgr.load();                              // a successful read is final
+    expect(lists).toBe(2);
+  });
+  it("the retry press (force) reads the list again at once, one attempt per press, even inside the cool-down", async () => {
+    const idb = fakeIDB(); const real = createAttachmentStore(idb as unknown as IDBFactory);
+    await real.put({ clientMsgId: "old", text: "o", sentAt: 1, images: [img("a")] });
+    let lists = 0; const counted = { ...real, list: async () => { lists++; return real.list(); } };
+    const mgr = createLocalAttachments(counted, { now: () => 5 });
+    idb.dropConnections(); idb.failOpens = 2;
+    await mgr.load();
+    expect(lists).toBe(1);
+    await mgr.load({ force: true });                  // press 1: still failing (the second failing open)
+    expect(lists).toBe(2); expect(mgr.getSnapshot()).toEqual([]);
+    await mgr.load({ force: true });                  // press 2: recovered
+    expect(lists).toBe(3);
+    expect(mgr.getSnapshot().map((e) => e.clientMsgId)).toEqual(["old"]);
+    await mgr.load({ force: true });                  // nothing left to retry
+    expect(lists).toBe(3);
   });
 
   it("a load that finishes after the clear does not bring old records back", async () => {
