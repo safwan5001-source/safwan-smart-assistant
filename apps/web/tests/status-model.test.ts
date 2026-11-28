@@ -13,6 +13,19 @@ const eng = (over: Record<string, unknown> = {}): EngineStatus => parseEngineSta
 const snap = (status: EngineStatus | null, at = NOW - 5000): EngineSnapshot => ({ status, at, observedAt: at }); // observed when asked, unless a test says otherwise
 const NO_VOICE = { speak: "unknown" as const, reason: "" as const, at: null };
 
+describe("request signing is information only (HMAC is not yet enabled)", () => {
+  it("the engine and voice rows never depend on what the engine says about signing, so tested_ok can never claim a signing success", () => {
+    const base = readEngine(online(), NOW, snap(eng())).level;
+    const baseVoice = readVoice(snap(eng()), NO_VOICE).level;
+    for (const mode of ["off", "optional", "required"]) for (const active of [true, false, null]) {
+      const signing = active === null ? { mode } : { mode, active };
+      expect(readEngine(online(), NOW, snap(eng({ signing }))).level, `${mode}/${active}`).toBe(base);
+      expect(readVoice(snap(eng({ signing })), NO_VOICE).level, `${mode}/${active}`).toBe(baseVoice);
+    }
+    expect(readEngine(online(), NOW, snap(eng({ signing: { mode: "optional", active: false } }))).level).not.toBe("down");
+  });
+});
+
 describe("the level vocabulary", () => {
   it("is exactly the six levels, each with a distinct Arabic label, tone and icon rule", () => {
     expect([...STATUS_LEVELS]).toEqual(["unknown", "configured", "reachable", "tested_ok", "degraded", "down"]);
