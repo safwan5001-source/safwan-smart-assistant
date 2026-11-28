@@ -30,7 +30,7 @@ export function useLocalAttachments(rows: BashtMessage[] | null, opts: { enabled
     if (!opts.enabled || !rows || !records.length) return none;
     const mrows: MatchRow[] = rows.map((m, i) => ({ key: localRowKey(m, i), role: m.role, text: m.text, at: m.at, hasServerMedia: (m.media ?? []).some(serverImage), runId: m.runId ?? null }));
     const r = matchAttachments(mrows, records);
-    const pending = opts.windowed ? [] : pendingRecords(mrows, records, r.matches, { now: Date.now(), liveRunIds: opts.liveRunId ? [opts.liveRunId] : [], skewMs: r.skewMs });
+    const pending = opts.windowed ? [] : pendingRecords(mrows, records, r.matches, { now: Date.now(), liveRunIds: opts.liveRunId ? [opts.liveRunId] : [], skewFor: r.skewFor });
     return { matches: r.matches, fresh: r.fresh, unbind: r.unbind, pending };
   }, [rows, records, opts.enabled, opts.windowed, opts.liveRunId]);
 
