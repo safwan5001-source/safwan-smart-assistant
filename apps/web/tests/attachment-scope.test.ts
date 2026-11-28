@@ -218,3 +218,31 @@ describe("owner scope plumbing", () => {
     expect(await down.status()).toMatchObject({ unavailable: true, owner_scope: null });
   });
 });
+
+describe("P2 (erase-all keeps the owner known): a photo sent right after «erase all local data» is persisted in the current scope", () => {
+  it("erase-all wipes EVERY scope but leaves the current scope known, so the next photo persists at once (and survives a reload)", async () => {
+    const idb = fakeIDB(); const registry = memRegistry(); const scoped = createScopedStore(idb as unknown as IDBFactory, registry);
+    const mgr = createLocalAttachments(scoped);
+    bindOwnerScope(scoped, mgr, { get: getOwnerScope, subscribe: subscribeOwnerScope });
+    setOwnerScope(A);
+    mgr.register({ clientMsgId: "before", text: "x", sentAt: 1, images: [img("a")] }); await settle();
+    const reader = (scope: string) => { const r = createScopedStore(idb as unknown as IDBFactory, memRegistry()); r.setScope(scope); return r; }; // a separate handle: the app's own store scope is never touched by the test
+    await reader(B).put(rec("other-owner"));
+    expect(await mgr.clearAll()).toBe(true);                       // what clearPrivateData does (it does NOT touch the owner scope)
+    expect(getOwnerScope()).toBe(A); expect(scoped.scope()).toBe(A);
+    expect(await ids(reader(B))).toEqual([]);                      // every scope was wiped
+    mgr.register({ clientMsgId: "after", text: "y", sentAt: 2, images: [img("b")] }); mgr.attachRun("after", "run-1"); await settle();
+    expect(mgr.getSnapshot()[0].persisted).toBe(true);             // persisted immediately, not memory-only
+    expect(await ids(reader(A))).toEqual(["after"]);               // and really in A's database
+  });
+  it("whereas ending the owner's session drops the scope: a photo then stays memory-only and writes nothing", async () => {
+    const idb = fakeIDB(); const scoped = createScopedStore(idb as unknown as IDBFactory, memRegistry());
+    const mgr = createLocalAttachments(scoped);
+    bindOwnerScope(scoped, mgr, { get: getOwnerScope, subscribe: subscribeOwnerScope });
+    setOwnerScope(A); await settle();
+    setOwnerScope(null);
+    mgr.register({ clientMsgId: "x", text: "x", sentAt: 1, images: [img("a")] }); await settle();
+    expect(mgr.getSnapshot()[0].persisted).toBe(false);
+    expect(idb.dbs.size).toBe(0);                                  // nothing was written anywhere
+  });
+});

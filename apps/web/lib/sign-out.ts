@@ -49,11 +49,21 @@ async function wipe(): Promise<WipeResult> {
   const filesCleared = await clearFiles().then(() => true, () => false);
   // the photos sent to BASHT are kept on this device too, per owner (a cache only the owner clears: this is that explicit moment): every scope goes
   const attachmentsCleared = await withTimeout(localAttachments().clearAll(), ATTACHMENT_WIPE_MS);
-  setOwnerScope(null); // no owner is signed in on this device any more: nothing scoped is read or written until the next sign-in
   // then the push server (it needs the device credentials, so they go last); an unreachable server is reported, never hidden
   const serverErased = await eraseRemoteDevice().catch(() => false);
   if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried
   return { filesCleared, serverErased, attachmentsCleared };
+}
+
+/**
+ * The owner's session ended on this device (sign-out, or ending this device's own session): wipe the private data AND forget which
+ * owner this was, so nothing scoped is read or written until the next sign-in. Settings' «erase all local data» deliberately does NOT
+ * use this: it wipes every scope's data but the owner stays signed in, so their scope stays known and new photos persist at once.
+ */
+export async function endOwnerOnDevice(): Promise<WipeResult> {
+  const r = await clearPrivateData();
+  setOwnerScope(null);
+  return r;
 }
 
 /** Set while this page is signing out on purpose: the login gate must not redirect mid-wipe (or over the "what stayed" notice).
@@ -67,5 +77,5 @@ export const markLeaving = () => { leaving = true; };
 export async function signOut(everywhere = false): Promise<WipeResult> {
   leaving = true; // before the cookie goes: a gate check landing during the wipe must not unload the page
   try { await authClient.logout(everywhere); } catch (e) { leaving = false; throw e; }
-  return clearPrivateData();
+  return endOwnerOnDevice();
 }

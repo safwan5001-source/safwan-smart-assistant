@@ -64,11 +64,17 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     expect(mod.wipeLeftovers(done!)).toEqual([]);
     await unmock();
   });
-  it("after the wipe no owner is signed in on this device: nothing scoped is read or written until the next sign-in", async () => {
-    const { setOwnerScope, getOwnerScope } = await import("@/lib/owner-scope");
+  it("sign-out (and ending this device's own session) forgets the owner: nothing scoped is read or written until the next sign-in; erase-all keeps the owner known", async () => {
     const { mod } = await load(async () => true);
+    const { setOwnerScope, getOwnerScope } = await import("@/lib/owner-scope"); // the same (freshly reset) module instance sign-out uses
     setOwnerScope("0123456789abcdef");
-    await mod.clearPrivateData();
+    expect(getOwnerScope()).toBe("0123456789abcdef");
+    await mod.clearPrivateData();                                  // settings «erase all local data»: the owner is still signed in
+    expect(getOwnerScope()).toBe("0123456789abcdef");
+    await mod.endOwnerOnDevice();                                  // ending the owner's session on this device
+    expect(getOwnerScope()).toBeNull();
+    setOwnerScope("0123456789abcdef");
+    await mod.signOut();                                           // the sign-out itself (the logout request is mocked)
     expect(getOwnerScope()).toBeNull();
     await unmock();
   });
@@ -95,6 +101,11 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     expect(both.ok).toBe(false); expect(both.text).toContain("الملفات"); expect(both.text).toContain("الصور");
     expect(mod.eraseSummary({ filesCleared: true, serverErased: true })).toMatchObject({ ok: true }); // an older result without the field is not a failure
     await unmock();
+  });
+  it("ending this device's own session from settings forgets the owner too (source contract)", () => {
+    const src = readFileSync(join(resolve(__dirname, ".."), "features/settings/security-settings.tsx"), "utf8");
+    expect(src).toContain("markLeaving(); return endOwnerOnDevice(); }");
+    expect(src).not.toContain("return clearPrivateData(); }");
   });
   it("the settings screen uses it (source contract)", () => {
     const src = readFileSync(join(resolve(__dirname, ".."), "features/settings/settings-screen.tsx"), "utf8");
