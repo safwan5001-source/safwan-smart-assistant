@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { ATTACHMENT_DB, clearAttachments, createAttachmentStore, createScopedStore, scopedDbName, wipeAllScopes, type ScopeRegistry } from "@/lib/attachment-store";
 import { bindOwnerScope, createLocalAttachments } from "@/lib/local-attachments";
 import { getOwnerScope, resetOwnerScopeForTests, setOwnerScope, subscribeOwnerScope } from "@/lib/owner-scope";
@@ -201,6 +203,11 @@ describe("owner scope plumbing", () => {
     let n = 0; subscribeOwnerScope(() => n++);
     setOwnerScope(A); setOwnerScope(A); setOwnerScope(B); setOwnerScope(null); setOwnerScope(null);
     expect(n).toBe(3);
+  });
+  it("the login gate feeds the scope from every status answer (signed out / not authenticated → unknown)", () => {
+    const src = readFileSync(join(resolve(__dirname, ".."), "components/owner-gate.tsx"), "utf8");
+    expect(src).toContain("setOwnerScope(s.authenticated ? s.owner_scope : null)");
+    expect(src.indexOf("if (s.unavailable) return;")).toBeLessThan(src.indexOf("setOwnerScope("));   // an outage keeps what was known
   });
   it("the status client returns the scope only for an authenticated owner (anything the server sent otherwise is ignored)", async () => {
     const mk = (body: unknown) => createAuthClient((async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch);

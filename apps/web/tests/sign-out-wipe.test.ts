@@ -64,6 +64,14 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     expect(mod.wipeLeftovers(done!)).toEqual([]);
     await unmock();
   });
+  it("after the wipe no owner is signed in on this device: nothing scoped is read or written until the next sign-in", async () => {
+    const { setOwnerScope, getOwnerScope } = await import("@/lib/owner-scope");
+    const { mod } = await load(async () => true);
+    setOwnerScope("0123456789abcdef");
+    await mod.clearPrivateData();
+    expect(getOwnerScope()).toBeNull();
+    await unmock();
+  });
   it("«erase all local data» (settings) shows the photo-wipe failure with the same leftover list as sign-out, and says nothing of the kind when it worked", async () => {
     const bad = await load(() => Promise.resolve(false));
     const r = await bad.mod.clearPrivateData();
