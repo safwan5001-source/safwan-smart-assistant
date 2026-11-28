@@ -165,8 +165,8 @@ describe("viewer safety and robustness (source contract)", () => {
     expect(chat).toContain("useLocalAttachments(");
     expect(chat).toContain("ownerNoText={noText}");
     expect(chat).toContain("localFailed={view.localFailed}"); // the failed-photo tile is passed independently of the caption
-    expect(chat).toMatch(/const retryMedia = useCallback\(\(\) => \{ localMedia\.retry\(\); basht\.reload\(\); \}/); // the tile's retry re-reads failed device photos too
-    expect(chat).not.toContain("onRetry={basht.reload}");
+    expect(chat).toMatch(/const retryMedia = useCallback\(\(messageId\?: string \| null\) => \{ localMedia\.retry\(\); void basht\.refreshMedia\(messageId\); \}/); // the tile's retry re-reads failed device photos too
+    expect(chat).not.toContain("onRetry={basht.reload}"); expect(chat).not.toContain("basht.reload");
     expect(chat).toMatch(/live && \(/);
   });
 });
