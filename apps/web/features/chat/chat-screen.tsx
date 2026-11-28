@@ -479,7 +479,7 @@ export default function ChatScreen() {
       <article key={"p-" + p.clientMsgId} className="bubble user">
         {parsed.text}
         {p.status === "loading" && <span className="media-thumb loading" aria-busy="true" aria-label="جارٍ تحميل الصورة" />}
-        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} ownerNoText={p.status === "failed"} onOpen={openViewer} onRetry={retryMedia} localOnly />
+        <MessageMedia sessionKey={null} messageId={null} media={[]} local={p.images} localFailed={p.status === "failed"} onOpen={openViewer} onRetry={retryMedia} localOnly />
         <div className="meta"><time className="num" dateTime={new Date(p.sentAt).toISOString()}>{formatTime(p.sentAt)}</time></div>
       </article>
     );
@@ -487,17 +487,18 @@ export default function ChatScreen() {
   /** A message from BASHT's own record (the engine): read here, kept there. */
   const engineBubble = (m: BashtMessage, key: string, sk: string | null = engineKey, idx = -1) => {
     if (m.kind === "reset") return <ResetDivider key={key} at={m.at} />;
-    const loadingLocal = idx >= 0 && localMedia.loadingRows.has(localRowKey(m, idx));
-    const view = engineRowView(m, parseVoiceNote, loadingLocal); // placeholder-only text is no caption; the provider's quota notice reads in clear Arabic
+    const lk = idx >= 0 ? localRowKey(m, idx) : null;
+    const localState = lk && localMedia.loadingRows.has(lk) ? "loading" : lk && localMedia.failedRows.has(lk) ? "failed" : lk && localMedia.byRow.has(lk) ? "ready" : "none";
+    const view = engineRowView(m, parseVoiceNote, localState); // placeholder-only text is no caption; the provider's quota notice reads in clear Arabic
     const note = { voice: view.voice, text: view.text };
-    const noText = view.noText || (idx >= 0 && localMedia.failedRows.has(localRowKey(m, idx)) && m.role === "user" && !view.text.trim());
+    const noText = view.noText;
     const localImgs = idx >= 0 ? localMedia.byRow.get(localRowKey(m, idx)) : undefined;
     return (
     <article key={key} id={m.id ? "m-" + m.id : undefined} className={"bubble " + m.role + (m.id && m.id === basht.focusId ? " focused" : "")}>
       {m.role === "assistant" && <span className="who"><BrandMark size="xs" />باشت</span>}
       {note.voice && <span className="voice-tag"><Icon name="mic" size={13} />رسالة صوتية</span>}
       {m.role === "assistant" ? <MessageBody text={view.assistantText} /> : note.text}
-      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} onOpen={openViewer} onRetry={retryMedia} />}
+      {sk && <MessageMedia sessionKey={sk} messageId={m.id} media={m.media} local={localImgs} ownerNoText={noText} localFailed={view.localFailed} onOpen={openViewer} onRetry={retryMedia} />}
       {m.role === "assistant" && m.fallback?.to && (
         <small className="model-fallback" role="note">↪ نموذج احتياطي: <bdi>{replyModelName(null, m.fallback.to, model.models)}</bdi>{m.fallback.reason ? ` (${reasonLabel(m.fallback.reason)})` : ""}</small>
       )}

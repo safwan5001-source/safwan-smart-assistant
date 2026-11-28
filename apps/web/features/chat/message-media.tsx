@@ -66,12 +66,14 @@ export function ImageTile({ item, ratio, onOpen }: { item: ViewerItem; ratio?: n
   );
 }
 
-export default function MessageMedia({ sessionKey, messageId, media, local, ownerNoText = false, onOpen, onRetry, localOnly = false }: {
+export default function MessageMedia({ sessionKey, messageId, media, local, ownerNoText = false, localFailed = false, onOpen, onRetry, localOnly = false }: {
   sessionKey: string | null; messageId: string | null | undefined; media: BashtMedia[] | undefined;
   /** The owner's own photos kept on this device (shown only while the server has no image for this message). */
   local?: LocalImageView[];
   /** An owner message with no text: it must never render as an empty bubble. */
   ownerNoText?: boolean;
+  /** The owner's photo copy on this device could not be read (with or without a caption): an unavailable tile with the retry is shown. */
+  localFailed?: boolean;
   /** Opens the shared (conversation-wide) viewer; without it this message opens its own. */
   onOpen?: (item: ViewerItem) => void;
   /** Re-reads the history (an unavailable picture may be available now). */
@@ -94,7 +96,7 @@ export default function MessageMedia({ sessionKey, messageId, media, local, owne
   const brokenImages = images.some((i) => i.local) ? [] : all.filter((m) => m.kind === "image" && !serverImage(m));
   const others = all.filter((m) => m.kind !== "image");
   // an owner's message without text and without any picture to show: say so (never an empty bubble)
-  const placeholder = ownerNoText && !images.length && !brokenImages.length && !others.length;
+  const placeholder = (ownerNoText || localFailed) && !images.length && !brokenImages.length && !others.length;
   if (!images.length && !brokenImages.length && !others.length && !placeholder) return null;
   const shown = images.length + brokenImages.length;
   return (

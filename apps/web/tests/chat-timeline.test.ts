@@ -48,7 +48,14 @@ describe("an engine row's bubble text", () => {
     expect(engineRowView({ role: "user", text: "[image] شوف" }, parseVoiceNote).text).toBe("[image] شوف"); // not placeholder-ONLY: kept as the engine wrote it
     const voice = engineRowView({ role: "user", text: "[رسالة صوتية] ما مواعيدي؟" }, parseVoiceNote);
     expect(voice.voice).toBe(true); expect(voice.noText).toBe(false);
-    expect(engineRowView({ role: "user", text: "" }, parseVoiceNote, true).noText).toBe(false);
+    expect(engineRowView({ role: "user", text: "" }, parseVoiceNote, "loading").noText).toBe(false);
+  });
+  it("a CAPTIONED photo message whose device copy failed to read is still flagged: the unavailable tile must not depend on the text", () => {
+    const captioned = engineRowView({ role: "user", text: "شوف الصورة" }, parseVoiceNote, "failed");
+    expect(captioned).toMatchObject({ text: "شوف الصورة", noText: false, localFailed: true });
+    expect(engineRowView({ role: "user", text: "" }, parseVoiceNote, "failed")).toMatchObject({ noText: true, localFailed: true });
+    for (const state of ["none", "loading", "ready"] as const) expect(engineRowView({ role: "user", text: "شوف" }, parseVoiceNote, state).localFailed).toBe(false);
+    expect(engineRowView({ role: "assistant", text: "x" }, parseVoiceNote, "failed").localFailed).toBe(false);
   });
   it("assistant rows are never «no text» and show the provider's quota notice as clear Arabic", () => {
     expect(engineRowView({ role: "assistant", text: "" }, parseVoiceNote).noText).toBe(false);

@@ -45,6 +45,13 @@ describe("an owner's image message is never an empty bubble", () => {
     expect(html).toContain('src="blob:local/c1:a"');
     expect(html).not.toContain(MEDIA_TEXT.unavailable); // one photo, not the photo plus an «unavailable» twin
   });
+  it("a CAPTIONED message whose device photo failed to read still shows the unavailable tile with «إعادة المحاولة» (the retry is never hidden by the text)", () => {
+    const html = mm({ ownerNoText: false, localFailed: true, onRetry: () => {} });
+    expect(html).toContain(MEDIA_TEXT.imageUnavailable);
+    expect(html).toContain(MEDIA_TEXT.retry);
+    expect(mm({ ownerNoText: false, localFailed: false, onRetry: () => {} })).toBe(""); // without the flag a captioned message adds nothing
+    expect(mm({ localFailed: true, local: [local()], onRetry: () => {} })).not.toContain(MEDIA_TEXT.imageUnavailable); // a readable copy wins
+  });
   it("a message WITH text and no media renders nothing extra; photos still being read from the device are not flagged unavailable", () => {
     expect(mm({ ownerNoText: false })).toBe("");
     expect(mm({ ownerNoText: false, local: undefined })).toBe("");
@@ -157,6 +164,7 @@ describe("viewer safety and robustness (source contract)", () => {
     expect(chat).toContain("<MediaViewer");
     expect(chat).toContain("useLocalAttachments(");
     expect(chat).toContain("ownerNoText={noText}");
+    expect(chat).toContain("localFailed={view.localFailed}"); // the failed-photo tile is passed independently of the caption
     expect(chat).toMatch(/const retryMedia = useCallback\(\(\) => \{ localMedia\.retry\(\); basht\.reload\(\); \}/); // the tile's retry re-reads failed device photos too
     expect(chat).not.toContain("onRetry={basht.reload}");
     expect(chat).toMatch(/live && \(/);

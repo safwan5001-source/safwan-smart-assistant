@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createAttachmentStore, type StoredImage } from "@/lib/attachment-store";
 import { createImageViews, pendingState, rowLocalState } from "@/lib/local-image-views";
+import { engineRowView } from "@/lib/engine-row";
+import { parseVoiceNote } from "@/lib/basht-voice";
 import { createLocalAttachments } from "@/lib/local-attachments";
 import { fakeIDB } from "./stubs/fake-idb";
 
@@ -110,6 +112,20 @@ describe("device photos of the records on screen: loading → ready | failed", (
     expect(notified).toBeGreaterThan(0);
     const before = reads; v.retryFailed(); await tick();       // nothing failed any more: no read
     expect(reads).toBe(before);
+  });
+  it("captioned message, failed device read: the row is flagged failed (tile + retry), and the retry press recovers it to the photo", async () => {
+    let reads = 0;
+    const v = createImageViews({ images: async () => { reads++; if (reads === 1) throw new Error("idb busy"); return [img("a")]; } }, urls());
+    const matches = new Map([["row-1", "c1"]]);
+    const stateOf = () => { const s = rowLocalState(matches, v.getSnapshot()); return s.failedRows.has("row-1") ? "failed" : s.loadingRows.has("row-1") ? "loading" : s.byRow.has("row-1") ? "ready" : "none"; };
+    v.want(["c1"]); await tick();
+    expect(stateOf()).toBe("failed");
+    expect(engineRowView({ role: "user", text: "شوف الصورة" }, parseVoiceNote, stateOf())).toMatchObject({ localFailed: true, noText: false }); // the tile does not depend on the caption
+    v.want(["c1"]); await tick();                       // a history refresh re-matches: the claim is NOT released by it
+    expect(stateOf()).toBe("failed"); expect(reads).toBe(1);
+    v.retryFailed(); await tick();                      // the tile's retry
+    expect(stateOf()).toBe("ready");
+    expect(engineRowView({ role: "user", text: "شوف الصورة" }, parseVoiceNote, stateOf()).localFailed).toBe(false);
   });
   it("a record that keeps failing is read once per press (bounded), and a retry for records that left the screen does nothing", async () => {
     let reads = 0;
