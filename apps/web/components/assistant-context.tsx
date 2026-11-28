@@ -3,7 +3,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { useAssistantStatus } from "@/lib/hooks";
 import type { AssistantStatus } from "@/lib/assistant";
 
-const Ctx = createContext<{ status: AssistantStatus; refresh: () => void }>({ status: { server: "checking" }, refresh: () => {} });
+const Ctx = createContext<{ status: AssistantStatus; refresh: () => void; checkedAt: number | null }>({ status: { server: "checking" }, refresh: () => {}, checkedAt: null });
 export const useAssistant = () => useContext(Ctx);
 export function AssistantProvider({ children }: { children: ReactNode }) {
   const value = useAssistantStatus();

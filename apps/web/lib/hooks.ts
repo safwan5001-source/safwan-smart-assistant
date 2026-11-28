@@ -23,18 +23,19 @@ export function useMediaQuery(query: string): boolean {
   );
 }
 
-export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void } {
-  const [status, setStatus] = useState<AssistantStatus>({ server: "checking" });
+/** `checkedAt`: epoch ms when the current `status` ANSWERED (null while checking), for the "last check" line of the status indicators. */
+export function useAssistantStatus(): { status: AssistantStatus; refresh: () => void; checkedAt: number | null } {
+  const [state, setState] = useState<{ status: AssistantStatus; checkedAt: number | null }>({ status: { server: "checking" }, checkedAt: null });
   const refresh = useCallback(() => {
-    setStatus({ server: "checking" });
-    void assistantService.status().then(setStatus);
+    setState({ status: { server: "checking" }, checkedAt: null });
+    void assistantService.status().then((status) => setState({ status, checkedAt: Date.now() }));
   }, []);
   useEffect(() => {
     let live = true;
-    void assistantService.status().then((s) => live && setStatus(s));
+    void assistantService.status().then((status) => live && setState({ status, checkedAt: Date.now() }));
     return () => { live = false; };
   }, []);
-  return { status, refresh };
+  return { status: state.status, refresh, checkedAt: state.checkedAt };
 }
 
 /** Keeps a local search box in sync when global search navigates to the same page with a new ?q=. */

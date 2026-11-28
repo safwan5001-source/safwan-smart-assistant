@@ -31,7 +31,7 @@ import ModelPanel from "./model-panel";
 import MessageBody from "./message-body";
 import ListenButton from "./listen-button";
 import { useBashtModel } from "./use-basht-model";
-import { replyModelName, summary as modelSummary, reasonLabel } from "@/lib/basht-model";
+import { replyModelName, summary as modelSummary, reasonLabel, headerModel } from "@/lib/basht-model";
 import { APP_SESSION_KEY, useBashtConversation } from "./use-basht";
 import ApprovalInlineCard from "./approval-inline-card";
 import MessageMedia, { LiveImages } from "./message-media";
@@ -515,6 +515,9 @@ export default function ChatScreen() {
   // M: the app conversation's model, read from the engine (refreshed after each reply and each change; never polled)
   const model = useBashtModel(bashtOn && basht.gate === "open", !!basht.live);
   const modelLine = model.supported ? modelSummary(model.state, model.models) : "";
+  // B04: the model that really executed the last reply, next to the selected one. Unknown stays unknown (nothing is claimed).
+  const lastReplyRow = useMemo(() => [...(basht.messages ?? [])].reverse().find((m) => m.role === "assistant" && m.model && m.provider !== "openclaw") ?? null, [basht.messages]);
+  const head = useMemo(() => headerModel(model.supported ? model.state : null, model.models, lastReplyRow), [model.supported, model.state, model.models, lastReplyRow]);
   // Perf: the timeline's bubbles are rebuilt only when the messages (or the model names they show) change. A keystroke, a poll of
   // the live reply or a status update reuses the same elements, so React skips every existing bubble (measured, iPhone emulation:
   // 90 → 15 component renders per keystroke with a 50-message page, 465 → 15 with 300). A bubble that reads other state must add it here.
@@ -586,13 +589,20 @@ export default function ChatScreen() {
             {!desktop && <button className="icon-btn mobile-only" onClick={() => setSheet(true)} aria-label="المحادثات والأرشيف" aria-haspopup="dialog"><Icon name="menu" size={21} /></button>}
             <div className="chat-agent">
               <AgentOrb state={agent} size="sm" />
-              <span className="grow"><span className="who-name">{title}</span><small role="status">{sub}</small></span>
+              <span className="grow"><span className="who-name">{title}</span><small role="status">{sub}</small>
+</span>
             </div>
             {view.kind !== "archive" && bashtOn && <button className="icon-btn" onClick={() => { refreshHealth(); basht.refresh(); }} aria-label="تحديث المحادثة"><Icon name="repeat" size={20} /></button>}
             {view.kind === "main" && model.supported && <button className="icon-btn" onClick={() => { setModelOpen(true); void model.reload(); }} aria-label="النموذج والقدرات" aria-haspopup="dialog"><Icon name="spark" size={20} /></button>}
             {view.kind === "main" && <button className="icon-btn" onClick={() => { primeVoiceFromGesture(); openVoice(true); }} aria-label="محادثة صوتية بالتناوب مع باشت — يبدأ الاستماع فورًا" title="محادثة صوتية: يبدأ الاستماع فورًا (أو اضغط مطولًا على زر باشت في الأسفل)"><Icon name="wave" size={21} /></button>}
           </div>
 
+          {view.kind === "main" && !live && head.executed && (
+            <div className="model-exec" role="note" data-differs={head.differs ? "true" : undefined}
+              title={head.differs ? `نُفّذ آخر رد بنموذج ${head.executed} بدلًا من المحدَّد ${head.selected}${head.reason ? ` (${head.reason})` : ""}` : `نفّذ آخر رد: ${head.executed}`}>
+              {head.differs ? <>↪ نُفّذ بنموذج آخر: <bdi>{head.executed}</bdi>{head.selected ? <> بدلًا من <bdi>{head.selected}</bdi></> : null}{head.reason ? ` · ${head.reason}` : ""}</> : <>آخر رد نفّذه: <bdi>{head.executed}</bdi></>}
+            </div>
+          )}
           {view.kind === "main" && bashtOn && basht.gate === "locked" && auth && !auth.owner_auth && (
             <form className="card card-pad stack" onSubmit={unlock} style={{ marginBlockEnd: 8, gap: 10 }}>
               <div className="row"><BrandMark size="sm" /><strong>افتح جلسة باشت</strong></div>

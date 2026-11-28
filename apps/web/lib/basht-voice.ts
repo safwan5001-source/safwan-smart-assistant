@@ -89,16 +89,20 @@ export function createSilenceGate({ threshold = 0.02, silenceMs = 1400, noSpeech
 export type Avail = "unknown" | "yes" | "no";
 export type VoiceAvail = { speak: Avail; transcribe: Avail; reason: VoiceReason | "" };
 let avail: VoiceAvail = { speak: "unknown", transcribe: "unknown", reason: "" };
+/** When the engine last answered a real speak call either way (epoch ms), for the status indicator; null = never in this page session. */
+let speakAt: number | null = null;
 const availSubs = new Set<() => void>();
 export const voiceAvailability = {
   get: () => avail,
+  speakCheckedAt: () => speakAt,
   /** `reason`: why the engine voice is unavailable (with "no"), shown by the voice sheet and the dictation fallback. */
   set(kind: "speak" | "transcribe", v: Avail, reason?: VoiceReason) {
     const r = v === "no" ? reason ?? avail.reason : avail.reason;
+    if (kind === "speak" && v !== "unknown") speakAt = Date.now();
     if (avail[kind] !== v || avail.reason !== r) { avail = { ...avail, [kind]: v, reason: r }; availSubs.forEach((f) => f()); }
   },
   subscribe(f: () => void) { availSubs.add(f); return () => { availSubs.delete(f); }; },
-  reset() { avail = { speak: "unknown", transcribe: "unknown", reason: "" }; availSubs.forEach((f) => f()); },
+  reset() { avail = { speak: "unknown", transcribe: "unknown", reason: "" }; speakAt = null; availSubs.forEach((f) => f()); },
 };
 const SERVER_AVAIL: VoiceAvail = { speak: "unknown", transcribe: "unknown", reason: "" };
 export const useVoiceAvailability = () => useSyncExternalStore(voiceAvailability.subscribe, voiceAvailability.get, () => SERVER_AVAIL);

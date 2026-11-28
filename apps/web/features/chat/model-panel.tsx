@@ -7,7 +7,7 @@
 import Icon from "@/components/icon";
 import { Badge, Notice } from "@/components/ui";
 import type { BashtModel, BashtModelState } from "@/lib/basht-client";
-import { byProvider, capabilities, levelLabel, modelName, reasonLabel, replyModelName, seconds, tokens } from "@/lib/basht-model";
+import { byProvider, capabilities, modelName, reasonLabel, replyModelName, seconds, thinkingOptions, tokens } from "@/lib/basht-model";
 import type { ModelChange } from "./use-basht-model";
 import UsageRow from "./usage-row";
 
@@ -62,14 +62,13 @@ export default function ModelPanel({ models, state, busy, error, onApply, onClos
             <section className="stack" style={{ gap: 6 }} aria-labelledby="think-h">
               <strong id="think-h">مستوى التفكير</strong>
               <div className="seg seg-wrap" role="group" aria-labelledby="think-h">
-                {levels.map((l) => (
-                  <button key={l} aria-pressed={state.thinking.level === l} disabled={busy} onClick={() => onApply({ kind: "thinking", value: l })}>{levelLabel(l)}</button>
+                {thinkingOptions(levels, state.thinking.level, state.thinking.default).map((o) => (
+                  <button key={o.key} aria-pressed={o.pressed} disabled={busy} onClick={() => onApply({ kind: "thinking", value: o.value })}>
+                    {o.label}{o.isDefault && o.key !== "default" && <span className="think-default">افتراضي</span>}
+                  </button>
                 ))}
-                <button aria-pressed={state.thinking.level == null || !levels.includes(state.thinking.level)} disabled={busy} onClick={() => onApply({ kind: "thinking", value: "default" })}>
-                  افتراضي{state.thinking.default ? ` (${levelLabel(state.thinking.default)})` : ""}
-                </button>
               </div>
-              <small className="muted">كلما ارتفع المستوى زادت دقة الاستدلال وزمن الرد والتكلفة.</small>
+              <small className="muted">كلما ارتفع المستوى زادت دقة الاستدلال وزمن الرد والتكلفة. الشارة «افتراضي» تعلّم مستوى باشت الافتراضي؛ اختره لإلغاء التثبيت.</small>
             </section>
           )}
 

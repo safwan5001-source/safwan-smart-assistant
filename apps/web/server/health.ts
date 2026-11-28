@@ -7,6 +7,8 @@ export type HealthBody = {
   web: "ok";
   backend: "ok" | "unconfigured" | "unreachable" | "rejected" | "unavailable" | "invalid_response";
   version?: string;
+  /** `assistant` and `connected_integrations` are LEGACY (R11): a configured direct-provider key and a count of the old catalogue.
+   *  Neither is a readiness signal and no badge is drawn from them; BASHT's readiness is `basht` plus the engine's own /status. */
   features?: { assistant: boolean; connected_integrations: number; task_execution: boolean; basht?: CoreState; basht_chat?: boolean };
 };
 

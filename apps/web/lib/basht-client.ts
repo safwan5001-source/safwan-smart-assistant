@@ -2,6 +2,8 @@
  * Browser-side client for /api/basht/* (the real BASHT engine). Same-origin, cookie-authenticated (HttpOnly: this code never sees
  * the credential). Every failure becomes an Arabic message; upstream text never reaches the UI.
  */
+import { parseEngineStatus, unknownEngineStatus, type EngineStatus } from "./engine-status";
+
 export type BashtSession = { key: string; label: string; channel: string; updated_at: number; writable: boolean };
 export type BashtFallback = { from: string | null; to: string | null; reason: string | null; at?: number | null };
 /** B2: an image/file of one engine message. `ref` is opaque (no path ever reaches the app); `link` is a public https URL. */
@@ -197,6 +199,19 @@ export function createBashtClient(fetchImpl: Fetch = (...a) => fetch(...a), opts
         if (!res.ok) return { ...UNKNOWN_VOICE_STATUS };
         return parseVoiceStatus(await res.json());
       } catch { return { ...UNKNOWN_VOICE_STATUS }; }
+    },
+    /**
+     * What the engine says about itself (/api/basht/engine-status), validated again here. `null` = it was not asked successfully
+     * (signed out, BASHT disabled): the caller must treat that as "no data", never as down. A network failure or a non-answer is
+     * `{ reachable: false }` (asked, nobody answered). Never throws.
+     */
+    async engineStatus(): Promise<EngineStatus | null> {
+      try {
+        const res = await fetchImpl("/api/basht/engine-status", { credentials: "same-origin", cache: "no-store" });
+        if (res.status === 401 || res.status === 403) return null;
+        if (!res.ok) { const b = await res.json().catch(() => null) as { error?: unknown } | null; return b?.error === "disabled" ? null : unknownEngineStatus(); }
+        return parseEngineStatus(await res.json());
+      } catch { return unknownEngineStatus(); }
     },
     /** A voice note → the engine's transcript (its own audio config, as on WhatsApp). */
     transcribe: async (audio: Blob, signal?: AbortSignal) => {

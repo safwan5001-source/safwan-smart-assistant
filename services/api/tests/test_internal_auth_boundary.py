@@ -68,6 +68,7 @@ SIGNED_ROUTES = {
     # Voice V2/V3 (tests/test_basht_chat.py): BASHT's own voice and transcription from the engine's config; same signature.
     # /transcribe is the ONE route whose signed body may be 10 MiB of raw audio (require_service_call_audio, see SIGNATURE_GUARDS).
     ("GET", "/internal/v1/basht/voice-status"),  # can BASHT speak now? fixed shape, cached 30 s, never an error (tests/test_basht_voice_status.py)
+    ("GET", "/internal/v1/basht/engine-status"),  # version, build, capabilities, limits, link: fixed validated shape, same 30 s engine read (tests/test_basht_engine_status.py)
     ("POST", "/internal/v1/basht/speak"),
     ("POST", "/internal/v1/basht/transcribe"),
     # B1/B2 chat basics + media (tests/test_basht_media.py): same signature. /send-media is the ONE route whose signed JSON may
