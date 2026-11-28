@@ -4,7 +4,8 @@
  * `null` = not known (status not loaded yet, signed out, the server could not be asked, or the gate is off): nothing scoped is read
  * or written then — there is NO unscoped fallback.
  */
-import { parseOwnerScope } from "./owner-auth";
+/** A scope id the server could have sent: exactly 16 lowercase hex characters (anything else is ignored). */
+export const parseOwnerScope = (v: unknown): string | null => (typeof v === "string" && /^[0-9a-f]{16}$/.test(v) ? v : null);
 
 let current: string | null = null;
 const listeners = new Set<() => void>();

@@ -11,6 +11,7 @@ import { compactStore, taskModePrefStore, tasksStore, themeStore, threadsStore, 
 import { MODE_LABEL } from "@/lib/permissions";
 import { runCommand } from "@/lib/commands";
 import { listFiles } from "@/lib/files-db";
+import DevicePhotos from "./device-photos";
 import { formatSize } from "@/lib/format";
 import NotificationSettings from "./notification-settings";
 import ClaudeSettings from "./claude-settings";
@@ -87,6 +88,8 @@ export default function SettingsScreen() {
           <button className="btn btn-danger" onClick={() => void erase()}><Icon name="trash" size={18} />مسح كل البيانات</button>
         </div>
       </section>
+
+      <DevicePhotos />
 
       <section className="about" aria-label="عن التطبيق">
         <BrandMark size="lg" />

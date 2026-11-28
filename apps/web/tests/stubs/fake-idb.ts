@@ -76,6 +76,9 @@ export class FakeIDB {
   /** The next N opens fail (then the database opens normally again): a TEMPORARY failure. */
   failOpens = 0;
   opens = 0;
+  /** `indexedDB.databases()` exists (Chrome, Safari 14+); false simulates a browser without it. */
+  supportsDatabases = true;
+  get databases() { return this.supportsDatabases ? async () => [...this.dbs.keys()].map((name) => ({ name, version: 1 })) : undefined; }
   failNext(name = "QuotaExceededError", times = 1) { for (let i = 0; i < times; i++) this.failures.push(name); }
   open(name: string, version = 1) {
     this.opens++;

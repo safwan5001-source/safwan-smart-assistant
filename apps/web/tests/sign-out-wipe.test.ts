@@ -43,7 +43,7 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     vi.doMock("@/lib/push-client", () => ({ eraseRemoteDevice: async () => true, suspendSync: () => {}, resumeSync: () => {} }));
     vi.doMock("@/lib/files-db", () => ({ clearFiles: async () => { calls.push("files"); } }));
     vi.doMock("@/lib/owner-auth", () => ({ authClient: { logout: async () => {} } }));
-    vi.doMock("@/lib/local-attachments", () => ({ localAttachments: () => ({ clear: () => { calls.push("attachments"); return clear(); } }) }));
+    vi.doMock("@/lib/local-attachments", () => ({ localAttachments: () => ({ clearAll: () => { calls.push("attachments"); return clear(); } }) }));
     const mod = await import("@/lib/sign-out");
     return { mod, calls, vi };
   }

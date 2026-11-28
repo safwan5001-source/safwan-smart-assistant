@@ -2,14 +2,15 @@
  * Browser-side client for /api/auth/* (A1): one sign-in for the whole app — the owner code or Face ID (a passkey).
  * The session lives in an HttpOnly cookie this code never sees. Failures become Arabic messages; nothing upstream leaks.
  */
+import { parseOwnerScope } from "./owner-scope";
+export { parseOwnerScope };
 /**
  * `gate`: the web's login gate is on (OWNER_AUTH). `unavailable`: the API/database could not be asked — never read as "signed out".
  * `owner_scope`: an opaque 16-hex id of the signed-in owner (server-derived), used only to keep one owner's device-local data apart
  * from another's; null unless the server said the owner is authenticated.
  */
 export type AuthStatus = { owner_auth: boolean; passkeys: boolean; authenticated: boolean; gate: boolean; unavailable: boolean; owner_scope: string | null };
-/** A scope id the server could have sent: exactly 16 lowercase hex characters (anything else is ignored). */
-export const parseOwnerScope = (v: unknown): string | null => (typeof v === "string" && /^[0-9a-f]{16}$/.test(v) ? v : null);
+
 export type OwnerSession = { id: string; device: string | null; remember: boolean; created_at: string; last_seen_at: string | null; expires_at: string; current: boolean };
 export type Passkey = { id: string; name: string; created_at: string; last_used_at: string | null };
 
