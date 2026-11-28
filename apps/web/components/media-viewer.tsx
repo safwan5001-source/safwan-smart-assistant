@@ -144,13 +144,18 @@ function ViewerBody({ items, index, onIndex, onClose }: { items: ViewerItem[]; i
   const many = items.length > 1;
   const go = useCallback((d: 1 | -1) => { const n = index + d; if (n >= 0 && n < items.length) onIndex(n); }, [index, items.length, onIndex]);
 
-  // keyboard: the arrow that points left is «next» in a right-to-left layout
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "ArrowLeft") { e.preventDefault(); go(1); } else if (e.key === "ArrowRight") { e.preventDefault(); go(-1); }
-  };
+  // keyboard (on the document: a click on the picture leaves focus on the dialog itself): the arrow that points left is «next»
+  // in a right-to-left layout
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(1); } else if (e.key === "ArrowRight") { e.preventDefault(); go(-1); }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [go]);
   const blob = bytes.blob;
   return (
-    <div className="vw" onKeyDown={onKeyDown}>
+    <div className="vw">
       <div className="vw-top">
         <button type="button" className="vw-btn" onClick={onClose} aria-label={VIEWER_TEXT.close}><Icon name="close" size={22} /></button>
         <div className="vw-title">
