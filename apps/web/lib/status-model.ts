@@ -174,12 +174,21 @@ export function readPush(state: PushState | "loading" | null, checkedAt: number 
   }
 }
 
-/** Approvals waiting on the engine: readable only while its live link is up and the engine counted them. */
+/**
+ * Approvals waiting on the engine: readable only while its live link is up and the engine counted them. A count of 0 from a run list
+ * the engine says is NOT complete is no all-clear («غير معروف»); a positive count from one is «على الأقل n». When the engine's own
+ * `runs` block is there but could not count approvals, the link's own (possibly not yet synced) counter is never used instead.
+ */
 export function readApprovals(snap: EngineSnapshot | null): StatusReading {
   const s = snap?.status;
   if (!snap || !s || !engineAnswered(s)) return reading("unknown", null);
   if (s.link.state === "down" || s.link.state === "connecting") return reading("degraded", snap.at, { detail: "الاتصال بالمحرك متقطع؛ لا يمكن قراءة الموافقات الآن" });
-  const n = s.runs?.approvalsPending ?? s.link.pendingApprovals;
+  const n = s.runs ? s.runs.approvalsPending : s.link.pendingApprovals;
   if (s.link.state !== "up" || n === null || n === undefined) return reading("unknown", snap.at);
+  const partial = s.runs !== null && !s.runs.complete;
+  if (partial) {
+    return n === 0 ? reading("unknown", snap.at, { detail: "قراءة المحرك غير مكتملة؛ لا يمكن الجزم بخلوّ الموافقات" })
+      : reading("reachable", snap.at, { label: `على الأقل ${n}`, detail: "قراءة المحرك غير مكتملة؛ افتح الموافقات للقرار" });
+  }
   return reading("reachable", snap.at, { label: n === 0 ? "لا شيء" : `${n} بانتظارك`, detail: n === 0 ? "لا موافقات معلّقة" : "افتح الموافقات للقرار" });
 }
