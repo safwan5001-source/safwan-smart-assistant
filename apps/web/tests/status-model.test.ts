@@ -10,7 +10,7 @@ const NOW = 1_800_000_000_000;
 const online = (over: Partial<Extract<AssistantStatus, { server: "online" }>> = {}): AssistantStatus =>
   ({ server: "online", assistant: false, version: "0.4.0", basht: "connected", bashtChat: true, ...over });
 const eng = (over: Record<string, unknown> = {}): EngineStatus => parseEngineStatus({ ok: true, link: { state: "up" }, voice: { speak: "ready" }, runs: { approvalsPending: 0, complete: true }, ...over });
-const snap = (status: EngineStatus | null, at = NOW - 5000): EngineSnapshot => ({ status, at });
+const snap = (status: EngineStatus | null, at = NOW - 5000): EngineSnapshot => ({ status, at, observedAt: at }); // observed when asked, unless a test says otherwise
 const NO_VOICE = { speak: "unknown" as const, reason: "" as const, at: null };
 
 describe("the level vocabulary", () => {
