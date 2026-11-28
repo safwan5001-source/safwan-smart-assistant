@@ -24,3 +24,27 @@ export async function refreshMessageMedia(id: string | null | undefined, fetchAr
   if (!id) return null;
   return freshRow(await fetchAround(id), id) ?? null;
 }
+
+/**
+ * The whole refresh, with the state holders injected (the hook gives its setters): reads the page around the message, then patches
+ * the freshly read media into BOTH row lists the screen is built from — `messages` (newest page or search window) and `olderRows`
+ * (paged in) — touching nothing else. Returns "no-id" (the caller may fall back), "gone" (the engine no longer returns it),
+ * "stale" (a load started meanwhile and carries newer data) or "refreshed".
+ */
+export async function refreshInto(a: {
+  id: string | null | undefined;
+  fetchAround: (id: string) => Promise<{ messages: readonly BashtMessage[] }>;
+  /** The load generation when the retry was pressed, and now. */
+  startedAt: number; now: () => number;
+  setMessages: (f: (m: BashtMessage[] | null) => BashtMessage[] | null) => void;
+  setOlderRows: (f: (o: BashtMessage[]) => BashtMessage[]) => void;
+}): Promise<"no-id" | "gone" | "stale" | "refreshed"> {
+  if (!a.id) return "no-id";
+  const id = a.id;
+  const fresh = await refreshMessageMedia(id, a.fetchAround);
+  if (!fresh) return "gone";
+  if (a.now() !== a.startedAt) return "stale";
+  a.setMessages((m) => (m ? patchRowMedia(m, id, fresh) : m));
+  a.setOlderRows((o) => patchRowMedia(o, id, fresh));
+  return "refreshed";
+}

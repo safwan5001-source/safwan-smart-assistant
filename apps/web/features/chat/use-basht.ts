@@ -12,7 +12,7 @@ import type { PreparedImage } from "@/lib/image-prep";
 import { turnPreviews } from "@/lib/composer-photos";
 import { localAttachments, sendWithLocalCopy, toStoredImage } from "@/lib/local-attachments";
 import { turnOutcome } from "@/lib/turn-outcome";
-import { patchRowMedia, refreshMessageMedia } from "@/lib/history-reload";
+import { refreshInto } from "@/lib/history-reload";
 
 const urlsOf = (t: { images: PreparedImage[] } | null) => (t ? t.images.map((i) => i.previewUrl) : []);
 import { setAgentPhase } from "@/lib/agent-activity";
@@ -316,13 +316,11 @@ export function useBashtConversation(enabled: boolean, key: string | null) {
   const refreshMedia = useCallback(async (messageId?: string | null) => {
     const k = keyRef.current;
     if (!k) return;
-    if (!messageId) { if (!windowedRef.current) void load(k, true); return; }
-    const gen = loadGen.current; // a load that started meanwhile carries newer data than this read
     try {
-      const fresh = await refreshMessageMedia(messageId, (id) => bashtClient.historyPage(k, { around: id }));
-      if (!fresh || keyRef.current !== k || gen !== loadGen.current) return;
-      setMessages((m) => (m ? patchRowMedia(m, messageId, fresh) : m));
-      setOlderRows((o) => patchRowMedia(o, messageId, fresh));
+      const out = await refreshInto({ id: messageId, fetchAround: (id) => bashtClient.historyPage(k, { around: id }),
+        startedAt: loadGen.current, now: () => (keyRef.current === k ? loadGen.current : -1), // a load meanwhile (or another conversation) carries newer data
+        setMessages, setOlderRows });
+      if (out === "no-id" && !windowedRef.current) void load(k, true);
     } catch (e) { if (keyRef.current === k) setError(errText(e)); }
   }, [load]);
   const backToLatest = useCallback(() => { setFocusId(null); refresh(); }, [refresh]);
