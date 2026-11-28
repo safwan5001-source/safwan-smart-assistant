@@ -20,6 +20,14 @@ const withTimeout = (p: Promise<boolean>, ms: number): Promise<boolean> => new P
   p.then((v) => { clearTimeout(t); resolve(v); }, () => { clearTimeout(t); resolve(false); });
 });
 export type WipeResult = { filesCleared: boolean; serverErased: boolean; attachmentsCleared?: boolean };
+/** «مسح كل البيانات المحلية» (settings): what to tell the owner. Never "done" while anything stayed: the same leftover list as sign-out. */
+export function eraseSummary(r: WipeResult): { ok: boolean; text: string } {
+  const left = wipeLeftovers(r);
+  if (!left.length) return { ok: true, text: "تم مسح البيانات المحلية وبيانات الإشعارات على الخادم" };
+  const serverOnly = r.filesCleared && r.attachmentsCleared !== false && !r.serverErased;
+  if (serverOnly) return { ok: false, text: "تم مسح البيانات المحلية، لكن تعذر الوصول إلى خادم الإشعارات لحذف نسخته. أعد المحاولة لاحقاً." };
+  return { ok: false, text: `مُسحت المهام والمحادثات، لكن تعذّر حذف: ${left.join("، ")}. يمكنك مسح بيانات الموقع من إعدادات المتصفح.` };
+}
 /** What could not be removed, in Arabic — empty when the wipe was complete. */
 export function wipeLeftovers(r: WipeResult): string[] {
   const left: string[] = [];

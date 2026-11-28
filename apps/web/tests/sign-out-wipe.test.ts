@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { wipeLeftovers } from "@/lib/sign-out";
 
 describe("sign-out wipe report (review: never a silent partial wipe)", () => {
@@ -42,7 +44,7 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     vi.doMock("@/lib/stores", () => stores);
     vi.doMock("@/lib/push-client", () => ({ eraseRemoteDevice: async () => true, suspendSync: () => {}, resumeSync: () => {} }));
     vi.doMock("@/lib/files-db", () => ({ clearFiles: async () => { calls.push("files"); } }));
-    vi.doMock("@/lib/owner-auth", () => ({ authClient: { logout: async () => {} } }));
+    vi.doMock("@/lib/owner-auth", () => ({ authClient: { logout: async () => {} }, parseOwnerScope: (v: unknown) => v }));
     vi.doMock("@/lib/local-attachments", () => ({ localAttachments: () => ({ clearAll: () => { calls.push("attachments"); return clear(); } }) }));
     const mod = await import("@/lib/sign-out");
     return { mod, calls, vi };
@@ -61,6 +63,35 @@ describe("sign-out really wipes the device copies of sent photos (behavioural)",
     expect(done).toMatchObject({ attachmentsCleared: true });
     expect(mod.wipeLeftovers(done!)).toEqual([]);
     await unmock();
+  });
+  it("«erase all local data» (settings) shows the photo-wipe failure with the same leftover list as sign-out, and says nothing of the kind when it worked", async () => {
+    const bad = await load(() => Promise.resolve(false));
+    const r = await bad.mod.clearPrivateData();
+    expect(r.attachmentsCleared).toBe(false);
+    const failed = bad.mod.eraseSummary(r);
+    expect(failed.ok).toBe(false);
+    for (const name of bad.mod.wipeLeftovers(r)) expect(failed.text).toContain(name);   // the same list sign-out shows
+    expect(failed.text).toContain("الصور");
+    expect(failed.text).not.toContain("تم مسح البيانات المحلية");
+    await unmock();
+    const good = await load(() => Promise.resolve(true));
+    const ok = good.mod.eraseSummary(await good.mod.clearPrivateData());
+    expect(ok).toEqual({ ok: true, text: "تم مسح البيانات المحلية وبيانات الإشعارات على الخادم" });
+    await unmock();
+  });
+  it("eraseSummary: each kind of leftover is named; a push-server-only failure keeps its own wording", async () => {
+    const { mod } = await load(async () => true);
+    expect(mod.eraseSummary({ filesCleared: true, serverErased: true, attachmentsCleared: true }).ok).toBe(true);
+    expect(mod.eraseSummary({ filesCleared: true, serverErased: false, attachmentsCleared: true })).toMatchObject({ ok: false, text: expect.stringContaining("خادم الإشعارات") });
+    const both = mod.eraseSummary({ filesCleared: false, serverErased: true, attachmentsCleared: false });
+    expect(both.ok).toBe(false); expect(both.text).toContain("الملفات"); expect(both.text).toContain("الصور");
+    expect(mod.eraseSummary({ filesCleared: true, serverErased: true })).toMatchObject({ ok: true }); // an older result without the field is not a failure
+    await unmock();
+  });
+  it("the settings screen uses it (source contract)", () => {
+    const src = readFileSync(join(resolve(__dirname, ".."), "features/settings/settings-screen.tsx"), "utf8");
+    expect(src).toContain("eraseSummary(res.data)");
+    expect(src).not.toContain("مكتبة الملفات فلم تُحذف");
   });
   it("reports a wipe that failed, threw or never finished (3 s) as NOT cleared — never as done", async () => {
     for (const mk of [() => Promise.resolve(false), () => Promise.reject(new Error("idb")), () => new Promise<boolean>(() => {})]) {

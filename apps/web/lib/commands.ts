@@ -12,7 +12,7 @@ import { evaluate, type PermissionMode, type Risk } from "./permissions";
 import { LIMITS, parseBrowserRef, type Priority, type Task, type Thread, type Message, type Attachment, type Role, type BrowserRef } from "./domain";
 import { parseActionLine, parseBrowseCommand, type ActionRequest } from "./browser-task";
 import { activityStore, prefsStore, tasksStore, threadsStore } from "./stores";
-import { clearPrivateData } from "./sign-out";
+import { clearPrivateData, type WipeResult } from "./sign-out";
 import { parseSlash } from "./slash";
 import { Invalid, invalid, uid, type Def } from "./command-core";
 import { notificationCommands, reminderCommands } from "./commands-notify";
@@ -159,7 +159,7 @@ const chatCommands = {
 
 // ── data ────────────────────────────────────────────────────────────────
 const dataCommands = {
-  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: (_: object): Promise<{ filesCleared: boolean; serverErased: boolean }> => clearPrivateData() } satisfies Def<object, Promise<{ filesCleared: boolean; serverErased: boolean }>>,
+  "data.erase_all": { id: "data.erase_all", title: "مسح كل البيانات المحلية", risk: "sensitive", run: (_: object): Promise<WipeResult> => clearPrivateData() } satisfies Def<object, Promise<WipeResult>>,
 };
 
 const COMMANDS = { ...taskCommands, ...chatCommands, ...dataCommands, ...reminderCommands, ...notificationCommands } as const;

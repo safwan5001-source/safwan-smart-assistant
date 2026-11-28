@@ -78,6 +78,25 @@ describe("per-owner scope of the device-local photo store", () => {
     for (const s of [A, B]) { scoped.setScope(s); expect(await ids(scoped)).toEqual([]); }
   });
 
+  for (const withDatabases of [true, false]) {
+    it(`P1: put → clearAll → put → clearAll in ONE page session finds the second photo too (${withDatabases ? "with" : "without"} indexedDB.databases())`, async () => {
+      const { idb, registry, scoped } = setup();
+      idb.supportsDatabases = withDatabases;
+      scoped.setScope(A);
+      await scoped.put(rec("first"));
+      expect(await clearAttachments(scoped)).toBe(true);
+      expect(await ids(scoped)).toEqual([]);
+      await scoped.put(rec("second"));                       // the cached store is reused: its scope must be findable again
+      if (!withDatabases) expect(registry.ids.has(A)).toBe(true);
+      expect(await clearAttachments(scoped)).toBe(true);
+      expect(await ids(scoped)).toEqual([]);                 // really gone (not merely reported gone)
+      // and a third owner in the same session, then everything again
+      scoped.setScope(B); await scoped.put(rec("b-one"));
+      expect(await clearAttachments(scoped)).toBe(true);
+      for (const s of [A, B]) { scoped.setScope(s); expect(await ids(scoped)).toEqual([]); }
+    });
+  }
+
   it("no IndexedDB at all: the wipe counts as done", async () => {
     expect(await wipeAllScopes(undefined, memRegistry())).toEqual({ ok: false, reason: "absent" });
     expect(await clearAttachments(createScopedStore(undefined, memRegistry()))).toBe(true);

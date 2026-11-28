@@ -218,7 +218,10 @@ export function createScopedStore(factory: IDBFactory | undefined, registry: Sco
   const stores = new Map<string, AttachmentStore>();
   const forScope = (s: string) => {
     let st = stores.get(s);
-    if (!st) { st = createAttachmentStore(factory, scopedDbName(s)); stores.set(s, st); if (factory) registry.add(s); }
+    if (!st) { st = createAttachmentStore(factory, scopedDbName(s)); stores.set(s, st); }
+    // EVERY use re-registers the scope (idempotent): a wipe empties the registry, and a cached store that is used again afterwards
+    // must still be findable by the next wipe where indexedDB.databases() does not exist
+    if (factory) registry.add(s);
     return st;
   };
   const via = <A extends unknown[], R>(f: (st: AttachmentStore, ...a: A) => Promise<StoreResult<R>>) => (...a: A): Promise<StoreResult<R>> => {
