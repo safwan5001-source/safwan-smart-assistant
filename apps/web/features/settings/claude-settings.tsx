@@ -9,8 +9,8 @@ import { ensureClaudeSession } from "@/lib/claude-session";
 import { threadsStore } from "@/lib/stores";
 import type { Thread } from "@/lib/domain";
 
-type Phase = "checking" | "off" | "locked" | "ready";
-type Probe = "idle" | "testing" | "ok" | "fail";
+export type Phase = "checking" | "off" | "locked" | "ready";
+export type Probe = "idle" | "testing" | "ok" | "fail";
 const usd = (n: number) => "$" + (n < 1 ? n.toFixed(4) : n.toFixed(2));
 
 function Meter({ label, spent, cap }: { label: string; spent: number; cap: number }) {
@@ -21,6 +21,13 @@ function Meter({ label, spent, cap }: { label: string; spent: number; cap: numbe
       <div className="meter" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}><i data-level={pct >= 90 ? "high" : pct >= 70 ? "mid" : "low"} style={{ inlineSize: pct + "%" }} /></div>
     </div>
   );
+}
+
+/** The legacy section's badge. Green ONLY after a real probe succeeded in this view; configuration alone proves nothing. */
+export function claudeBadge(phase: Phase, configured: boolean, probe: Probe): { tone: "ok" | "warn" | undefined; label: string } {
+  const tone = probe === "ok" ? "ok" : phase === "ready" && configured && probe === "fail" ? "warn" : undefined;
+  const label = phase === "off" ? "غير مفعّل" : phase === "locked" ? "مقفل" : probe === "ok" ? "متصل ✓" : probe === "fail" ? "تعذر الاتصال" : configured ? "مهيأ" : "ينتظر التهيئة";
+  return { tone, label };
 }
 
 /** Claude management inside the settings screen. It only ever shows configuration state and counters: no key, no account id, no upstream text. */
@@ -92,10 +99,7 @@ export default function ClaudeSettings() {
     } catch (e) { toast(e instanceof Error ? e.message : "تعذر الحذف", "error"); } finally { setBusy(false); }
   };
 
-  const configured = aiReady(status);
-  // green only after a real probe succeeded in this view; configuration alone proves nothing
-  const tone = probe === "ok" ? "ok" : phase === "ready" && configured && probe === "fail" ? "warn" : undefined;
-  const label = phase === "off" ? "غير مفعّل" : phase === "locked" ? "مقفل" : probe === "ok" ? "متصل ✓" : probe === "fail" ? "تعذر الاتصال" : configured ? "مهيأ" : "ينتظر التهيئة";
+  const { tone, label } = claudeBadge(phase, aiReady(status), probe);
 
   return (
     <section className="card card-pad stack" aria-labelledby="claude-h">
