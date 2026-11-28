@@ -38,8 +38,8 @@ async function wipe(): Promise<WipeResult> {
   tasksStore.reset(); threadsStore.reset(); activityStore.reset();
   remindersStore.reset(); noticesStore.reset(); firedStore.reset(); prefsStore.reset(); tombstonesStore.reset();
   const filesCleared = await clearFiles().then(() => true, () => false);
-  // the photos sent to BASHT are kept on this device too (a cache only the owner clears: this is that explicit moment)
-  const attachmentsCleared = await withTimeout(localAttachments().clear(), ATTACHMENT_WIPE_MS);
+  // the photos sent to BASHT are kept on this device too, per owner (a cache only the owner clears: this is that explicit moment): every scope goes
+  const attachmentsCleared = await withTimeout(localAttachments().clearAll(), ATTACHMENT_WIPE_MS);
   // then the push server (it needs the device credentials, so they go last); an unreachable server is reported, never hidden
   const serverErased = await eraseRemoteDevice().catch(() => false);
   if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried

@@ -3,7 +3,8 @@
  * synchronously) with IndexedDB behind it. If IndexedDB is unavailable or full, the photos of that turn simply stay in memory for
  * this page session (`persisted: false`) — the app never fails because of it. Nothing is evicted automatically.
  */
-import { attachmentStore, type AttachmentMeta, type AttachmentStore, type AttachmentUsage, type StoredImage } from "./attachment-store";
+import { attachmentStore, type AttachmentMeta, type AttachmentStore, type AttachmentUsage, type ScopedAttachmentStore, type StoredImage } from "./attachment-store";
+import { getOwnerScope, subscribeOwnerScope } from "./owner-scope";
 import type { PreparedImage } from "./image-prep";
 
 export type LocalEntry = AttachmentMeta & { persisted: boolean };
@@ -118,14 +119,32 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
       return r.ok && r.value ? r.value.images : null;
     },
     async usage(): Promise<AttachmentUsage | null> { const r = await store.usage(); return r.ok ? r.value : null; },
-    /** Explicit owner action / sign-out: forget everything this device kept. */
+    /**
+     * The owner changed (or became known / unknown): what this manager holds belongs to the OLD scope. A different owner's records are
+     * dropped from memory; records that were only ever in memory because no owner was known yet (`keepUnscopedMemory`) stay, and
+     * are never written anywhere. Loading starts afresh for the new scope.
+     */
+    resetForScope(keepUnscopedMemory: boolean): void {
+      generation++; loaded = null; loadState = "none"; chains.clear();
+      for (const [id, e] of [...entries]) if (!(keepUnscopedMemory && !e.persisted)) { entries.delete(id); memory.delete(id); }
+      changed();
+    },
+    /** The owner's explicit «مسح نسخ الصور»: forgets what THIS owner's scope holds (memory and device); other scopes are untouched.
+     *  True only when nothing is left: a database that failed to OPEN may still hold photos, so that is NOT success. */
     async clear(): Promise<boolean> {
       generation++; loaded = null; loadState = "none";
       entries.clear(); memory.clear(); chains.clear(); changed();
-      // true only when nothing is left on the device: wiped, or no IndexedDB at all. A database that failed to OPEN may still hold
-      // photos (the open is retried once); that is reported as NOT cleared so sign-out names the leftovers.
       let r = await store.clear();
-      if (!r.ok && r.reason !== "absent") r = await store.clear();
+      if (!r.ok && r.reason !== "absent" && r.reason !== "noscope") r = await store.clear(); // (one retry of the open)
+      return r.ok || r.reason === "absent";
+    },
+    /** Sign-out: forget everything, in EVERY owner scope (a store without scopes: its one database). Same honesty as `clear`. */
+    async clearAll(): Promise<boolean> {
+      generation++; loaded = null; loadState = "none";
+      entries.clear(); memory.clear(); chains.clear(); changed();
+      const wipe = () => (store as Partial<ScopedAttachmentStore>).clearAll ? (store as ScopedAttachmentStore).clearAll() : store.clear();
+      let r = await wipe();
+      if (!r.ok && r.reason !== "absent") r = await wipe();
       return r.ok || r.reason === "absent";
     },
   };
@@ -133,8 +152,28 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
 }
 export type LocalAttachments = ReturnType<typeof createLocalAttachments>;
 
+/** Keeps a manager and its scoped store on the signed-in owner (lib/owner-scope): the store follows the scope, the manager forgets the old owner's records. */
+export function bindOwnerScope(scoped: ScopedAttachmentStore, mgr: LocalAttachments, owner: { get: () => string | null; subscribe: (l: () => void) => () => void }): () => void {
+  const apply = () => {
+    const prev = scoped.scope(), next = owner.get();
+    if (prev === next) return;
+    scoped.setScope(next);
+    mgr.resetForScope(prev === null);
+  };
+  apply();
+  return owner.subscribe(apply);
+}
+
 let shared: LocalAttachments | null = null;
-export const localAttachments = (): LocalAttachments => (shared ??= createLocalAttachments(attachmentStore()));
+/** The app's manager, bound to the signed-in owner's scope. Until the owner is known it touches no storage at all. */
+export const localAttachments = (): LocalAttachments => {
+  if (!shared) {
+    const scoped = attachmentStore();
+    shared = createLocalAttachments(scoped);
+    bindOwnerScope(scoped, shared, { get: getOwnerScope, subscribe: subscribeOwnerScope });
+  }
+  return shared;
+};
 
 /**
  * One owner turn WITH photos: the device copy is registered before the request (a page killed mid-send may still have reached the

@@ -9,6 +9,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { authClient } from "@/lib/owner-auth";
 import { LOGIN_PATH, safeNext } from "@/lib/login-path";
 import { isLeaving } from "@/lib/sign-out";
+import { setOwnerScope } from "@/lib/owner-scope";
 
 type Gate = { on: boolean; signInAgain: () => void };
 const GateContext = createContext<Gate>({ on: false, signInAgain: () => {} });
@@ -30,6 +31,7 @@ export function OwnerGateProvider({ children }: { children: ReactNode }) {
       const s = await authClient.status();
       if (!alive) return;
       if (s.unavailable) return; // the server could not be asked: keep everything as it is (the doors show "offline")
+      setOwnerScope(s.authenticated ? s.owner_scope : null); // which owner's device-local data this browser may touch (null = none)
       setOn(s.gate && s.owner_auth);
       if (s.gate && s.owner_auth && !s.authenticated) signInAgain(); // only when the server SAID the session is gone
     };
