@@ -8,6 +8,7 @@ import { activityStore, firedStore, noticesStore, prefsStore, pushDeviceStore, r
 import { eraseRemoteDevice, resumeSync, suspendSync } from "./push-client";
 import { clearFiles } from "./files-db";
 import { localAttachments } from "./local-attachments";
+import { setOwnerScope } from "./owner-scope";
 import { authClient } from "./owner-auth";
 
 /** `attachmentsCleared`: the device-local copies of the photos sent to BASHT (lib/attachment-store). */
@@ -40,6 +41,7 @@ async function wipe(): Promise<WipeResult> {
   const filesCleared = await clearFiles().then(() => true, () => false);
   // the photos sent to BASHT are kept on this device too, per owner (a cache only the owner clears: this is that explicit moment): every scope goes
   const attachmentsCleared = await withTimeout(localAttachments().clearAll(), ATTACHMENT_WIPE_MS);
+  setOwnerScope(null); // no owner is signed in on this device any more: nothing scoped is read or written until the next sign-in
   // then the push server (it needs the device credentials, so they go last); an unreachable server is reported, never hidden
   const serverErased = await eraseRemoteDevice().catch(() => false);
   if (serverErased) pushDeviceStore.reset(); // otherwise eraseRemoteDevice() kept the credentials (marked erasePending) so the deletion can be retried

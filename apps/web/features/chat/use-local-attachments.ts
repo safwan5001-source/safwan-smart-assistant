@@ -20,7 +20,8 @@ export function useLocalAttachments(rows: BashtMessage[] | null, opts: { enabled
   const mgr = localAttachments();
   const records = useSyncExternalStore(mgr.subscribe, mgr.getSnapshot, mgr.getSnapshot);
   // (re)reads the saved copies: once on open, and again on a history load while the last read had failed (cool-down inside; cheap otherwise)
-  useEffect(() => { if (opts.enabled) void mgr.load(); }, [mgr, opts.enabled, rows]);
+  // (`records` too: a scope change resets the manager, and loading starts afresh once the owner is known)
+  useEffect(() => { if (opts.enabled) void mgr.load(); }, [mgr, opts.enabled, rows, records]);
   const views = useRef<ReturnType<typeof createImageViews> | null>(null);
   if (!views.current) views.current = createImageViews(mgr);
   const snap = useSyncExternalStore(views.current.subscribe, views.current.getSnapshot, views.current.getSnapshot);
