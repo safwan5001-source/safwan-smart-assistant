@@ -513,17 +513,17 @@ def _engine_status_raw() -> tuple[Any, bool, bool]:
         failed = True
     with _lock:
         _status_cache[key] = (now + (VOICE_STATUS_FAIL_TTL if failed else VOICE_STATUS_TTL), raw, failed)
+    # exactly ONE audit line per real engine read, whichever route triggered it (never per cached answer, never none)
+    view = {"speak": "unknown"} if failed else _voice_status_view(raw)
+    audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
     return raw, failed, True
 
 
 @router.get("/voice-status")
 def voice_status(_: ServiceCall = Depends(require_service_call)):
     """Never an error to the UI: any failure, an unconfigured or an older engine answers 200 `{speak: "unknown"}`."""
-    raw, failed, fresh = _engine_status_raw()
-    view = {"speak": "unknown"} if failed else _voice_status_view(raw)
-    if fresh:  # one audit line per real engine read, not per cached answer
-        audit_log.record("basht.voice_status", status="unavailable" if failed else view["speak"], **({"reason": view["reason"]} if "reason" in view else {}))
-    return view
+    raw, failed, _fresh = _engine_status_raw()
+    return {"speak": "unknown"} if failed else _voice_status_view(raw)
 
 
 # ── Engine status: version, build, capabilities, limits, link (the same cached engine read) ──
