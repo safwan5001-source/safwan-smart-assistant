@@ -4,11 +4,12 @@
  * The engine's history row of the owner's message carries `id`, `text`, `at`, (when the engine kept the photo) `media`, and — newer
  * engines — the `runId` of the turn it started. Guiding principle: when in doubt show NOTHING, never a possibly wrong photo.
  *  0. A row with AVAILABLE server image media never gets a local copy (the server's copy always wins).
- *  1. A persisted binding (`record.matchedRowId`) holds while the bound row still stands for the record: the row carries the same
- *     `runId`, or (no run id on it) its normalised text is still equal. Otherwise the binding is dropped (`unbind`). A record never
- *     goes to two rows and a row never to two records.
- *  2. `runId`: the row exposes the run id /send returned for the record. This is the only exact key. It also yields a clock-skew
- *     estimate (median of row time − send time) used to adjust the fallback below.
+ *  1. `runId` FIRST: the row exposes the run id /send returned for the record. This is the only exact key; it overrides any earlier
+ *     text-only binding of that record (the stale row is dropped by re-binding) and claims its row before anything else can. It also
+ *     yields a clock-skew estimate (median of row time − send time) used to adjust the fallback below.
+ *  2. A persisted text binding (`record.matchedRowId`) of the remaining records holds while the bound row still stands for the
+ *     record: its normalised text is still equal and it is not stamped with another run id nor claimed by another record. Otherwise
+ *     the binding is dropped (`unbind`). A record never goes to two rows and a row never to two records.
  *  3. FALLBACK — same normalised text and a plausible time: the row is not earlier than the send by more than 60 s (30 s when the
  *     skew is known) and not later than 3 min, after shifting by the estimated skew (unknown skew = 0, and we stay strict). A group of
  *     exactly one row and one record matches; a group with equal counts pairs in time order. It is REFUSED when
@@ -81,32 +82,33 @@ export function matchAttachments(rows: readonly MatchRow[], records: readonly Ma
   const pairs: { row: MatchRow; rec: MatchRecord; exact: boolean }[] = [];
   const show = (row: MatchRow, rec: MatchRecord) => { if (!row.hasServerMedia) matches.set(row.key, rec.clientMsgId); };
 
-  // 1. persisted bindings: kept while the bound row still stands for the record
+  // 1. the exact key FIRST: the run id /send returned. It overrides any earlier text-only binding of that record (the old row is
+  //    dropped by re-binding to the run-stamped row) and claims its row before any text binding can.
   for (const rec of sortedRecs) {
-    const id = rec.matchedRowId;
-    if (!id) continue;
-    const row = byKey.get(id);
-    if (usedRows.has(id)) { unbind.push(rec.clientMsgId); continue; } // an earlier record already holds that row
-    if (!row) { usedRows.add(id); usedRecs.add(rec.clientMsgId); continue; } // not loaded (paged out): the binding waits
-    const exact = !!rec.runId && !!row.runId && row.runId === rec.runId;
-    const clash = !!rec.runId && !!row.runId && row.runId !== rec.runId;
-    if (row.role !== "user" || clash || (!exact && rowText.get(row.key) !== recText.get(rec.clientMsgId))) { unbind.push(rec.clientMsgId); continue; }
-    usedRows.add(id); usedRecs.add(rec.clientMsgId);
-    if (exact) skewSamples.push(row.at - rec.sentAt);
-    pairs.push({ row, rec, exact });
-    show(row, rec);
-  }
-
-  // 2. the exact key: the run id /send returned
-  for (const rec of sortedRecs) {
-    if (!rec.runId || usedRecs.has(rec.clientMsgId)) continue;
+    if (!rec.runId) continue;
     const row = rows.find((r) => r.role === "user" && !usedRows.has(r.key) && r.runId === rec.runId);
     if (!row) continue;
     usedRecs.add(rec.clientMsgId); usedRows.add(row.key);
     skewSamples.push(row.at - rec.sentAt);
     pairs.push({ row, rec, exact: true });
     show(row, rec);
-    fresh.push({ rowKey: row.key, clientMsgId: rec.clientMsgId, via: "runId", persist: true });
+    if (rec.matchedRowId !== row.key) fresh.push({ rowKey: row.key, clientMsgId: rec.clientMsgId, via: "runId", persist: true }); // (bind() replaces a stale binding)
+  }
+
+  // 2. persisted text bindings of the other records: kept while the bound row still stands for the record
+  for (const rec of sortedRecs) {
+    const id = rec.matchedRowId;
+    if (!id || usedRecs.has(rec.clientMsgId)) continue;
+    const row = byKey.get(id);
+    if (usedRows.has(id)) { unbind.push(rec.clientMsgId); continue; } // another record already holds that row (an exact run id match, or an earlier binding)
+    if (!row) { usedRows.add(id); usedRecs.add(rec.clientMsgId); continue; } // not loaded (paged out): the binding waits
+    // a run id that belongs to ANOTHER row (it is loaded and claims a different record) was handled above; a row stamped with some other
+    // run id than the record's is somebody else's message
+    const clash = !!rec.runId && !!row.runId && row.runId !== rec.runId;
+    if (row.role !== "user" || clash || rowText.get(row.key) !== recText.get(rec.clientMsgId)) { unbind.push(rec.clientMsgId); continue; }
+    usedRows.add(id); usedRecs.add(rec.clientMsgId);
+    pairs.push({ row, rec, exact: false });
+    show(row, rec);
   }
   const skew = skewSamples.length ? median(skewSamples) : null;
   const shift = skew ?? 0;

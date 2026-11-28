@@ -19,7 +19,8 @@ export type PendingLocal = PendingView;
 export function useLocalAttachments(rows: BashtMessage[] | null, opts: { enabled: boolean; liveRunId: string | null; windowed: boolean }) {
   const mgr = localAttachments();
   const records = useSyncExternalStore(mgr.subscribe, mgr.getSnapshot, mgr.getSnapshot);
-  useEffect(() => { if (opts.enabled) void mgr.load(); }, [mgr, opts.enabled]);
+  // (re)reads the saved copies: once on open, and again on a history load while the last read had failed (cool-down inside; cheap otherwise)
+  useEffect(() => { if (opts.enabled) void mgr.load(); }, [mgr, opts.enabled, rows]);
   const views = useRef<ReturnType<typeof createImageViews> | null>(null);
   if (!views.current) views.current = createImageViews(mgr);
   const snap = useSyncExternalStore(views.current.subscribe, views.current.getSnapshot, views.current.getSnapshot);
@@ -46,7 +47,7 @@ export function useLocalAttachments(rows: BashtMessage[] | null, opts: { enabled
 
   const local = useMemo(() => rowLocalState(plan.matches, snap), [plan.matches, snap]);
   const pending = useMemo(() => pendingState(plan.pending, snap), [plan.pending, snap]);
-  /** «إعادة المحاولة» on an unavailable tile: read the failed device photos again (once per press). */
-  const retry = useCallback(() => views.current?.retryFailed(), []);
+  /** «إعادة المحاولة» on an unavailable tile: read the saved-copies list again if that failed, and the failed device photos (once per press). */
+  const retry = useCallback(() => { void mgr.load({ force: true }); views.current?.retryFailed(); }, [mgr]);
   return { byRow: local.byRow, loadingRows: local.loadingRows, failedRows: local.failedRows, pending, retry };
 }

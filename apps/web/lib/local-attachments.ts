@@ -19,7 +19,9 @@ export function base64ToBlob(data: string, mime: string): Blob {
 export const toStoredImage = (i: PreparedImage): StoredImage =>
   ({ id: i.id, name: i.name, mime: i.mime, size: i.bytes, width: i.width, height: i.height, blob: base64ToBlob(i.data, i.mime) });
 
-export function createLocalAttachments(store: AttachmentStore, opts: { newId?: () => string } = {}) {
+/** After a failed metadata read, the next automatic attempt waits this long (a history load triggers it; no tight loop). */
+export const LOAD_RETRY_MS = 4000;
+export function createLocalAttachments(store: AttachmentStore, opts: { newId?: () => string; now?: () => number } = {}) {
   const entries = new Map<string, LocalEntry>();
   const memory = new Map<string, StoredImage[]>(); // bytes of records that could not be persisted (this page session only)
   const chains = new Map<string, Promise<unknown>>(); // per record: persist → patches run in order
@@ -28,6 +30,9 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
   const changed = () => { snapshot = [...entries.values()]; listeners.forEach((l) => l()); };
   const chain = (id: string, f: () => Promise<unknown>) => { const p = (chains.get(id) ?? Promise.resolve()).then(f, f); chains.set(id, p); return p; };
   let loaded: Promise<void> | null = null;
+  let loadState: "none" | "loading" | "ok" | "failed" = "none";
+  let failedAt = 0;
+  const now = opts.now ?? Date.now;
   /** Bumped by clear(): a save that was already in flight when the owner signed out must not bring its record back. */
   let generation = 0;
   const patchEntry = (id: string, fields: Partial<LocalEntry>, persist: Parameters<AttachmentStore["patch"]>[1]) => {
@@ -41,15 +46,26 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     newId: opts.newId ?? (() => crypto.randomUUID()),
     subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     getSnapshot: () => snapshot,
-    /** Reads what earlier sessions kept (once). Records created meanwhile in this session are not overwritten. */
-    load(): Promise<void> {
+    /**
+     * Reads what earlier sessions kept. A successful read is final for the page session. A FAILED read (IndexedDB could not be opened
+     * yet) is not cached: it is attempted again by the next call once `LOAD_RETRY_MS` has passed (the hook calls this on each history
+     * load, so there is no tight loop), or at once with `force` (the owner's «إعادة المحاولة», one attempt per press).
+     * Records created meanwhile in this session are never overwritten.
+     */
+    load(o: { force?: boolean } = {}): Promise<void> {
+      if (loaded && (loadState !== "failed" || (!o.force && now() - failedAt < LOAD_RETRY_MS))) return loaded;
+      if (loadState === "loading" && loaded) return loaded;
       const gen = generation;
-      return (loaded ??= store.list().then((r) => {
-        if (!r.ok || gen !== generation) return;
+      loadState = "loading";
+      loaded = store.list().then((r) => {
+        if (gen !== generation) return;
+        if (!r.ok) { loadState = "failed"; failedAt = now(); return; }
+        loadState = "ok";
         let any = false;
         for (const m of r.value) if (!entries.has(m.clientMsgId)) { entries.set(m.clientMsgId, { ...m, persisted: true }); any = true; }
         if (any) changed();
-      }).catch(() => { loaded = null; }));
+      }).catch(() => { if (gen === generation) { loadState = "failed"; failedAt = now(); } });
+      return loaded;
     },
     /** A photo message is about to be sent: known in memory at once, saved to the device in the background. */
     register(n: NewAttachment): void {
@@ -103,7 +119,7 @@ export function createLocalAttachments(store: AttachmentStore, opts: { newId?: (
     async usage(): Promise<AttachmentUsage | null> { const r = await store.usage(); return r.ok ? r.value : null; },
     /** Explicit owner action / sign-out: forget everything this device kept. */
     async clear(): Promise<boolean> {
-      generation++; loaded = null;
+      generation++; loaded = null; loadState = "none";
       entries.clear(); memory.clear(); chains.clear(); changed();
       // true only when nothing is left on the device: wiped, or no IndexedDB at all. A database that failed to OPEN may still hold
       // photos (the open is retried once); that is reported as NOT cleared so sign-out names the leftovers.
